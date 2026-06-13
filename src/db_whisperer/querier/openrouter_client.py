@@ -60,7 +60,7 @@ class OpenRouterClient:
                 json={
                     "model": model.strip(),
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0,
+                    "temperature": 1.3,
                     "max_tokens": 2500,
                     "response_format": {"type": "json_object"},
                 },
