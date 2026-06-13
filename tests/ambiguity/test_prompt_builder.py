@@ -74,6 +74,26 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
         self.assertIn('"rows": 5', prompt)
         self.assertIn('"omitted_rows": 3', prompt)
 
+    def test_default_prompt_samples_only_five_rows(self) -> None:
+        pair = ExecutedQueryPair(
+            candidate_id="candidate_1",
+            sql="SELECT value FROM data",
+            columns=("value",),
+            rows=tuple((value,) for value in range(6)),
+        )
+        request = AmbiguityRequest(
+            user_query="Show values",
+            pairs=(pair, pair),
+            api_key="key",
+            model="provider/model",
+        )
+
+        prompt = AmbiguityPromptBuilder().build(request)
+
+        self.assertIn('"rows": 6', prompt)
+        self.assertIn('"omitted_rows": 1', prompt)
+        self.assertNotIn('"value": 5', prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

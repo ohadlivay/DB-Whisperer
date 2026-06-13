@@ -65,19 +65,20 @@ class AmbiguityOpenRouterClient:
             )
             response.raise_for_status()
             payload = response.json()
-            content = payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            message = choice["message"]
+            content = message.get("content")
             self.prompt_logger.log_response(
                 request_id=request_id,
                 component="ambiguity",
                 model=model,
-                response=content,
+                response={
+                    "response_id": payload.get("id"),
+                    "response_model": payload.get("model"),
+                    "choice": choice,
+                    "usage": payload.get("usage"),
+                },
             )
-            if isinstance(content, str):
-                judgment = json.loads(content)
-            elif isinstance(content, dict):
-                judgment = content
-            else:
-                raise TypeError("Response content is not JSON text.")
         except (
             requests.RequestException,
             KeyError,
@@ -85,12 +86,116 @@ class AmbiguityOpenRouterClient:
             TypeError,
             ValueError,
         ) as error:
+            self.prompt_logger.log_event(
+                event="request_failed",
+                component="ambiguity",
+                request_id=request_id,
+                model=model,
+                details={"error": str(error)},
+            )
             raise AmbiguityJudgeError(
                 f"Ambiguity judge request failed: {error}"
             ) from error
+
+        if content is None:
+            details = self._response_details(payload, choice, message)
+            self.prompt_logger.log_event(
+                event="response_validation_failed",
+                component="ambiguity",
+                request_id=request_id,
+                model=model,
+                details=details,
+            )
+            raise AmbiguityJudgeError(
+                self._missing_content_message(details)
+            )
+
+        if isinstance(content, dict):
+            judgment = content
+        elif isinstance(content, str):
+            try:
+                judgment = json.loads(content)
+            except json.JSONDecodeError as error:
+                details = self._response_details(payload, choice, message)
+                details.update(
+                    error=str(error),
+                    content_preview=content[:500],
+                )
+                self.prompt_logger.log_event(
+                    event="response_validation_failed",
+                    component="ambiguity",
+                    request_id=request_id,
+                    model=model,
+                    details=details,
+                )
+                raise AmbiguityJudgeError(
+                    "Ambiguity judge returned text, but it was not valid JSON "
+                    f"(finish_reason={details['finish_reason']})."
+                ) from error
+        else:
+            details = self._response_details(payload, choice, message)
+            details.update(
+                error="Unsupported response content type.",
+                response_type=type(content).__name__,
+            )
+            self.prompt_logger.log_event(
+                event="response_validation_failed",
+                component="ambiguity",
+                request_id=request_id,
+                model=model,
+                details=details,
+            )
+            raise AmbiguityJudgeError(
+                "Ambiguity judge returned an unsupported content type: "
+                f"{type(content).__name__}."
+            )
 
         if not isinstance(judgment, dict):
             raise AmbiguityJudgeError(
                 "Ambiguity judge returned a non-object response."
             )
         return judgment
+
+    @staticmethod
+    def _response_details(
+        payload: dict[str, Any],
+        choice: dict[str, Any],
+        message: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "finish_reason": choice.get("finish_reason"),
+            "native_finish_reason": choice.get("native_finish_reason"),
+            "choice_error": choice.get("error"),
+            "tool_calls": message.get("tool_calls"),
+            "refusal": message.get("refusal"),
+            "reasoning": message.get("reasoning"),
+            "usage": payload.get("usage"),
+            "response_id": payload.get("id"),
+            "response_model": payload.get("model"),
+        }
+
+    @staticmethod
+    def _missing_content_message(details: dict[str, Any]) -> str:
+        error = details.get("choice_error")
+        if isinstance(error, dict) and error.get("message"):
+            return f"OpenRouter provider error: {error['message']}"
+        if details.get("tool_calls"):
+            return "OpenRouter returned tool calls instead of text content."
+        if details.get("refusal"):
+            return "The model refused the ambiguity request."
+        if details.get("reasoning"):
+            return (
+                "The model returned reasoning but no final text response."
+            )
+
+        finish_reason = details.get("finish_reason")
+        if finish_reason == "length":
+            return "The ambiguity response reached its token limit."
+        if finish_reason == "content_filter":
+            return "The ambiguity response was blocked by a content filter."
+        if finish_reason == "error":
+            return "OpenRouter reported a provider generation error."
+        return (
+            "OpenRouter returned no text content "
+            f"(finish_reason={finish_reason or 'unknown'})."
+        )

@@ -9,10 +9,10 @@ from db_whisperer.contracts import AmbiguityRequest, ExecutedQueryPair
 
 
 STATIC_INSTRUCTIONS = """You are an ambiguity evaluator for natural-language database queries.
-You receive the user's original request and K alternatives. Each alternative
+You receive the user's original request and the first 5 rows from some alternatives. Each alternative
 contains generated SQL and the table produced after executing that SQL.
 
-Decide whether the alternatives expose a material ambiguity in the user's
+Your goal is to decide whether the alternatives expose a significant material ambiguity in the user's
 intent. Material ambiguities include different filters, joins, entity scopes,
 time ranges, aggregation choices, result grain, ordering semantics, or null
 handling. Ignore SQL formatting, aliases, equivalent expressions, and row-order
@@ -31,13 +31,14 @@ Return exactly one JSON object:
 
 Ask only one question. It must identify the most important unresolved choice.
 Return exactly two concise, distinct, self-contained options that directly
-answer the question. Do not return SQL, Markdown, or any additional keys."""
+answer the question. Phrasing must be non-technical and easy for the user to understand (ELI5 style).
+Do not return SQL, Markdown, or any additional keys."""
 
 
 class AmbiguityPromptBuilder:
     """Serialize the user query and executed alternatives for the LLM judge."""
 
-    def __init__(self, max_rows_per_table: int = 50) -> None:
+    def __init__(self, max_rows_per_table: int = 5) -> None:
         if max_rows_per_table < 1:
             raise ValueError("max_rows_per_table must be positive.")
         self.max_rows_per_table = max_rows_per_table

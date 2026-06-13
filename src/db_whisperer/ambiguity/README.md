@@ -24,7 +24,7 @@ handling the returned clarification question and selected option.
 ## Prompt Context
 
 For each executed table, the judge receives its columns, returned shape,
-truncation status, null and distinct counts, and a bounded row sample. This
+truncation status, null and distinct counts, and up to five sampled rows. This
 keeps the full service input available while preventing large result tables
 from producing unbounded prompts.
 
