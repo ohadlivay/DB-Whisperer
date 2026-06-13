@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 from html import escape
 import os
 from typing import Any
@@ -21,7 +22,9 @@ def _initialize_state() -> None:
         "workflow_result": None,
         "clarifications": (),
         "clarification_history": (),
+        "chat_history": (),
         "active_candidate_count": 3,
+        "query_pending": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -148,6 +151,19 @@ def _apply_styles() -> None:
             padding-top: 0.5rem;
         }
 
+        .st-key-chat_window [data-testid="stVerticalBlockBorderWrapper"] {
+            scrollbar-width: thin;
+            scrollbar-color: var(--outline) transparent;
+            scrollbar-gutter: stable;
+            overflow-y: scroll !important;
+            overflow-x: hidden !important;
+        }
+
+        .st-key-chat_window [data-testid="stDataFrame"] {
+            min-width: 0;
+            contain: layout;
+        }
+
         .message-row {
             display: flex;
             width: 100%;
@@ -254,6 +270,8 @@ def _ingest_upload(
     st.session_state.workflow_result = None
     st.session_state.clarifications = ()
     st.session_state.clarification_history = ()
+    st.session_state.chat_history = ()
+    st.session_state.query_pending = False
     if upload is None:
         st.session_state.ingestion_result = None
         st.session_state.data_ready = False
@@ -331,17 +349,6 @@ def _render_sidebar(
     return api_key, model, candidate_count
 
 
-def _render_user_message() -> None:
-    st.markdown(
-        f"""
-        <div class="message-row user">
-            <div class="message user">{escape(st.session_state.active_query)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def _render_message(text: str, role: str) -> None:
     st.markdown(
         f"""
@@ -362,8 +369,10 @@ def _current_schema() -> SchemaMetadata:
     )
 
 
-def _render_clarification_history() -> None:
-    for question, answer in st.session_state.clarification_history:
+def _render_clarification_history(
+    clarification_history: tuple[tuple[str, str], ...],
+) -> None:
+    for question, answer in clarification_history:
         _render_message(question, "assistant")
         _render_message(answer, "user")
 
@@ -374,6 +383,78 @@ def _format_clarification(question: str, answer: str) -> str:
         f"Question: {question.strip()}\n"
         f"Selected answer: {answer.strip()}"
     )
+
+
+def _queue_query(
+    prompt: str,
+    candidate_count: int,
+    state: MutableMapping[str, Any],
+) -> None:
+    """Store a query for the next rerun before starting blocking work."""
+    state["active_query"] = prompt.strip()
+    state["workflow_result"] = None
+    state["clarifications"] = ()
+    state["clarification_history"] = ()
+    state["active_candidate_count"] = candidate_count
+    state["query_pending"] = True
+
+
+def _render_completed_workflow(workflow: Any) -> None:
+    """Render a completed or failed workflow without interactive controls."""
+    if workflow.state == ComponentState.FAILED:
+        _render_message(workflow.message, "assistant")
+        return
+
+    result = workflow.query_result
+    if result is None:
+        _render_message(workflow.message, "assistant")
+        return
+
+    _render_message(result.message, "assistant")
+    records = [
+        dict(zip(result.columns, row, strict=True))
+        for row in result.rows
+    ]
+    table_height = min(38 + max(len(records), 1) * 35, 320)
+    st.dataframe(
+        records,
+        width="stretch",
+        height=table_height,
+        hide_index=True,
+    )
+    if result.truncated:
+        st.caption("Results were limited to the first 1,000 rows.")
+    if result.sql:
+        with st.expander("View generated SQL"):
+            st.code(result.sql, language="sql")
+
+
+def _archive_active_conversation() -> None:
+    """Move the current completed exchange into session chat history."""
+    query = st.session_state.active_query.strip()
+    workflow = st.session_state.workflow_result
+    if not query or workflow is None:
+        return
+
+    st.session_state.chat_history = (
+        *st.session_state.chat_history,
+        {
+            "query": query,
+            "clarification_history": tuple(
+                st.session_state.clarification_history
+            ),
+            "workflow_result": workflow,
+        },
+    )
+
+
+def _render_archived_conversations() -> None:
+    for conversation in st.session_state.chat_history:
+        _render_message(conversation["query"], "user")
+        _render_clarification_history(
+            conversation["clarification_history"]
+        )
+        _render_completed_workflow(conversation["workflow_result"])
 
 
 def _render_workflow_response(
@@ -445,22 +526,7 @@ def _render_workflow_response(
             st.rerun()
         return
 
-    result = workflow.query_result
-    if result is None:
-        _render_message(workflow.message, "assistant")
-        return
-
-    _render_message(result.message, "assistant")
-    records = [
-        dict(zip(result.columns, row, strict=True))
-        for row in result.rows
-    ]
-    st.dataframe(records, width="stretch", hide_index=True)
-    if result.truncated:
-        st.caption("Results were limited to the first 1,000 rows.")
-    if result.sql:
-        with st.expander("View generated SQL"):
-            st.code(result.sql, language="sql")
+    _render_completed_workflow(workflow)
 
 
 def _render_chat(
@@ -469,12 +535,14 @@ def _render_chat(
     model: str,
     candidate_count: int,
 ) -> None:
-    if st.session_state.active_query:
-        st.markdown('<div class="chat-stream">', unsafe_allow_html=True)
-        _render_user_message()
-        _render_clarification_history()
-        _render_workflow_response(application, api_key, model)
-        st.markdown("</div>", unsafe_allow_html=True)
+    with st.container(height=620, border=False, key="chat_window"):
+        _render_archived_conversations()
+        if st.session_state.active_query:
+            _render_message(st.session_state.active_query, "user")
+            _render_clarification_history(
+                st.session_state.clarification_history
+            )
+            _render_workflow_response(application, api_key, model)
 
     workflow = st.session_state.workflow_result
     awaiting_clarification = (
@@ -482,27 +550,31 @@ def _render_chat(
         and workflow.state == ComponentState.PENDING
         and not workflow.complete
     )
+    query_pending = st.session_state.query_pending
     prompt = st.chat_input(
         "Ask about your data...",
         disabled=(
             not st.session_state.data_ready
             or awaiting_clarification
+            or query_pending
         ),
     )
     if prompt:
-        st.session_state.active_query = prompt.strip()
-        st.session_state.clarifications = ()
-        st.session_state.clarification_history = ()
-        st.session_state.active_candidate_count = candidate_count
+        _archive_active_conversation()
+        _queue_query(prompt, candidate_count, st.session_state)
+        st.rerun()
+
+    if st.session_state.query_pending:
         with st.spinner("Comparing query interpretations..."):
             st.session_state.workflow_result = application.submit_query(
-                prompt=prompt.strip(),
+                prompt=st.session_state.active_query,
                 schema=_current_schema(),
                 api_key=api_key,
                 model=model,
                 iteration=1,
-                candidate_count=candidate_count,
+                candidate_count=st.session_state.active_candidate_count,
             )
+        st.session_state.query_pending = False
         st.rerun()
 
 

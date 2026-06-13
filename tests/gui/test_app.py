@@ -18,7 +18,7 @@ from db_whisperer.contracts import (
     QueryResult,
     QueryWorkflowResult,
 )
-from db_whisperer.gui.app import _format_clarification
+from db_whisperer.gui.app import _format_clarification, _queue_query
 
 
 class GuiWorkflowTest(unittest.TestCase):
@@ -94,6 +94,61 @@ class GuiWorkflowTest(unittest.TestCase):
 
         self.assertFalse(app.exception)
         self.assertEqual(1, len(app.dataframe))
+
+    def test_query_is_queued_before_workflow_generation(self) -> None:
+        state = {
+            "active_query": "",
+            "workflow_result": object(),
+            "clarifications": ("old",),
+            "clarification_history": (("old question", "old answer"),),
+            "active_candidate_count": 2,
+            "query_pending": False,
+        }
+
+        _queue_query("  Analyze the data  ", 5, state)
+
+        self.assertEqual("Analyze the data", state["active_query"])
+        self.assertIsNone(state["workflow_result"])
+        self.assertEqual((), state["clarifications"])
+        self.assertEqual((), state["clarification_history"])
+        self.assertEqual(5, state["active_candidate_count"])
+        self.assertTrue(state["query_pending"])
+
+    def test_chat_history_displays_previous_and_active_results(self) -> None:
+        app = self._app()
+        previous_workflow = QueryWorkflowResult(
+            state=ComponentState.ACCEPTED,
+            message="Returned 1 row(s).",
+            iteration=1,
+            complete=True,
+            query_result=self._query_result(),
+        )
+        app.session_state["chat_history"] = (
+            {
+                "query": "Previous question",
+                "clarification_history": (
+                    ("Previous clarification?", "Previous answer"),
+                ),
+                "workflow_result": previous_workflow,
+            },
+        )
+        app.session_state["workflow_result"] = QueryWorkflowResult(
+            state=ComponentState.ACCEPTED,
+            message="Returned 1 row(s).",
+            iteration=1,
+            complete=True,
+            query_result=self._query_result(),
+        )
+
+        app.run(timeout=20)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(2, len(app.dataframe))
+        markdown = "\n".join(item.value for item in app.markdown)
+        self.assertIn("Previous question", markdown)
+        self.assertIn("Previous clarification?", markdown)
+        self.assertIn("Previous answer", markdown)
+        self.assertIn("Analyze the data", markdown)
 
     def test_candidate_count_defaults_to_three(self) -> None:
         app = self._app()

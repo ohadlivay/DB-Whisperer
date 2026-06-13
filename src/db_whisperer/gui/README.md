@@ -7,7 +7,7 @@ The GUI provides the Streamlit interface for DB Whisperer.
 - Accept CSV uploads and natural-language questions.
 - Display ingestion and schema information.
 - Display query results and the SQL used to produce them.
-- Preserve the current interaction state across Streamlit reruns.
+- Preserve conversation history across queries and Streamlit reruns.
 
 ## Boundaries
 
@@ -26,4 +26,6 @@ streamlit run app.py
 The page provides a domain-neutral data sidebar, LLM configuration, status
 indicators, and query input. It displays each ambiguity question with two
 clickable answer options, then shows the final rows and SQL after a pass or
-three iterations.
+three iterations. Previous exchanges remain visible in a scrollable chat
+window until the data source changes or the Streamlit session ends. A submitted
+question is displayed before candidate generation begins.
