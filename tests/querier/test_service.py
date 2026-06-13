@@ -25,9 +25,10 @@ from db_whisperer.querier.sql_validator import (
 
 
 class FakeOpenRouterClient:
-    def __init__(self, sql: str) -> None:
+    def __init__(self, sql: str | list[str]) -> None:
         self.sql = sql
         self.prompts: list[str] = []
+        self.metadata: list[dict | None] = []
 
     def generate_sql(
         self,
@@ -37,6 +38,9 @@ class FakeOpenRouterClient:
         metadata=None,
     ) -> str:
         self.prompts.append(prompt)
+        self.metadata.append(metadata)
+        if isinstance(self.sql, list):
+            return self.sql.pop(0)
         return self.sql
 
 
@@ -107,6 +111,7 @@ class QueryServiceTest(unittest.TestCase):
 
             self.assertEqual(ComponentState.FAILED, result.state)
             self.assertIsNone(result.sql)
+            self.assertEqual(1, len(service.client.prompts))
 
     def test_invalid_sql_is_preserved_on_failed_candidate(self) -> None:
         with TemporaryDirectory(dir=ROOT) as directory:
@@ -129,6 +134,49 @@ class QueryServiceTest(unittest.TestCase):
             self.assertEqual(ComponentState.FAILED, candidate.state)
             self.assertEqual("SELEC broken", candidate.sql)
             self.assertIn("Generated SQL", candidate.message)
+
+    def test_invalid_sql_is_retried_with_validation_feedback(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            ingestion = ETLService(
+                Path(directory) / "test.duckdb"
+            ).ingest(
+                [CsvUpload("data.csv", b"field name\nA\nB\n")]
+            )
+            client = FakeOpenRouterClient(
+                [
+                    (
+                        'SELECT "field name", COUNT(*) FROM "data" '
+                        'GROUP BY "field name'
+                    ),
+                    (
+                        'SELECT "field name", COUNT(*) FROM "data" '
+                        'GROUP BY "field name";'
+                    ),
+                ]
+            )
+            service = QueryService(client=client)
+
+            candidate = service.generate_candidate(
+                QueryRequest(
+                    prompt="Count rows by field",
+                    schema=ingestion.schema,
+                    api_key="test-key",
+                    model="test/model",
+                    attempt_number=4,
+                )
+            )
+
+            self.assertEqual(ComponentState.ACCEPTED, candidate.state)
+            self.assertEqual(2, len(client.prompts))
+            self.assertIn("VALIDATION RETRY", client.prompts[1])
+            self.assertIn("unterminated quoted identifier", client.prompts[1])
+            self.assertEqual(
+                [
+                    {"attempt_number": 4, "validation_retry": 0},
+                    {"attempt_number": 4, "validation_retry": 1},
+                ],
+                client.metadata,
+            )
 
     def test_validator_rejects_multiple_statements_and_external_reads(self) -> None:
         with self.assertRaises(SQLValidationError):

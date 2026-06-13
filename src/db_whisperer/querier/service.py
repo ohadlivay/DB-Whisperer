@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import duckdb
 
 from db_whisperer.contracts import (
@@ -23,6 +25,8 @@ from db_whisperer.querier.sql_validator import (
 
 class QueryService:
     """Build prompts, generate SQL, validate it, and query DuckDB."""
+
+    MAX_VALIDATION_RETRIES = 1
 
     def __init__(
         self,
@@ -46,17 +50,10 @@ class QueryService:
         """Generate and validate one SQL candidate."""
         try:
             prompt = self.build_prompt(request)
-            sql = self.client.generate_sql(
-                prompt=prompt,
-                api_key=request.api_key,
-                model=request.model,
-                metadata={"attempt_number": request.attempt_number},
-            )
         except (
             duckdb.Error,
             OSError,
             ValueError,
-            OpenRouterError,
         ) as error:
             return QueryCandidate(
                 attempt_number=request.attempt_number,
@@ -64,22 +61,78 @@ class QueryService:
                 message=str(error),
             )
 
-        try:
-            validated_sql = validate_read_only_sql(sql)
-        except SQLValidationError as error:
+        generation_prompt = prompt
+        sql: str | None = None
+        for validation_retry in range(self.MAX_VALIDATION_RETRIES + 1):
+            try:
+                sql = self.client.generate_sql(
+                    prompt=generation_prompt,
+                    api_key=request.api_key,
+                    model=request.model,
+                    metadata={
+                        "attempt_number": request.attempt_number,
+                        "validation_retry": validation_retry,
+                    },
+                )
+            except OpenRouterError as error:
+                return QueryCandidate(
+                    attempt_number=request.attempt_number,
+                    state=ComponentState.FAILED,
+                    sql=sql,
+                    message=str(error),
+                )
+
+            try:
+                validated_sql = validate_read_only_sql(sql)
+            except SQLValidationError as error:
+                can_retry = str(error).startswith(
+                    "Generated SQL is invalid:"
+                )
+                if (
+                    not can_retry
+                    or validation_retry == self.MAX_VALIDATION_RETRIES
+                ):
+                    return QueryCandidate(
+                        attempt_number=request.attempt_number,
+                        state=ComponentState.FAILED,
+                        sql=sql,
+                        message=str(error),
+                    )
+                generation_prompt = self._validation_repair_prompt(
+                    prompt,
+                    sql,
+                    error,
+                )
+                continue
+
             return QueryCandidate(
                 attempt_number=request.attempt_number,
-                state=ComponentState.FAILED,
-                sql=sql,
-                message=str(error),
+                state=ComponentState.ACCEPTED,
+                sql=validated_sql,
+                message="SQL generated.",
             )
 
-        return QueryCandidate(
-            attempt_number=request.attempt_number,
-            state=ComponentState.ACCEPTED,
-            sql=validated_sql,
-            message="SQL generated.",
+        raise AssertionError("SQL validation retry loop exited unexpectedly.")
+
+    @staticmethod
+    def _validation_repair_prompt(
+        original_prompt: str,
+        invalid_sql: str,
+        error: SQLValidationError,
+    ) -> str:
+        """Ask the model to repair one rejected SQL response."""
+        feedback = (
+            "VALIDATION RETRY\n"
+            "The previous SQL response was rejected by DuckDB. Correct only "
+            "the SQL syntax or identifiers needed to resolve the error, while "
+            "preserving the user's requested meaning.\n"
+            f"Previous SQL: {json.dumps(invalid_sql, ensure_ascii=True)}\n"
+            f"DuckDB error: {error}\n"
+            "Return exactly one JSON object with a complete SQL statement. "
+            "Close every quoted identifier and string literal, and terminate "
+            "the SQL statement with a semicolon."
         )
+        return f"{original_prompt}\n\n{feedback}"
 
     def execute_candidate(
         self,

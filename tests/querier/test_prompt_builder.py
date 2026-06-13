@@ -109,6 +109,14 @@ class PromptBuilderTest(unittest.TestCase):
                 "Never replace spaces or punctuation with underscores",
                 prompt,
             )
+            self.assertIn(
+                "Terminate the SQL statement with a semicolon",
+                prompt,
+            )
+            self.assertIn(
+                "verify that every SQL identifier quote",
+                prompt,
+            )
             self.assertNotIn("vehicle make", prompt)
             self.assertNotIn("crash severity", prompt)
 
