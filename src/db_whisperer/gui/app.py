@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
+from enum import StrEnum
 from html import escape
 import os
 from typing import Any
@@ -11,6 +12,52 @@ import streamlit as st
 
 from db_whisperer.application import ApplicationService
 from db_whisperer.contracts import ComponentState, CsvUpload, SchemaMetadata
+
+
+class ModelOption(StrEnum):
+    """Supported model presets plus a user-supplied model ID."""
+
+    DEEPSEEK = "deepseek/deepseek-v4-flash"
+    KIMI = "moonshotai/kimi-k2.7-code"
+    GEMMA = "google/gemma-4-31b-it"
+    CUSTOM = "Choose your own"
+
+
+MODEL_RATINGS: dict[ModelOption, tuple[int, int]] = {
+    ModelOption.DEEPSEEK: (1, 2),
+    ModelOption.KIMI: (3, 3),
+    ModelOption.GEMMA: (1, 1),
+}
+MONEY_ICON = "\U0001F4B0"
+HOURGLASS_ICON = "\u23F3"
+
+
+def _model_option_label(option: ModelOption) -> str:
+    """Show the original model ID without ratings in the selector."""
+    return option.value
+
+
+def _model_rating_label(option: ModelOption) -> str:
+    """Render the selected model's relative cost and latency tray."""
+    rating = MODEL_RATINGS.get(option)
+    if rating is None:
+        return "Cost and response time are not rated."
+    money, time = rating
+    return (
+        f"Cost {MONEY_ICON * money}  "
+        f"Time {HOURGLASS_ICON * time}"
+    )
+
+
+def _configured_model_option(model: str) -> ModelOption:
+    """Select a preset when the configured model matches one exactly."""
+    normalized = model.strip()
+    if not normalized:
+        return ModelOption.GEMMA
+    for option in ModelOption:
+        if option != ModelOption.CUSTOM and option.value == normalized:
+            return option
+    return ModelOption.CUSTOM
 
 
 def _initialize_state() -> None:
@@ -48,6 +95,8 @@ def _apply_styles() -> None:
             --text: #0b1c30;
             --text-muted: #45464d;
             --secondary: #006c49;
+            --user-message: #f0f5ff;
+            --assistant-message: #f1f8f4;
         }
 
         html, body, [class*="css"] {
@@ -144,6 +193,13 @@ def _apply_styles() -> None:
             box-shadow: 0 0 8px rgba(0, 108, 73, 0.5);
         }
 
+        .model-rating {
+            margin: -0.2rem 1.5rem 0.85rem;
+            color: var(--text-muted);
+            font-size: 0.78rem;
+            line-height: 1.4;
+        }
+
         .chat-stream {
             display: flex;
             flex-direction: column;
@@ -155,8 +211,10 @@ def _apply_styles() -> None:
             scrollbar-width: thin;
             scrollbar-color: var(--outline) transparent;
             scrollbar-gutter: stable;
-            overflow-y: scroll !important;
+            overflow-y: auto !important;
             overflow-x: hidden !important;
+            padding: 1rem 0.75rem 1.25rem !important;
+            scroll-padding-top: 1rem;
         }
 
         .st-key-chat_window [data-testid="stDataFrame"] {
@@ -178,24 +236,27 @@ def _apply_styles() -> None:
         }
 
         .message {
-            max-width: 80%;
-            padding: 1rem;
-            border: 1px solid var(--outline);
-            box-shadow: 0 1px 3px rgba(11, 28, 48, 0.06);
+            max-width: 82%;
+            padding: 0.8rem 1rem;
+            border: 0;
+            box-shadow:
+                0 1px 2px rgba(11, 28, 48, 0.05),
+                0 5px 18px rgba(11, 28, 48, 0.04);
             color: var(--text);
             font-size: 0.95rem;
             line-height: 1.5;
+            overflow-wrap: anywhere;
         }
 
         .message.user {
-            background: var(--surface-low);
-            border-color: var(--surface-variant);
-            border-radius: 1rem 1rem 0 1rem;
+            background: var(--user-message);
+            max-width: 72%;
+            border-radius: 1rem 1rem 0.25rem 1rem;
         }
 
         .message.assistant {
-            background: var(--surface);
-            border-radius: 1rem 1rem 1rem 0;
+            background: var(--assistant-message);
+            border-radius: 1rem 1rem 1rem 0.25rem;
         }
 
         [data-testid="stDataFrame"] {
@@ -314,10 +375,34 @@ def _render_sidebar(
             type="password",
             placeholder="sk-or-v1-...",
         )
-        model = st.text_input(
+        configured_model = os.getenv("OPENROUTER_MODEL", "")
+        configured_option = _configured_model_option(configured_model)
+        model_options = list(ModelOption)
+        selected_model = st.selectbox(
             "Model",
-            value=os.getenv("OPENROUTER_MODEL", ""),
-            placeholder="provider/model",
+            options=model_options,
+            index=model_options.index(configured_option),
+            format_func=_model_option_label,
+        )
+        if selected_model == ModelOption.CUSTOM:
+            model = st.text_input(
+                "Custom model ID",
+                value=(
+                    configured_model
+                    if configured_option == ModelOption.CUSTOM
+                    else ""
+                ),
+                placeholder="provider/model",
+            )
+        else:
+            model = selected_model.value
+        st.markdown(
+            (
+                '<div class="model-rating">'
+                f"{escape(_model_rating_label(selected_model))}"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
         )
         candidate_count = int(st.number_input(
             "SQL candidates",
@@ -397,6 +482,17 @@ def _queue_query(
     state["clarification_history"] = ()
     state["active_candidate_count"] = candidate_count
     state["query_pending"] = True
+
+
+def _chat_window_height(
+    state: MutableMapping[str, Any],
+) -> int | str:
+    """Enable a bounded scroll area only after history exists."""
+    history_count = len(state.get("chat_history", ()))
+
+    if history_count:
+        return 620
+    return "content"
 
 
 def _render_completed_workflow(workflow: Any) -> None:
@@ -535,7 +631,11 @@ def _render_chat(
     model: str,
     candidate_count: int,
 ) -> None:
-    with st.container(height=620, border=False, key="chat_window"):
+    with st.container(
+        height=_chat_window_height(st.session_state),
+        border=False,
+        key="chat_window",
+    ):
         _render_archived_conversations()
         if st.session_state.active_query:
             _render_message(st.session_state.active_query, "user")
@@ -543,6 +643,8 @@ def _render_chat(
                 st.session_state.clarification_history
             )
             _render_workflow_response(application, api_key, model)
+            if st.session_state.query_pending:
+                _render_message("Working on your query...", "assistant")
 
     workflow = st.session_state.workflow_result
     awaiting_clarification = (

@@ -23,9 +23,8 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The page provides a domain-neutral data sidebar, LLM configuration, status
-indicators, and query input. It displays each ambiguity question with two
-clickable answer options, then shows the final rows and SQL after a pass or
-three iterations. Previous exchanges remain visible in a scrollable chat
-window until the data source changes or the Streamlit session ends. A submitted
-question is displayed before candidate generation begins.
+The page provides a domain-neutral data sidebar, LLM configuration, preset
+models with relative cost and response-time indicators, a custom model-ID
+option, and query input. It displays each ambiguity question with two clickable
+answer options, then shows the final rows and SQL after a pass or three
+iterations. Previous exchanges remain visible in a scrollable chat window.

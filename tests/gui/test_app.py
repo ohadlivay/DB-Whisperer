@@ -18,7 +18,17 @@ from db_whisperer.contracts import (
     QueryResult,
     QueryWorkflowResult,
 )
-from db_whisperer.gui.app import _format_clarification, _queue_query
+from db_whisperer.gui.app import (
+    HOURGLASS_ICON,
+    MONEY_ICON,
+    ModelOption,
+    _chat_window_height,
+    _configured_model_option,
+    _format_clarification,
+    _model_option_label,
+    _model_rating_label,
+    _queue_query,
+)
 
 
 class GuiWorkflowTest(unittest.TestCase):
@@ -114,6 +124,20 @@ class GuiWorkflowTest(unittest.TestCase):
         self.assertEqual(5, state["active_candidate_count"])
         self.assertTrue(state["query_pending"])
 
+    def test_chat_scrolls_only_after_history_exists(self) -> None:
+        state = {
+            "active_query": "",
+            "workflow_result": None,
+            "chat_history": (),
+        }
+        self.assertEqual("content", _chat_window_height(state))
+
+        state["active_query"] = "Analyze the data"
+        self.assertEqual("content", _chat_window_height(state))
+
+        state["chat_history"] = ({"query": "Earlier"},)
+        self.assertEqual(620, _chat_window_height(state))
+
     def test_chat_history_displays_previous_and_active_results(self) -> None:
         app = self._app()
         previous_workflow = QueryWorkflowResult(
@@ -161,6 +185,44 @@ class GuiWorkflowTest(unittest.TestCase):
 
         self.assertEqual(1, len(candidate_inputs))
         self.assertEqual(3, candidate_inputs[0].value)
+
+    def test_model_options_include_presets_and_custom_choice(self) -> None:
+        self.assertEqual(
+            [
+                "deepseek/deepseek-v4-flash",
+                "moonshotai/kimi-k2.7-code",
+                "google/gemma-4-31b-it",
+                "Choose your own",
+            ],
+            [option.value for option in ModelOption],
+        )
+        self.assertEqual(
+            ModelOption.GEMMA,
+            _configured_model_option("google/gemma-4-31b-it"),
+        )
+        self.assertEqual(
+            ModelOption.GEMMA,
+            _configured_model_option(""),
+        )
+        self.assertEqual(
+            ModelOption.CUSTOM,
+            _configured_model_option("provider/custom-model"),
+        )
+
+    def test_model_labels_show_relative_cost_and_time(self) -> None:
+        gemma = _model_rating_label(ModelOption.GEMMA)
+        kimi = _model_rating_label(ModelOption.KIMI)
+
+        self.assertEqual(
+            ModelOption.GEMMA.value,
+            _model_option_label(ModelOption.GEMMA),
+        )
+        self.assertNotIn(MONEY_ICON, _model_option_label(ModelOption.KIMI))
+        self.assertNotIn(HOURGLASS_ICON, _model_option_label(ModelOption.KIMI))
+        self.assertEqual(1, gemma.count(MONEY_ICON))
+        self.assertEqual(1, gemma.count(HOURGLASS_ICON))
+        self.assertEqual(3, kimi.count(MONEY_ICON))
+        self.assertEqual(3, kimi.count(HOURGLASS_ICON))
 
 
 if __name__ == "__main__":
