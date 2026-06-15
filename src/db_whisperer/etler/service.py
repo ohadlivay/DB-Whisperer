@@ -346,13 +346,14 @@ class ETLService:
                 base = self._fk_base(column.name)
                 if base is None or base in {"row", ""}:
                     continue
-                # Skip only the table's own primary key, not every unique
-                # column: a foreign key can be unique on the child side (a
-                # one-to-one link, or just a small sample with one row per
-                # parent), e.g. a unique orders.customer_id still references
-                # customers.customer_id.
-                if column.name in child.primary_key:
-                    continue
+
+                # A column that is unique on the child side is still an FK
+                # candidate (a one-to-one link, or a small sample with one row
+                # per parent). The primary key is allowed through too, but only
+                # to support shared-identity links and under a stricter guard
+                # (see _rank_parents).
+                is_primary = column.name in child.primary_key
+                is_unique_child = column.name in child.key_columns
 
                 child_profile = profile(child, column.name)
                 child_distinct = child_profile["distinct"]
@@ -375,6 +376,8 @@ class ETLService:
                     child_profile,
                     parent_keys,
                     profile,
+                    is_primary,
+                    is_unique_child,
                 )
                 relationships.update(
                     self._emit_relationships(
@@ -404,6 +407,8 @@ class ETLService:
         child_profile: dict,
         parent_keys: list[tuple[TableSchema, str]],
         profile,
+        is_primary: bool,
+        is_unique_child: bool,
     ) -> list[dict]:
         """Score every candidate parent key that passes the overlap gate."""
         child_distinct = child_profile["distinct"]
@@ -437,11 +442,29 @@ class ETLService:
             same_name_key = self._normalize(column.name) == self._normalize(
                 parent_column_name
             )
-            strong_signal = name_match or same_name_key or is_self
-            if child_distinct < self._MIN_SAFE_DISTINCT and not strong_signal:
-                continue
-
             parent_distinct = max(parent_profile["distinct"], 1)
+
+            if is_primary:
+                # The child column is this table's primary key, so the only
+                # valid foreign key is a shared-identity one-to-one link to a
+                # DIFFERENT table. Require a directional signal (a name match,
+                # or a same-named key where the child is a strict subset) so a
+                # standalone primary key -- or two unrelated tables that both
+                # key on the same id sequence -- is not cross-linked on value
+                # overlap alone.
+                if is_self:
+                    continue
+                proper_subset = child_distinct < parent_distinct
+                if not (name_match or (same_name_key and proper_subset)):
+                    continue
+            else:
+                strong_signal = name_match or same_name_key or is_self
+                if (
+                    child_distinct < self._MIN_SAFE_DISTINCT
+                    and not strong_signal
+                ):
+                    continue
+
             domain_fit = min(1.0, child_distinct / parent_distinct)
             parent_key_is_pk = parent_column_name in parent.primary_key
             non_id_parent = parent_column_name not in parent.id_key_columns
@@ -456,13 +479,19 @@ class ETLService:
                 - 0.5 * (1.0 - domain_fit)
                 - 2.5 * non_id_parent
             )
+            if is_self:
+                cardinality = "self-reference"
+            elif is_unique_child:
+                cardinality = "one-to-one"
+            else:
+                cardinality = "many-to-one"
             survivors.append(
                 {
                     "parent_table": parent.table_name,
                     "parent_column": parent_column_name,
                     "overlap": overlap,
                     "score": score,
-                    "is_self": is_self,
+                    "cardinality": cardinality,
                 }
             )
         return survivors
@@ -493,9 +522,7 @@ class ETLService:
                 parent_column=survivor["parent_column"],
                 overlap=round(survivor["overlap"], 4),
                 score=round(survivor["score"], 4),
-                cardinality=(
-                    "self-reference" if survivor["is_self"] else "many-to-one"
-                ),
+                cardinality=survivor["cardinality"],
                 ambiguous=ambiguous,
                 sampled=sampled,
             )

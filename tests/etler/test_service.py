@@ -219,6 +219,51 @@ class RelationshipDiscoveryTest(unittest.TestCase):
             self._fks(schema),
         )
 
+    def test_shared_primary_key_one_to_one_is_discovered(self) -> None:
+        # A column that is both the child's primary key and a foreign key
+        # (a shared-identity one-to-one link) must be discovered.
+        schema = self._ingest(
+            {
+                "users.csv": self._rows(
+                    "user_id,name", "1,Ada", "2,Bo", "3,Cy"
+                ),
+                "user_profiles.csv": self._rows(
+                    "user_id,bio", "1,x", "2,y"
+                ),
+            }
+        )
+        match = next(
+            (
+                r
+                for r in schema.relationships
+                if r.child_table == "user_profiles"
+                and r.child_column == "user_id"
+            ),
+            None,
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual("users", match.parent_table)
+        self.assertEqual("user_id", match.parent_column)
+        self.assertEqual("one-to-one", match.cardinality)
+        # The link is directional: users.user_id must not point back.
+        self.assertFalse(
+            any(
+                r.child_table == "users" and r.child_column == "user_id"
+                for r in schema.relationships
+            )
+        )
+
+    def test_unrelated_same_named_primary_keys_are_not_linked(self) -> None:
+        # Two independent tables that both key on the same id sequence and
+        # have no naming relationship must not be cross-linked on overlap.
+        schema = self._ingest(
+            {
+                "alpha.csv": self._rows("code_id,a", "1,x", "2,y", "3,z"),
+                "beta.csv": self._rows("code_id,b", "1,p", "2,q", "3,r"),
+            }
+        )
+        self.assertEqual((), schema.relationships)
+
     def test_self_referential_fk_detected(self) -> None:
         schema = self._ingest(
             {
