@@ -200,6 +200,25 @@ class RelationshipDiscoveryTest(unittest.TestCase):
             f"unrelated products table should not appear: {fks}",
         )
 
+    def test_unique_child_fk_column_is_discovered(self) -> None:
+        # A foreign key that happens to be unique on the child side (a
+        # one-to-one link, or a small sample with one row per parent) must
+        # still be discovered, not skipped as if it were a primary key.
+        schema = self._ingest(
+            {
+                "customers.csv": self._rows(
+                    "customer_id,name", "1,Ada", "2,Bo", "3,Cy"
+                ),
+                "orders.csv": self._rows(
+                    "order_id,customer_id", "100,1", "101,2", "102,3"
+                ),
+            }
+        )
+        self.assertIn(
+            ("orders", "customer_id", "customers", "customer_id"),
+            self._fks(schema),
+        )
+
     def test_self_referential_fk_detected(self) -> None:
         schema = self._ingest(
             {

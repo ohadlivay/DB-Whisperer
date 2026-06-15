@@ -346,7 +346,12 @@ class ETLService:
                 base = self._fk_base(column.name)
                 if base is None or base in {"row", ""}:
                     continue
-                if column.name in child.key_columns:
+                # Skip only the table's own primary key, not every unique
+                # column: a foreign key can be unique on the child side (a
+                # one-to-one link, or just a small sample with one row per
+                # parent), e.g. a unique orders.customer_id still references
+                # customers.customer_id.
+                if column.name in child.primary_key:
                     continue
 
                 child_profile = profile(child, column.name)
