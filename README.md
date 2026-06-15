@@ -1,6 +1,7 @@
 # DB Whisperer
 
-Explore your database with ease! simply upload a CSV and start chatting. The app is designed to handle relational databases and allows you to specify ambiguous queries
+Explore your database with ease. The bundled student-impact dataset is ready
+to query immediately, or upload a CSV and start chatting with your own data.
 
 ## Live Demo
 
@@ -9,8 +10,9 @@ Explore your database with ease! simply upload a CSV and start chatting. The app
 ## How to Use
 
 1. Get an API key at [OpenRouter](https://openrouter.ai/keys).
-2. Open the live demo and upload your CSV files.
-3. Start chatting.
+2. Open the live demo and try the bundled student-impact dataset.
+3. Optionally upload your own CSV to replace the example.
+4. Start chatting.
 
 The API key is sent to OpenRouter for the current session and is not written to
 the application logs.

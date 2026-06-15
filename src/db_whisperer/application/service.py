@@ -235,6 +235,7 @@ class ApplicationService:
                 pairs=tuple(pairs),
                 api_key=api_key,
                 model=model,
+                clarifications=clarifications,
             )
         )
         if ambiguity.state == ComponentState.FAILED:

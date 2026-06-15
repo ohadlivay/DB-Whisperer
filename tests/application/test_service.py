@@ -266,6 +266,11 @@ class ApplicationServiceTest(unittest.TestCase):
                 key=lambda request: request.attempt_number,
             )
         ])
+        self.assertEqual((), ambiguity.requests[0].clarifications)
+        self.assertEqual(
+            (clarification,),
+            ambiguity.requests[1].clarifications,
+        )
 
     def test_third_iteration_returns_last_query_without_another_judgment(
         self,

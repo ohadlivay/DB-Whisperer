@@ -31,6 +31,17 @@ class AmbiguityService:
         if validation_error:
             return self._failure(validation_error)
 
+        unique_pairs = self.prompt_builder.unique_pairs(request.pairs)
+        if len(unique_pairs) < 2:
+            return AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=True,
+                reason=(
+                    "Ambiguity check skipped because fewer than two unique "
+                    "SQL/table alternatives remained after deduplication."
+                ),
+            )
+
         try:
             prompt = self.prompt_builder.build(request)
             judgment = self.client.evaluate(

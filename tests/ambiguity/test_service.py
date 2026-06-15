@@ -143,6 +143,40 @@ class AmbiguityServiceTest(unittest.TestCase):
         self.assertEqual(ComponentState.FAILED, decision.state)
         self.assertEqual([], client.prompts)
 
+    def test_skips_llm_when_deduplication_leaves_one_alternative(
+        self,
+    ) -> None:
+        base = request()
+        duplicate_result = AmbiguityRequest(
+            user_query=base.user_query,
+            pairs=(
+                base.pairs[0],
+                ExecutedQueryPair(
+                    candidate_id="candidate_2",
+                    sql=base.pairs[0].sql,
+                    columns=base.pairs[0].columns,
+                    rows=base.pairs[0].rows,
+                    truncated=base.pairs[0].truncated,
+                ),
+            ),
+            api_key=base.api_key,
+            model=base.model,
+        )
+        client = FakeJudgeClient(
+            {
+                "status": "clarify",
+                "question": "This should not be called.",
+                "options": ["A", "B"],
+            }
+        )
+
+        decision = AmbiguityService(client=client).evaluate(duplicate_result)
+
+        self.assertEqual(ComponentState.ACCEPTED, decision.state)
+        self.assertTrue(decision.passed)
+        self.assertIn("skipped", decision.reason)
+        self.assertEqual([], client.prompts)
+
     def test_rejects_duplicate_candidate_ids(self) -> None:
         base = request()
         duplicate = AmbiguityRequest(

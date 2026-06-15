@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 from datetime import datetime
 from enum import StrEnum
+from functools import lru_cache
+import hashlib
 from html import escape
 import json
 import os
 from pathlib import Path
 from typing import Any
 
+import requests
 import streamlit as st
 
 from db_whisperer.application import ApplicationService
@@ -23,6 +26,7 @@ class ModelOption(StrEnum):
     DEEPSEEK = "deepseek/deepseek-v4-flash"
     KIMI = "moonshotai/kimi-k2.7-code"
     GEMMA = "google/gemma-4-31b-it"
+    FREE = "openrouter/free"
     CUSTOM = "Choose your own"
 
 
@@ -30,10 +34,19 @@ MODEL_RATINGS: dict[ModelOption, tuple[int, int]] = {
     ModelOption.DEEPSEEK: (1, 2),
     ModelOption.KIMI: (3, 3),
     ModelOption.GEMMA: (1, 1),
+    ModelOption.FREE: (1, 2),
 }
 MONEY_ICON = "\U0001F4B0"
 HOURGLASS_ICON = "\u23F3"
 CHANGELOG_PATH = Path(__file__).with_name("changelog.json")
+OPENROUTER_KEY_ENDPOINT = "https://openrouter.ai/api/v1/key"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+EXAMPLE_DATASET_PATH = (
+    PROJECT_ROOT
+    / "data"
+    / "single csv"
+    / "ai_student_impact_dataset.csv"
+)
 
 
 def _model_option_label(option: ModelOption) -> str:
@@ -111,6 +124,92 @@ def _latest_release(
     return max(releases, key=_release_timestamp)
 
 
+def _api_key_fingerprint(api_key: str) -> str:
+    """Return a stable non-secret fingerprint for session tracking."""
+    return hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()
+
+
+def _fetch_openrouter_key_usage(
+    api_key: str,
+    timeout_seconds: float = 10,
+) -> float:
+    """Fetch cumulative usage for the current OpenRouter API key."""
+    response = requests.get(
+        OPENROUTER_KEY_ENDPOINT,
+        headers={"Authorization": f"Bearer {api_key.strip()}"},
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("OpenRouter key response did not contain data.")
+    usage = data.get("usage")
+    if isinstance(usage, bool):
+        raise ValueError("OpenRouter key usage was not numeric.")
+    try:
+        return float(usage)
+    except (TypeError, ValueError) as error:
+        raise ValueError("OpenRouter key usage was not numeric.") from error
+
+
+def _sync_usage_tracking(
+    api_key: str,
+    state: MutableMapping[str, Any],
+    *,
+    force_refresh: bool = False,
+    fetch_usage: Callable[[str], float] = _fetch_openrouter_key_usage,
+) -> None:
+    """Track usage delta from the moment the current API key appears."""
+    normalized_key = api_key.strip()
+    if not normalized_key:
+        state["usage_key_fingerprint"] = ""
+        state["usage_baseline"] = None
+        state["usage_current"] = None
+        state["usage_error"] = ""
+        return
+
+    fingerprint = _api_key_fingerprint(normalized_key)
+    is_new_key = state.get("usage_key_fingerprint") != fingerprint
+    should_fetch = (
+        is_new_key
+        or force_refresh
+        or state.get("usage_baseline") is None
+    )
+    if not should_fetch:
+        return
+
+    if is_new_key:
+        state["usage_key_fingerprint"] = fingerprint
+        state["usage_baseline"] = None
+        state["usage_current"] = None
+
+    try:
+        usage = fetch_usage(normalized_key)
+    except Exception as error:  # pragma: no cover - exact HTTP errors vary.
+        state["usage_error"] = f"Usage unavailable: {error}"
+        return
+
+    if state.get("usage_baseline") is None:
+        state["usage_baseline"] = usage
+    state["usage_current"] = usage
+    state["usage_error"] = ""
+
+
+def _format_session_usage_delta(
+    state: MutableMapping[str, Any],
+) -> str:
+    """Render the current OpenRouter session usage delta."""
+    if state.get("usage_error"):
+        return "Session usage: unavailable"
+    baseline = state.get("usage_baseline")
+    current = state.get("usage_current")
+    if baseline is None or current is None:
+        return "Session usage: --"
+    delta = max(float(current) - float(baseline), 0.0)
+    return f"Session usage: ${delta:.4f}"
+
+
 @st.dialog("Changelog", width="large")
 def _show_changelog(releases: tuple[dict[str, Any], ...]) -> None:
     """Display release notes in a modal dialog."""
@@ -138,6 +237,10 @@ def _initialize_state() -> None:
         "chat_history": (),
         "active_candidate_count": 3,
         "query_pending": False,
+        "usage_key_fingerprint": "",
+        "usage_baseline": None,
+        "usage_current": None,
+        "usage_error": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -207,11 +310,17 @@ def _apply_styles() -> None:
             color: var(--text);
         }
 
-        [data-testid="stSidebar"] .st-key-version_button {
-            margin: -1rem 1.5rem 1.25rem;
+        [data-testid="stSidebar"] .st-key-version_usage_row {
+            margin: -1rem 1.25rem 1.25rem;
         }
 
-        [data-testid="stSidebar"] .st-key-version_button button {
+        [data-testid="stSidebar"] .st-key-version_button,
+        [data-testid="stSidebar"] .st-key-usage_label {
+            margin: 0;
+        }
+
+        [data-testid="stSidebar"] .st-key-version_button button,
+        .usage-pill {
             min-height: auto;
             padding: 0.25rem 0.55rem;
             border: 1px solid var(--outline);
@@ -220,11 +329,17 @@ def _apply_styles() -> None:
             color: var(--text-muted);
             font-size: 0.75rem;
             box-shadow: none;
+            white-space: nowrap;
         }
 
         [data-testid="stSidebar"] .st-key-version_button button:hover {
             border-color: var(--text-muted);
             color: var(--text);
+        }
+
+        .usage-pill {
+            display: inline-flex;
+            max-width: 100%;
         }
 
         .sidebar-section {
@@ -403,11 +518,31 @@ def _application_service() -> ApplicationService:
     return ApplicationService()
 
 
+@lru_cache(maxsize=1)
+def _example_dataset_upload() -> CsvUpload:
+    """Read the bundled example dataset once per application process."""
+    return CsvUpload(
+        name=EXAMPLE_DATASET_PATH.name,
+        content=EXAMPLE_DATASET_PATH.read_bytes(),
+        content_type="text/csv",
+    )
+
+
 def _ingest_upload(
     upload: Any | None,
     application: ApplicationService,
 ) -> None:
-    signature = (upload.name, upload.size) if upload is not None else ()
+    if upload is None:
+        source = _example_dataset_upload()
+        signature = ("example", source.name, len(source.content))
+    else:
+        source = CsvUpload(
+            name=upload.name,
+            content=upload.getvalue(),
+            content_type=upload.type or "text/csv",
+        )
+        signature = ("upload", upload.name, upload.size)
+
     if signature == st.session_state.upload_signature:
         return
 
@@ -418,20 +553,8 @@ def _ingest_upload(
     st.session_state.clarification_history = ()
     st.session_state.chat_history = ()
     st.session_state.query_pending = False
-    if upload is None:
-        st.session_state.ingestion_result = None
-        st.session_state.data_ready = False
-        return
 
-    result = application.ingest_csvs(
-        [
-            CsvUpload(
-                name=upload.name,
-                content=upload.getvalue(),
-                content_type=upload.type or "text/csv",
-            )
-        ]
-    )
+    result = application.ingest_csvs([source])
     st.session_state.ingestion_result = result
     st.session_state.data_ready = result.state == ComponentState.ACCEPTED
 
@@ -440,18 +563,38 @@ def _render_sidebar(
     application: ApplicationService,
 ) -> tuple[str, str, int]:
     with st.sidebar:
+        existing_api_key = st.session_state.get("openrouter_api_key", "")
+        _sync_usage_tracking(existing_api_key, st.session_state)
+
         releases = _load_changelog()
         latest_release = _latest_release(releases)
         st.markdown(
             '<div class="sidebar-brand">DB Whisperer</div>',
             unsafe_allow_html=True,
         )
-        if st.button(
-            f"v{latest_release['version']}",
-            key="version_button",
-            help="View changelog",
-        ):
-            _show_changelog(releases)
+        with st.container(key="version_usage_row"):
+            version_column, usage_column = st.columns(
+                [0.28, 0.72],
+                gap="small",
+                vertical_alignment="center",
+            )
+            with version_column:
+                if st.button(
+                    f"v{latest_release['version']}",
+                    key="version_button",
+                    help="View changelog",
+                ):
+                    _show_changelog(releases)
+            with usage_column:
+                with st.container(key="usage_label"):
+                    st.markdown(
+                        (
+                            '<div class="usage-pill">'
+                            f"{escape(_format_session_usage_delta(st.session_state))}"
+                            "</div>"
+                        ),
+                        unsafe_allow_html=True,
+                    )
 
         _section_label("Data source")
         upload = st.file_uploader(
@@ -461,12 +604,18 @@ def _render_sidebar(
             label_visibility="collapsed",
         )
         _ingest_upload(upload, application)
+        if upload is None:
+            st.caption(
+                "Using bundled example: "
+                f"{EXAMPLE_DATASET_PATH.name}"
+            )
 
         _section_label("LLM configuration")
         entered_api_key = st.text_input(
             "OpenRouter API key",
             type="password",
             placeholder="sk-or-v1-...",
+            key="openrouter_api_key",
         )
         configured_model = os.getenv("OPENROUTER_MODEL", "")
         configured_option = _configured_model_option(configured_model)
@@ -505,6 +654,7 @@ def _render_sidebar(
             step=1,
         ))
         api_key = entered_api_key or os.getenv("OPENROUTER_API_KEY", "")
+        _sync_usage_tracking(entered_api_key, st.session_state)
 
         st.divider()
         _status(
@@ -712,6 +862,11 @@ def _render_workflow_response(
                     iteration=workflow.iteration + 1,
                     candidate_count=st.session_state.active_candidate_count,
                 )
+                _sync_usage_tracking(
+                    st.session_state.get("openrouter_api_key", ""),
+                    st.session_state,
+                    force_refresh=True,
+                )
             st.rerun()
         return
 
@@ -768,6 +923,11 @@ def _render_chat(
                 model=model,
                 iteration=1,
                 candidate_count=st.session_state.active_candidate_count,
+            )
+            _sync_usage_tracking(
+                st.session_state.get("openrouter_api_key", ""),
+                st.session_state,
+                force_refresh=True,
             )
         st.session_state.query_pending = False
         st.rerun()

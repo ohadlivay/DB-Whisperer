@@ -26,12 +26,15 @@ from db_whisperer.gui.app import (
     ModelOption,
     _chat_window_height,
     _configured_model_option,
+    _example_dataset_upload,
+    _format_session_usage_delta,
     _format_clarification,
     _latest_release,
     _load_changelog,
     _model_option_label,
     _model_rating_label,
     _queue_query,
+    _sync_usage_tracking,
 )
 
 
@@ -40,8 +43,8 @@ class GuiWorkflowTest(unittest.TestCase):
         app = AppTest.from_file(str(ROOT / "app.py"))
         app.run(timeout=20)
         self.assertFalse(app.exception)
+        self.assertTrue(app.session_state["data_ready"])
         app.session_state["active_query"] = "Analyze the data"
-        app.session_state["data_ready"] = True
         return app
 
     @staticmethod
@@ -196,6 +199,7 @@ class GuiWorkflowTest(unittest.TestCase):
                 "deepseek/deepseek-v4-flash",
                 "moonshotai/kimi-k2.7-code",
                 "google/gemma-4-31b-it",
+                "openrouter/free",
                 "Choose your own",
             ],
             [option.value for option in ModelOption],
@@ -267,7 +271,72 @@ class GuiWorkflowTest(unittest.TestCase):
     def test_sidebar_displays_latest_version_button(self) -> None:
         app = self._app()
 
-        self.assertIn("v1.2.0", {button.label for button in app.button})
+        self.assertIn("v1.3.0", {button.label for button in app.button})
+        markdown = "\n".join(item.value for item in app.markdown)
+        self.assertIn("Session usage:", markdown)
+
+    def test_usage_tracking_reports_session_delta(self) -> None:
+        state = {}
+        usages = iter((12.5, 12.625))
+        calls: list[str] = []
+
+        def fetch_usage(api_key: str) -> float:
+            calls.append(api_key)
+            return next(usages)
+
+        _sync_usage_tracking(
+            " secret-key ",
+            state,
+            fetch_usage=fetch_usage,
+        )
+
+        self.assertEqual("$0.0000", _format_session_usage_delta(state)[-7:])
+        self.assertEqual(12.5, state["usage_baseline"])
+        self.assertEqual(12.5, state["usage_current"])
+        self.assertNotIn("secret-key", state.values())
+
+        _sync_usage_tracking(
+            "secret-key",
+            state,
+            force_refresh=True,
+            fetch_usage=fetch_usage,
+        )
+
+        self.assertEqual(
+            "Session usage: $0.1250",
+            _format_session_usage_delta(state),
+        )
+        self.assertEqual(["secret-key", "secret-key"], calls)
+
+    def test_usage_tracking_resets_without_api_key(self) -> None:
+        state = {
+            "usage_key_fingerprint": "old",
+            "usage_baseline": 10.0,
+            "usage_current": 11.0,
+            "usage_error": "old error",
+        }
+
+        _sync_usage_tracking("", state)
+
+        self.assertEqual("", state["usage_key_fingerprint"])
+        self.assertIsNone(state["usage_baseline"])
+        self.assertIsNone(state["usage_current"])
+        self.assertEqual("", state["usage_error"])
+        self.assertEqual("Session usage: --", _format_session_usage_delta(state))
+
+    def test_bundled_student_dataset_is_the_default(self) -> None:
+        upload = _example_dataset_upload()
+
+        self.assertEqual("ai_student_impact_dataset.csv", upload.name)
+        self.assertTrue(upload.content.startswith(b"Student_ID,"))
+
+        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=20)
+        self.assertFalse(app.exception)
+        ingestion = app.session_state["ingestion_result"]
+        self.assertEqual(
+            ("ai_student_impact_dataset.csv",),
+            ingestion.schema.source_names,
+        )
 
 
 if __name__ == "__main__":

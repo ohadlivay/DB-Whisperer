@@ -1,30 +1,47 @@
 {
   "releases": [
     {
-      "version": "1.2.0",
-      "released_at": "2026-06-15T12:00:00+03:00",
+      "version": "1.3.0",
+      "released_at": "2026-06-15T23:15:00+03:00",
       "changes": [
-        "Added preset OpenRouter model selection with relative cost and response-time ratings.",
-        "Improved the chat layout, message history, and immediate query feedback.",
-        "Added a public Streamlit deployment and GitHub project documentation."
+        "Added preset, free, and custom OpenRouter model selection with Gemma as the default and relative cost and response-time ratings.",
+        "Added a session usage counter that shows the OpenRouter spend delta since the API key was entered and refreshes after model calls.",
+        "Improved the chat experience with immediate user messages, persistent scrollable history, and distinct minimal styling for user and assistant responses.",
+        "Added the public Streamlit deployment, refreshed GitHub documentation, and introduced a visible version button with a JSON-backed changelog dialog.",
+        "Bundled the student-impact dataset as an automatically loaded example that is replaced by an uploaded CSV and restored when the upload is cleared.",
+        "Improved ambiguity prompts by deduplicating exact alternatives, using numbered SQL/table sections, limiting table previews to five rows, and forcing clarification questions to choose between represented interpretations.",
+        "Passed previous clarification question-and-answer pairs into the ambiguity prompt so repeated questions are avoided.",
+        "Skipped the ambiguity LLM call when deduplication leaves fewer than two unique SQL/table alternatives."
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "released_at": "2026-06-15T19:00:00+03:00",
+      "changes": [
+        "Added configurable SQL candidate generation with a default of three candidates and parallel execution to reduce wait time.",
+        "Connected the ambiguity layer to the GUI with two clickable clarification options and clarification answers appended to later querier prompts.",
+        "Added detailed prompt, response, generation-failure, and execution-failure logging to logs/prompts.jsonl for debugging model and SQL issues.",
+        "Improved query failure messages so invalid SQL, failed execution, and invalid model output are easier to diagnose."
       ]
     },
     {
       "version": "1.1.0",
-      "released_at": "2026-06-14T12:00:00+03:00",
+      "released_at": "2026-06-15T16:00:00+03:00",
       "changes": [
-        "Added multi-turn ambiguity clarification with two clickable answer options.",
-        "Made SQL candidate generation parallel and configurable.",
-        "Added prompt, response, generation-failure, and execution-failure logging."
+        "Implemented single-CSV ingestion into DuckDB and exposed schema metadata for downstream components.",
+        "Implemented schema-aware natural-language-to-SQL generation through OpenRouter using static instructions, schema, top rows, shape, and column statistics.",
+        "Added safe read-only SQL validation, query execution, and result display through the application workflow.",
+        "Built the first ambiguity service contract for judging executed SQL/result alternatives and returning pass or one two-option clarification question."
       ]
     },
     {
       "version": "1.0.0",
-      "released_at": "2026-06-13T12:00:00+03:00",
+      "released_at": "2026-06-15T12:00:00+03:00",
       "changes": [
-        "Added single-CSV ingestion into a queryable DuckDB database.",
-        "Added schema-aware natural-language-to-SQL generation through OpenRouter.",
-        "Added read-only SQL validation, execution, and Streamlit result display."
+        "Created the high-level architecture document for ETL, ambiguity specification, querying, and GUI integration.",
+        "Created the project folder structure and component documentation for the ETLer, Querier, Ambiguity, and GUI modules.",
+        "Added a minimal Streamlit interface with a clean query workspace, data and connection status indicators, and placeholders for future workflow features.",
+        "Kept the project domain-neutral so it can work with generic CSV data instead of one specific dataset."
       ]
     }
   ]

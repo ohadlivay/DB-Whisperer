@@ -124,6 +124,7 @@ class AmbiguityRequest:
     pairs: tuple[ExecutedQueryPair, ...]
     api_key: str
     model: str
+    clarifications: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

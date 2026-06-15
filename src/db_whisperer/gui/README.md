@@ -23,8 +23,10 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The page provides a domain-neutral data sidebar, LLM configuration, preset
-models with relative cost and response-time indicators, a custom model-ID
-option, and query input. It displays each ambiguity question with two clickable
-answer options, then shows the final rows and SQL after a pass or three
-iterations. Previous exchanges remain visible in a scrollable chat window.
+The bundled student-impact CSV is loaded whenever no user file is selected, so
+the app is immediately queryable as a toy example. Uploading another CSV
+replaces the example for the current session.
+
+The page also provides preset models with relative cost and response-time
+indicators, a custom model-ID option, and query input. Previous exchanges
+remain visible in a scrollable chat window.
