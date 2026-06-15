@@ -1,0 +1,31 @@
+{
+  "releases": [
+    {
+      "version": "1.2.0",
+      "released_at": "2026-06-15T12:00:00+03:00",
+      "changes": [
+        "Added preset OpenRouter model selection with relative cost and response-time ratings.",
+        "Improved the chat layout, message history, and immediate query feedback.",
+        "Added a public Streamlit deployment and GitHub project documentation."
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "released_at": "2026-06-14T12:00:00+03:00",
+      "changes": [
+        "Added multi-turn ambiguity clarification with two clickable answer options.",
+        "Made SQL candidate generation parallel and configurable.",
+        "Added prompt, response, generation-failure, and execution-failure logging."
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "released_at": "2026-06-13T12:00:00+03:00",
+      "changes": [
+        "Added single-CSV ingestion into a queryable DuckDB database.",
+        "Added schema-aware natural-language-to-SQL generation through OpenRouter.",
+        "Added read-only SQL validation, execution, and Streamlit result display."
+      ]
+    }
+  ]
+}

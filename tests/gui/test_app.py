@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 
 from streamlit.testing.v1 import AppTest
@@ -25,6 +27,8 @@ from db_whisperer.gui.app import (
     _chat_window_height,
     _configured_model_option,
     _format_clarification,
+    _latest_release,
+    _load_changelog,
     _model_option_label,
     _model_rating_label,
     _queue_query,
@@ -223,6 +227,47 @@ class GuiWorkflowTest(unittest.TestCase):
         self.assertEqual(1, gemma.count(HOURGLASS_ICON))
         self.assertEqual(3, kimi.count(MONEY_ICON))
         self.assertEqual(3, kimi.count(HOURGLASS_ICON))
+
+    def test_changelog_uses_most_recent_release_for_version(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            path = Path(directory) / "changelog.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "releases": [
+                            {
+                                "version": "1.0.0",
+                                "released_at": "2026-06-13T12:00:00+03:00",
+                                "changes": ["Initial release."],
+                            },
+                            {
+                                "version": "1.2.0",
+                                "released_at": "2026-06-15T12:00:00+03:00",
+                                "changes": ["Newest release."],
+                            },
+                            {
+                                "version": "1.1.0",
+                                "released_at": "2026-06-14T12:00:00+03:00",
+                                "changes": ["Middle release."],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            releases = _load_changelog(path)
+
+            self.assertEqual("1.2.0", _latest_release(releases)["version"])
+            self.assertEqual(
+                ["1.2.0", "1.1.0", "1.0.0"],
+                [release["version"] for release in releases],
+            )
+
+    def test_sidebar_displays_latest_version_button(self) -> None:
+        app = self._app()
+
+        self.assertIn("v1.2.0", {button.label for button in app.button})
 
 
 if __name__ == "__main__":

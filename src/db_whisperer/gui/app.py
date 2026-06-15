@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
+from datetime import datetime
 from enum import StrEnum
 from html import escape
+import json
 import os
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -30,6 +33,7 @@ MODEL_RATINGS: dict[ModelOption, tuple[int, int]] = {
 }
 MONEY_ICON = "\U0001F4B0"
 HOURGLASS_ICON = "\u23F3"
+CHANGELOG_PATH = Path(__file__).with_name("changelog.json")
 
 
 def _model_option_label(option: ModelOption) -> str:
@@ -58,6 +62,68 @@ def _configured_model_option(model: str) -> ModelOption:
         if option != ModelOption.CUSTOM and option.value == normalized:
             return option
     return ModelOption.CUSTOM
+
+
+def _release_timestamp(release: dict[str, Any]) -> datetime:
+    """Parse one changelog release timestamp."""
+    released_at = release.get("released_at")
+    if not isinstance(released_at, str):
+        raise ValueError("Every changelog release requires released_at.")
+    return datetime.fromisoformat(released_at.replace("Z", "+00:00"))
+
+
+def _load_changelog(
+    path: Path = CHANGELOG_PATH,
+) -> tuple[dict[str, Any], ...]:
+    """Load and validate changelog releases from JSON."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    releases = payload.get("releases")
+    if not isinstance(releases, list) or not releases:
+        raise ValueError("Changelog must contain at least one release.")
+
+    for release in releases:
+        if not isinstance(release, dict):
+            raise ValueError("Every changelog release must be an object.")
+        if not isinstance(release.get("version"), str):
+            raise ValueError("Every changelog release requires a version.")
+        changes = release.get("changes")
+        if (
+            not isinstance(changes, list)
+            or not changes
+            or not all(isinstance(change, str) for change in changes)
+        ):
+            raise ValueError(
+                "Every changelog release requires a non-empty changes list."
+            )
+        _release_timestamp(release)
+
+    return tuple(
+        sorted(releases, key=_release_timestamp, reverse=True)
+    )
+
+
+def _latest_release(
+    releases: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    """Return the most recently released changelog entry."""
+    if not releases:
+        raise ValueError("At least one changelog release is required.")
+    return max(releases, key=_release_timestamp)
+
+
+@st.dialog("Changelog", width="large")
+def _show_changelog(releases: tuple[dict[str, Any], ...]) -> None:
+    """Display release notes in a modal dialog."""
+    for release in sorted(
+        releases,
+        key=_release_timestamp,
+        reverse=True,
+    ):
+        released_on = _release_timestamp(release).date().isoformat()
+        st.subheader(f"Version {release['version']}")
+        st.caption(released_on)
+        for change in release["changes"]:
+            st.markdown(f"- {change}")
 
 
 def _initialize_state() -> None:
@@ -135,10 +201,29 @@ def _apply_styles() -> None:
 
         .sidebar-brand {
             padding: 1.5rem;
-            border-bottom: 1px solid var(--outline);
             font-size: 1.45rem;
             font-weight: 600;
             letter-spacing: -0.02em;
+            color: var(--text);
+        }
+
+        [data-testid="stSidebar"] .st-key-version_button {
+            margin: -1rem 1.5rem 1.25rem;
+        }
+
+        [data-testid="stSidebar"] .st-key-version_button button {
+            min-height: auto;
+            padding: 0.25rem 0.55rem;
+            border: 1px solid var(--outline);
+            border-radius: 9999px;
+            background: var(--surface-lowest);
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            box-shadow: none;
+        }
+
+        [data-testid="stSidebar"] .st-key-version_button button:hover {
+            border-color: var(--text-muted);
             color: var(--text);
         }
 
@@ -355,10 +440,18 @@ def _render_sidebar(
     application: ApplicationService,
 ) -> tuple[str, str, int]:
     with st.sidebar:
+        releases = _load_changelog()
+        latest_release = _latest_release(releases)
         st.markdown(
             '<div class="sidebar-brand">DB Whisperer</div>',
             unsafe_allow_html=True,
         )
+        if st.button(
+            f"v{latest_release['version']}",
+            key="version_button",
+            help="View changelog",
+        ):
+            _show_changelog(releases)
 
         _section_label("Data source")
         upload = st.file_uploader(
