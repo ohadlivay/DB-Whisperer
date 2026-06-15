@@ -21,6 +21,7 @@ from db_whisperer.contracts import (
     QueryWorkflowResult,
 )
 from db_whisperer.gui.app import (
+    DATASET_STUDENT,
     HOURGLASS_ICON,
     MONEY_ICON,
     ModelOption,
@@ -29,6 +30,7 @@ from db_whisperer.gui.app import (
     _example_dataset_upload,
     _format_session_usage_delta,
     _format_clarification,
+    _ingest_sources,
     _latest_release,
     _load_changelog,
     _model_option_label,
@@ -271,7 +273,7 @@ class GuiWorkflowTest(unittest.TestCase):
     def test_sidebar_displays_latest_version_button(self) -> None:
         app = self._app()
 
-        self.assertIn("v1.3.0", {button.label for button in app.button})
+        self.assertIn("v1.4.0", {button.label for button in app.button})
         markdown = "\n".join(item.value for item in app.markdown)
         self.assertIn("Session usage:", markdown)
 
@@ -324,19 +326,48 @@ class GuiWorkflowTest(unittest.TestCase):
         self.assertEqual("", state["usage_error"])
         self.assertEqual("Session usage: --", _format_session_usage_delta(state))
 
-    def test_bundled_student_dataset_is_the_default(self) -> None:
+    def test_single_csv_example_is_available(self) -> None:
         upload = _example_dataset_upload()
 
         self.assertEqual("ai_student_impact_dataset.csv", upload.name)
         self.assertTrue(upload.content.startswith(b"Student_ID,"))
 
-        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=20)
+    def test_bundled_relational_dataset_is_the_default(self) -> None:
+        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
+
+        self.assertFalse(app.exception)
+        ingestion = app.session_state["ingestion_result"]
+        source_names = set(ingestion.schema.source_names)
+        self.assertIn("orders.csv", source_names)
+        self.assertIn("customers.csv", source_names)
+        self.assertGreater(len(ingestion.schema.table_names), 1)
+        self.assertTrue(ingestion.schema.relationships)
+
+    def test_student_dataset_can_be_selected(self) -> None:
+        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
+        self.assertFalse(app.exception)
+
+        app.selectbox[0].set_value(DATASET_STUDENT).run(timeout=30)
+
         self.assertFalse(app.exception)
         ingestion = app.session_state["ingestion_result"]
         self.assertEqual(
             ("ai_student_impact_dataset.csv",),
             ingestion.schema.source_names,
         )
+
+    def test_relationships_panel_lists_discovered_fks(self) -> None:
+        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
+        self.assertFalse(app.exception)
+
+        rendered = json.dumps([table.value for table in app.table], default=str)
+        self.assertIn("orders.customer_id", rendered)
+        self.assertIn("customers.customer_id", rendered)
+
+    def test_empty_sources_is_a_noop(self) -> None:
+        # An empty source list must short-circuit before touching Streamlit
+        # session state, so previously ingested data is preserved.
+        self.assertIsNone(_ingest_sources([], ("upload", ()), object()))
 
 
 if __name__ == "__main__":

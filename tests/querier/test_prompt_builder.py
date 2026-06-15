@@ -154,5 +154,63 @@ class PromptBuilderTest(unittest.TestCase):
             )
 
 
+    def test_prompt_includes_relationships_section(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            ingestion = ETLService(
+                Path(directory) / "test.duckdb"
+            ).ingest(
+                [
+                    CsvUpload(
+                        "customers.csv",
+                        b"customer_id,name\n1,Ada\n2,Bo\n3,Cy\n",
+                    ),
+                    CsvUpload(
+                        "orders.csv",
+                        b"order_id,customer_id\n10,1\n11,2\n12,1\n13,3\n",
+                    ),
+                ]
+            )
+
+            prompt = PromptBuilder().build(
+                "How many orders per customer?",
+                ingestion.schema,
+            )
+
+            self.assertIn("RELATIONSHIPS", prompt)
+            self.assertIn(
+                '"orders"."customer_id" -> "customers"."customer_id"',
+                prompt,
+            )
+            self.assertLess(
+                prompt.index("\n\nVALID IDENTIFIERS\n"),
+                prompt.index("\n\nRELATIONSHIPS"),
+            )
+            self.assertLess(
+                prompt.index("\n\nRELATIONSHIPS"),
+                prompt.index("USER REQUEST"),
+            )
+
+    def test_ambiguous_relationships_render_as_a_group(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            ingestion = ETLService(
+                Path(directory) / "test.duckdb"
+            ).ingest(
+                [
+                    CsvUpload("items_a.csv", b"item_id,a\n1,x\n2,y\n3,z\n"),
+                    CsvUpload("items_b.csv", b"item_id,b\n1,x\n2,y\n3,z\n"),
+                    CsvUpload(
+                        "events.csv",
+                        b"event_id,item_id\n10,1\n11,2\n12,3\n13,1\n",
+                    ),
+                ]
+            )
+
+            prompt = PromptBuilder().build("Summarize events", ingestion.schema)
+
+            self.assertIn("may reference one of", prompt)
+            self.assertIn('"items_a"."item_id"', prompt)
+            self.assertIn('"items_b"."item_id"', prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

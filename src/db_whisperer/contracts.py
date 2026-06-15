@@ -26,10 +26,42 @@ class CsvUpload:
 
 @dataclass(frozen=True)
 class ColumnMetadata:
-    """One column discovered in the imported CSV."""
+    """One column discovered in an imported CSV."""
 
     name: str
     data_type: str
+    table_name: str = ""
+
+
+@dataclass(frozen=True)
+class TableSchema:
+    """Schema for one table loaded from a single CSV file."""
+
+    table_name: str
+    columns: tuple[ColumnMetadata, ...]
+    row_count: int
+    key_columns: tuple[str, ...] = ()
+    id_key_columns: tuple[str, ...] = ()
+    primary_key: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Relationship:
+    """A discovered foreign-key relationship between two loaded tables.
+
+    Relationships are advisory metadata derived from naming and data overlap;
+    they are never enforced as DuckDB constraints.
+    """
+
+    child_table: str
+    child_column: str
+    parent_table: str
+    parent_column: str
+    overlap: float = 1.0
+    score: float = 1.0
+    cardinality: str = "many-to-one"
+    ambiguous: bool = False
+    sampled: bool = False
 
 
 @dataclass(frozen=True)
@@ -41,6 +73,10 @@ class SchemaMetadata:
     table_names: tuple[str, ...] = ()
     columns: tuple[ColumnMetadata, ...] = ()
     row_count: int | None = None
+    tables: tuple[TableSchema, ...] = ()
+    relationships: tuple[Relationship, ...] = ()
+    discovery_complete: bool = True
+    discovery_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

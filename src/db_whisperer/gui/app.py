@@ -41,12 +41,14 @@ HOURGLASS_ICON = "\u23F3"
 CHANGELOG_PATH = Path(__file__).with_name("changelog.json")
 OPENROUTER_KEY_ENDPOINT = "https://openrouter.ai/api/v1/key"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_DATASET_PATH = (
-    PROJECT_ROOT
-    / "data"
-    / "single csv"
-    / "ai_student_impact_dataset.csv"
-)
+DATA_ROOT = PROJECT_ROOT / "data"
+RELATIONAL_DATASET_DIR = DATA_ROOT / "relational csv"
+SINGLE_DATASET_PATH = DATA_ROOT / "single csv" / "ai_student_impact_dataset.csv"
+EXAMPLE_DATASET_PATH = SINGLE_DATASET_PATH
+
+DATASET_BIKESTORES = "BikeStores (relational)"
+DATASET_STUDENT = "Student impact (single CSV)"
+DATASET_UPLOAD = "Upload your own"
 
 
 def _model_option_label(option: ModelOption) -> str:
@@ -520,7 +522,7 @@ def _application_service() -> ApplicationService:
 
 @lru_cache(maxsize=1)
 def _example_dataset_upload() -> CsvUpload:
-    """Read the bundled example dataset once per application process."""
+    """Read the bundled single-CSV example once per application process."""
     return CsvUpload(
         name=EXAMPLE_DATASET_PATH.name,
         content=EXAMPLE_DATASET_PATH.read_bytes(),
@@ -528,21 +530,40 @@ def _example_dataset_upload() -> CsvUpload:
     )
 
 
-def _ingest_upload(
-    upload: Any | None,
+@lru_cache(maxsize=8)
+def _builtin_dataset_uploads(path_str: str) -> tuple[CsvUpload, ...]:
+    """Read a bundled dataset: one CSV file, or every CSV in a folder."""
+    path = Path(path_str)
+    if path.is_dir():
+        return tuple(
+            CsvUpload(
+                name=csv_path.name,
+                content=csv_path.read_bytes(),
+                content_type="text/csv",
+            )
+            for csv_path in sorted(path.glob("*.csv"))
+        )
+    return (
+        CsvUpload(
+            name=path.name,
+            content=path.read_bytes(),
+            content_type="text/csv",
+        ),
+    )
+
+
+def _ingest_sources(
+    sources: list[CsvUpload],
+    signature: tuple[Any, ...],
     application: ApplicationService,
 ) -> None:
-    if upload is None:
-        source = _example_dataset_upload()
-        signature = ("example", source.name, len(source.content))
-    else:
-        source = CsvUpload(
-            name=upload.name,
-            content=upload.getvalue(),
-            content_type=upload.type or "text/csv",
-        )
-        signature = ("upload", upload.name, upload.size)
+    """Ingest a set of CSV sources, skipping when nothing changed.
 
+    An empty source list is a no-op so a freshly selected upload mode keeps
+    the previously ingested data until real files arrive.
+    """
+    if not sources:
+        return
     if signature == st.session_state.upload_signature:
         return
 
@@ -554,9 +575,35 @@ def _ingest_upload(
     st.session_state.chat_history = ()
     st.session_state.query_pending = False
 
-    result = application.ingest_csvs([source])
+    result = application.ingest_csvs(sources)
     st.session_state.ingestion_result = result
     st.session_state.data_ready = result.state == ComponentState.ACCEPTED
+
+
+def _ingest_builtin(
+    path: Path,
+    key: str,
+    application: ApplicationService,
+) -> None:
+    sources = list(_builtin_dataset_uploads(str(path)))
+    _ingest_sources(sources, ("builtin", key), application)
+
+
+def _ingest_uploads(
+    uploads: list[Any] | None,
+    application: ApplicationService,
+) -> None:
+    uploads = uploads or []
+    sources = [
+        CsvUpload(
+            name=upload.name,
+            content=upload.getvalue(),
+            content_type=upload.type or "text/csv",
+        )
+        for upload in uploads
+    ]
+    signature = ("upload", tuple(sorted((u.name, u.size) for u in uploads)))
+    _ingest_sources(sources, signature, application)
 
 
 def _render_sidebar(
@@ -597,18 +644,28 @@ def _render_sidebar(
                     )
 
         _section_label("Data source")
-        upload = st.file_uploader(
-            "Upload a CSV file",
-            type=["csv"],
-            accept_multiple_files=False,
+        dataset_choice = st.selectbox(
+            "Dataset",
+            options=[DATASET_BIKESTORES, DATASET_STUDENT, DATASET_UPLOAD],
+            index=0,
             label_visibility="collapsed",
         )
-        _ingest_upload(upload, application)
-        if upload is None:
-            st.caption(
-                "Using bundled example: "
-                f"{EXAMPLE_DATASET_PATH.name}"
+        if dataset_choice == DATASET_UPLOAD:
+            uploads = st.file_uploader(
+                "Upload CSV files",
+                type=["csv"],
+                accept_multiple_files=True,
+                label_visibility="collapsed",
             )
+            _ingest_uploads(uploads, application)
+            if not uploads:
+                st.caption("Upload one or more related CSV files.")
+        elif dataset_choice == DATASET_STUDENT:
+            _ingest_builtin(SINGLE_DATASET_PATH, "student", application)
+            st.caption(f"Using bundled example: {SINGLE_DATASET_PATH.name}")
+        else:
+            _ingest_builtin(RELATIONAL_DATASET_DIR, "bikestores", application)
+            st.caption("Using bundled example: BikeStores (9 related tables)")
 
         _section_label("LLM configuration")
         entered_api_key = st.text_input(
@@ -657,10 +714,13 @@ def _render_sidebar(
         _sync_usage_tracking(entered_api_key, st.session_state)
 
         st.divider()
-        _status(
-            "DuckDB ready" if st.session_state.data_ready else "Waiting for data",
-            st.session_state.data_ready,
+        schema = _current_schema()
+        ready_label = (
+            f"DuckDB ready — {len(schema.table_names)} table(s)"
+            if st.session_state.data_ready
+            else "Waiting for data"
         )
+        _status(ready_label, st.session_state.data_ready)
         _status(
             (
                 "OpenRouter configured"
@@ -674,7 +734,32 @@ def _render_sidebar(
         if ingestion_result is not None:
             st.caption(ingestion_result.message)
 
+        if schema.relationships:
+            _render_relationships_panel(schema)
+        if st.session_state.data_ready and not schema.discovery_complete:
+            st.warning(
+                "Relationship discovery was incomplete:\n"
+                + "\n".join(f"- {note}" for note in schema.discovery_notes)
+            )
+
     return api_key, model, candidate_count
+
+
+def _render_relationships_panel(schema: SchemaMetadata) -> None:
+    """List discovered foreign-key relationships in a collapsible panel."""
+    with st.expander(f"Relationships ({len(schema.relationships)})"):
+        st.table(
+            [
+                {
+                    "child": f"{r.child_table}.{r.child_column}",
+                    "parent": f"{r.parent_table}.{r.parent_column}",
+                    "overlap": round(r.overlap, 2),
+                    "ambiguous": "yes" if r.ambiguous else "",
+                    "sampled": "yes" if r.sampled else "",
+                }
+                for r in schema.relationships
+            ]
+        )
 
 
 def _render_message(text: str, role: str) -> None:

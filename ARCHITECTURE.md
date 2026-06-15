@@ -11,12 +11,15 @@ The project uses Python, Streamlit, DuckDB, and OpenRouter.
 
 ### Component A: ETLer
 
-Imports one CSV file into DuckDB and exposes its table and column metadata to
-the rest of the system.
+Imports one or more CSV files into DuckDB (one table per file), exposes
+per-table and column metadata, and discovers foreign-key relationships between
+tables from naming hints confirmed by value overlap.
 
-**Input:** One CSV file.
+**Input:** One or more CSV files.
 
-**Output:** DuckDB database and schema metadata.
+**Output:** DuckDB database, per-table schema metadata, and discovered
+relationships. Relationships are advisory metadata only and are never enforced
+as DuckDB constraints.
 
 ### Component B: Ambiguity Specifier
 
@@ -37,9 +40,10 @@ Converts one natural-language request into DuckDB SQL using database context and
 an LLM.
 
 It builds the prompt from static instructions, quoted schema DDL, five sample
-rows, table shape, column statistics, and a schema-derived identifier allowlist.
-User-confirmed ambiguity clarifications are appended when available. It then
-validates and executes the generated SQL.
+rows, table shape, column statistics, a schema-derived identifier allowlist, and
+a RELATIONSHIPS section listing discovered foreign keys so the model can join
+tables. User-confirmed ambiguity clarifications are appended when available. It
+then validates and executes the generated SQL.
 
 **Input:** User request, DuckDB database, and OpenRouter configuration.
 
