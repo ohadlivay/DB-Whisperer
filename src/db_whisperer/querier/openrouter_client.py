@@ -61,7 +61,7 @@ class OpenRouterClient:
                     "model": model.strip(),
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 1.3,
-                    "max_tokens": 2500,
+                    "max_tokens": 10000,
                     "response_format": {"type": "json_object"},
                 },
                 timeout=self.timeout_seconds,
