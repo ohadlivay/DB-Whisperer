@@ -3,3 +3,4 @@ __pycache__/
 data/generated/*.duckdb
 data/generated/*.duckdb.wal
 logs/*.jsonl
+/.idea

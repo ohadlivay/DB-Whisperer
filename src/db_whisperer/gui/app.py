@@ -249,247 +249,16 @@ def _initialize_state() -> None:
 
 def _apply_styles() -> None:
     """Apply the visual tokens and layout from the Stitch design."""
-    st.markdown(
-        """
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap');
-
-        :root {
-            color-scheme: light;
-            --surface: #f8f9ff;
-            --surface-lowest: #ffffff;
-            --surface-low: #eff4ff;
-            --surface-variant: #d3e4fe;
-            --outline: #c6c6cd;
-            --text: #0b1c30;
-            --text-muted: #45464d;
-            --secondary: #006c49;
-            --user-message: #f0f5ff;
-            --assistant-message: #f1f8f4;
-        }
-
-        html, body, [class*="css"] {
-            font-family: "Inter", sans-serif;
-        }
-
-        .stApp, [data-testid="stAppViewContainer"] {
-            background: var(--surface-lowest);
-            color: var(--text);
-        }
-
-        [data-testid="stHeader"] {
-            background: var(--surface-lowest);
-        }
-
-        [data-testid="stSidebar"] {
-            width: 320px !important;
-            min-width: 320px !important;
-            background: var(--surface);
-            border-right: 1px solid var(--outline);
-        }
-
-        [data-testid="stSidebar"] > div:first-child {
-            width: 320px !important;
-        }
-
-        [data-testid="stSidebar"] .block-container,
-        [data-testid="stSidebarUserContent"] {
-            padding: 0 !important;
-        }
-
-        .block-container {
-            max-width: 960px;
-            padding: 2rem 2rem 7rem;
-        }
-
-        .sidebar-brand {
-            padding: 1.5rem;
-            font-size: 1.45rem;
-            font-weight: 600;
-            letter-spacing: -0.02em;
-            color: var(--text);
-        }
-
-        [data-testid="stSidebar"] .st-key-version_usage_row {
-            margin: -1rem 1.25rem 1.25rem;
-        }
-
-        [data-testid="stSidebar"] .st-key-version_button,
-        [data-testid="stSidebar"] .st-key-usage_label {
-            margin: 0;
-        }
-
-        [data-testid="stSidebar"] .st-key-version_button button,
-        .usage-pill {
-            min-height: auto;
-            padding: 0.25rem 0.55rem;
-            border: 1px solid var(--outline);
-            border-radius: 9999px;
-            background: var(--surface-lowest);
-            color: var(--text-muted);
-            font-size: 0.75rem;
-            box-shadow: none;
-            white-space: nowrap;
-        }
-
-        [data-testid="stSidebar"] .st-key-version_button button:hover {
-            border-color: var(--text-muted);
-            color: var(--text);
-        }
-
-        .usage-pill {
-            display: inline-flex;
-            max-width: 100%;
-        }
-
-        .sidebar-section {
-            margin: 1.5rem 1.5rem 0.5rem;
-            color: var(--text-muted);
-            font-size: 0.72rem;
-            font-weight: 600;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-        }
-
-        [data-testid="stSidebar"] [data-testid="stFileUploader"],
-        [data-testid="stSidebar"] [data-testid="stTextInput"],
-        [data-testid="stSidebar"] [data-testid="stNumberInput"],
-        [data-testid="stSidebar"] [data-testid="stSelectbox"] {
-            margin-left: 1.5rem;
-            margin-right: 1.5rem;
-            width: auto;
-        }
-
-        [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
-            background: var(--surface);
-            border: 2px dashed var(--outline);
-            border-radius: 0.5rem;
-            padding: 1.2rem 0.6rem;
-        }
-
-        [data-testid="stSidebar"] hr {
-            border-color: var(--outline);
-            margin: 1.5rem 0 0;
-        }
-
-        .status-row {
-            display: flex;
-            align-items: center;
-            gap: 0.55rem;
-            padding: 0.3rem 1.5rem;
-            color: var(--text-muted);
-            font-size: 0.85rem;
-        }
-
-        .status-dot {
-            width: 0.5rem;
-            height: 0.5rem;
-            border-radius: 50%;
-            background: #9ca3af;
-        }
-
-        .status-dot.ready {
-            background: var(--secondary);
-            box-shadow: 0 0 8px rgba(0, 108, 73, 0.5);
-        }
-
-        .model-rating {
-            margin: -0.2rem 1.5rem 0.85rem;
-            color: var(--text-muted);
-            font-size: 0.78rem;
-            line-height: 1.4;
-        }
-
-        .chat-stream {
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-            padding-top: 0.5rem;
-        }
-
-        .st-key-chat_window [data-testid="stVerticalBlockBorderWrapper"] {
-            scrollbar-width: thin;
-            scrollbar-color: var(--outline) transparent;
-            scrollbar-gutter: stable;
-            overflow-y: auto !important;
-            overflow-x: hidden !important;
-            padding: 1rem 0.75rem 1.25rem !important;
-            scroll-padding-top: 1rem;
-        }
-
-        .st-key-chat_window [data-testid="stDataFrame"] {
-            min-width: 0;
-            contain: layout;
-        }
-
-        .message-row {
-            display: flex;
-            width: 100%;
-        }
-
-        .message-row.user {
-            justify-content: flex-end;
-        }
-
-        .message-row.assistant {
-            justify-content: flex-start;
-        }
-
-        .message {
-            max-width: 82%;
-            padding: 0.8rem 1rem;
-            border: 0;
-            box-shadow:
-                0 1px 2px rgba(11, 28, 48, 0.05),
-                0 5px 18px rgba(11, 28, 48, 0.04);
-            color: var(--text);
-            font-size: 0.95rem;
-            line-height: 1.5;
-            overflow-wrap: anywhere;
-        }
-
-        .message.user {
-            background: var(--user-message);
-            max-width: 72%;
-            border-radius: 1rem 1rem 0.25rem 1rem;
-        }
-
-        .message.assistant {
-            background: var(--assistant-message);
-            border-radius: 1rem 1rem 1rem 0.25rem;
-        }
-
-        [data-testid="stDataFrame"] {
-            border: 1px solid var(--outline);
-            border-radius: 0.75rem;
-        }
-
-        [data-testid="stExpander"] {
-            border-color: var(--outline);
-        }
-
-        code, pre {
-            font-family: "JetBrains Mono", monospace !important;
-        }
-
-        [data-testid="stChatInput"] {
-            background: linear-gradient(
-                to top,
-                var(--surface-lowest) 72%,
-                rgba(255, 255, 255, 0)
-            );
-            padding-top: 1.5rem;
-        }
-
-        [data-testid="stChatInput"] > div {
-            border-color: var(--outline);
-            border-radius: 9999px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    css_path = Path(__file__).parent / "style.css"
+    try:
+        css_content = css_path.read_text(encoding="utf-8")
+        st.markdown(
+            f"<style>{css_content}</style>",
+            unsafe_allow_html=True,
+        )
+    except FileNotFoundError:
+        # Fallback or error logging
+        st.error("Stylesheet 'style.css' not found.")
 
 
 def _section_label(text: str) -> None:
@@ -573,28 +342,21 @@ def _render_sidebar(
             unsafe_allow_html=True,
         )
         with st.container(key="version_usage_row"):
-            version_column, usage_column = st.columns(
-                [0.28, 0.72],
-                gap="small",
-                vertical_alignment="center",
-            )
-            with version_column:
-                if st.button(
-                    f"v{latest_release['version']}",
-                    key="version_button",
-                    help="View changelog",
-                ):
-                    _show_changelog(releases)
-            with usage_column:
-                with st.container(key="usage_label"):
-                    st.markdown(
-                        (
-                            '<div class="usage-pill">'
-                            f"{escape(_format_session_usage_delta(st.session_state))}"
-                            "</div>"
-                        ),
-                        unsafe_allow_html=True,
-                    )
+            if st.button(
+                f"v{latest_release['version']}",
+                key="version_button",
+                help="View changelog",
+            ):
+                _show_changelog(releases)
+            with st.container(key="usage_label"):
+                st.markdown(
+                    (
+                        '<div class="usage-pill">'
+                        f"{escape(_format_session_usage_delta(st.session_state))}"
+                        "</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
 
         _section_label("Data source")
         upload = st.file_uploader(
@@ -616,6 +378,7 @@ def _render_sidebar(
             type="password",
             placeholder="sk-or-v1-...",
             key="openrouter_api_key",
+            help="Get your key on [OpenRouter](https://openrouter.ai/keys)"
         )
         configured_model = os.getenv("OPENROUTER_MODEL", "")
         configured_option = _configured_model_option(configured_model)
@@ -652,7 +415,10 @@ def _render_sidebar(
             max_value=10,
             value=3,
             step=1,
+            label_visibility="visible",
+            help="Number of SQL candidates to generate"
         ))
+
         api_key = entered_api_key or os.getenv("OPENROUTER_API_KEY", "")
         _sync_usage_tracking(entered_api_key, st.session_state)
 
