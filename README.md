@@ -6,6 +6,8 @@ Exploring your database has never been easier. We introduce an interactive and i
 
 [Open DB Whisperer](https://db-whisperer.streamlit.app/)
 
+![DB Whisperer application](docs/images/db-whisperer.png)
+
 ## How to Use
 
 1. Get an API key at [OpenRouter](https://openrouter.ai/keys).

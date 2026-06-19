@@ -1,6 +1,6 @@
 # Team TODO
 
-## 1. Multi-CSV Support
+## 1. Multi-CSV Support - DONE
 
 - Allow users to upload and ingest multiple CSV files in one session.
 - Discover candidate primary keys and foreign keys to support querying over relational databases
