@@ -144,6 +144,39 @@ class ApplicationServiceTest(unittest.TestCase):
         self.schema = SchemaMetadata(database_path="database.duckdb")
         self.event_logger = RecordingEventLogger()
 
+    def test_preview_table_executes_read_only_limit_query(self) -> None:
+        querier = QuerySpy()
+        application = ApplicationService(
+            querier=querier,
+            event_logger=self.event_logger,
+        )
+        schema = SchemaMetadata(
+            database_path="database.duckdb",
+            table_names=('order"items',),
+        )
+
+        result = application.preview_table('order"items', schema)
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        candidate, database_path = querier.executed_candidates[0]
+        self.assertEqual(
+            'SELECT * FROM "order""items" LIMIT 10;',
+            candidate.sql,
+        )
+        self.assertEqual("database.duckdb", database_path)
+
+    def test_preview_table_rejects_unknown_table(self) -> None:
+        querier = QuerySpy()
+        application = ApplicationService(
+            querier=querier,
+            event_logger=self.event_logger,
+        )
+
+        result = application.preview_table("unknown", self.schema)
+
+        self.assertEqual(ComponentState.FAILED, result.state)
+        self.assertEqual([], querier.executed_candidates)
+
     def test_pass_returns_last_query_from_current_iteration(self) -> None:
         querier = QuerySpy()
         ambiguity = AmbiguitySpy(

@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "1.5.0",
+      "released_at": "2026-06-20T23:48:00+03:00",
+      "changes": [
+        "Added an assistant welcome message that introduces the chat when the workspace is empty.",
+        "Added a horizontally scrollable database-table browser above the chat, with clickable table names and a three-row read-only preview whose headers expose the column names.",
+        "Kept table previews user-controlled by removing the automatic random-table query from startup.",
+        "Added a link to the ohadlivay/DB-Whisperer GitHub repository at the top of the sidebar."
+      ]
+    },
+    {
       "version": "1.4.0",
       "released_at": "2026-06-16T01:45:00+03:00",
       "changes": [

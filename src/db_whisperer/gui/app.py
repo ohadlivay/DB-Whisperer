@@ -17,7 +17,12 @@ import requests
 import streamlit as st
 
 from db_whisperer.application import ApplicationService
-from db_whisperer.contracts import ComponentState, CsvUpload, SchemaMetadata
+from db_whisperer.contracts import (
+    ComponentState,
+    CsvUpload,
+    QueryResult,
+    SchemaMetadata,
+)
 
 
 class ModelOption(StrEnum):
@@ -49,6 +54,10 @@ EXAMPLE_DATASET_PATH = SINGLE_DATASET_PATH
 DATASET_BIKESTORES = "BikeStores (relational)"
 DATASET_STUDENT = "Student impact (single CSV)"
 DATASET_UPLOAD = "Upload your own"
+WELCOME_MESSAGE = (
+    "I'm here to help you explore your data! "
+    "Ask away, and I'll do my best to understand your question and provide an answer. "
+)
 
 
 def _model_option_label(option: ModelOption) -> str:
@@ -237,6 +246,7 @@ def _initialize_state() -> None:
         "clarifications": (),
         "clarification_history": (),
         "chat_history": (),
+        "schema_browser_table": "",
         "active_candidate_count": 3,
         "query_pending": False,
         "usage_key_fingerprint": "",
@@ -342,6 +352,7 @@ def _ingest_sources(
     st.session_state.clarifications = ()
     st.session_state.clarification_history = ()
     st.session_state.chat_history = ()
+    st.session_state.schema_browser_table = ""
     st.session_state.query_pending = False
 
     result = application.ingest_csvs(sources)
@@ -385,7 +396,15 @@ def _render_sidebar(
         releases = _load_changelog()
         latest_release = _latest_release(releases)
         st.markdown(
-            '<div class="sidebar-brand">DB Whisperer</div>',
+            (
+                '<div class="sidebar-brand">'
+                '<div class="sidebar-brand-title">DB Whisperer</div>'
+                '<a class="sidebar-github-link" '
+                'href="https://github.com/ohadlivay/DB-Whisperer" '
+                'target="_blank" rel="noopener noreferrer">'
+                'ohadlivay/DB-Whisperer</a>'
+                '</div>'
+            ),
             unsafe_allow_html=True,
         )
         with st.container(key="version_usage_row"):
@@ -589,18 +608,12 @@ def _chat_window_height(
     return "content"
 
 
-def _render_completed_workflow(workflow: Any) -> None:
-    """Render a completed or failed workflow without interactive controls."""
-    if workflow.state == ComponentState.FAILED:
-        _render_message(workflow.message, "assistant")
-        return
-
-    result = workflow.query_result
-    if result is None:
-        _render_message(workflow.message, "assistant")
-        return
-
-    _render_message(result.message, "assistant")
+def _render_query_result(
+    result: QueryResult,
+    message: str | None = None,
+) -> None:
+    """Render a successful query result table and its SQL."""
+    _render_message(message or result.message, "assistant")
     records = [
         dict(zip(result.columns, row, strict=True))
         for row in result.rows
@@ -617,6 +630,87 @@ def _render_completed_workflow(workflow: Any) -> None:
     if result.sql:
         with st.expander("View generated SQL"):
             st.code(result.sql, language="sql")
+
+
+def _render_completed_workflow(workflow: Any) -> None:
+    """Render a completed or failed workflow without interactive controls."""
+    if workflow.state == ComponentState.FAILED:
+        _render_message(workflow.message, "assistant")
+        return
+
+    result = workflow.query_result
+    if result is None:
+        _render_message(workflow.message, "assistant")
+        return
+
+    _render_query_result(result)
+
+
+def _select_schema_table(table_name: str) -> None:
+    """Store the table selected in the schema browser."""
+    st.session_state.schema_browser_table = table_name
+
+
+def _render_schema_browser(application: ApplicationService) -> None:
+    """Render table navigation, columns, and a three-row data preview."""
+    schema = _current_schema()
+    if not st.session_state.data_ready or not schema.table_names:
+        return
+
+    selected_table = st.session_state.schema_browser_table
+    if selected_table not in schema.table_names:
+        selected_table = ""
+        st.session_state.schema_browser_table = ""
+
+    with st.container(key="schema_browser"):
+        st.subheader("Database tables")
+        st.caption(
+            "Select a table to inspect its columns and first three rows."
+        )
+        with st.container(
+            horizontal=True,
+            gap="small",
+            key="schema_table_carousel",
+        ):
+            for index, table_name in enumerate(schema.table_names):
+                st.button(
+                    table_name,
+                    key=f"schema-table-{index}",
+                    type=(
+                        "primary"
+                        if table_name == selected_table
+                        else "secondary"
+                    ),
+                    on_click=_select_schema_table,
+                    args=(table_name,),
+                )
+
+        if not selected_table:
+            return
+
+        result = application.preview_table(selected_table, schema, limit=3)
+        if result.state != ComponentState.ACCEPTED:
+            st.error(result.message)
+            return
+
+        records = [
+            dict(zip(result.columns, row, strict=True))
+            for row in result.rows
+        ]
+        st.dataframe(
+            records,
+            width="stretch",
+            height=min(38 + max(len(records), 1) * 35, 180),
+            hide_index=True,
+        )
+
+
+def _render_welcome() -> None:
+    """Render the empty-chat introduction."""
+    if st.session_state.active_query or st.session_state.chat_history:
+        return
+
+    _render_message(WELCOME_MESSAGE, "assistant")
 
 
 def _archive_active_conversation() -> None:
@@ -735,6 +829,7 @@ def _render_chat(
         border=False,
         key="chat_window",
     ):
+        _render_welcome()
         _render_archived_conversations()
         if st.session_state.active_query:
             _render_message(st.session_state.active_query, "user")
@@ -796,6 +891,7 @@ def main() -> None:
     _apply_styles()
     application = _application_service()
     api_key, model, candidate_count = _render_sidebar(application)
+    _render_schema_browser(application)
     _render_chat(application, api_key, model, candidate_count)
 
 

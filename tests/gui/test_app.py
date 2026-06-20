@@ -273,9 +273,19 @@ class GuiWorkflowTest(unittest.TestCase):
     def test_sidebar_displays_latest_version_button(self) -> None:
         app = self._app()
 
-        self.assertIn("v1.4.0", {button.label for button in app.button})
+        self.assertIn("v1.5.0", {button.label for button in app.button})
         markdown = "\n".join(item.value for item in app.markdown)
         self.assertIn("Session usage:", markdown)
+
+    def test_sidebar_displays_github_link(self) -> None:
+        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
+
+        rendered_markdown = "\n".join(item.value for item in app.markdown)
+        self.assertIn(
+            'href="https://github.com/ohadlivay/DB-Whisperer"',
+            rendered_markdown,
+        )
+        self.assertIn("ohadlivay/DB-Whisperer", rendered_markdown)
 
     def test_usage_tracking_reports_session_delta(self) -> None:
         state = {}
@@ -342,6 +352,42 @@ class GuiWorkflowTest(unittest.TestCase):
         self.assertIn("customers.csv", source_names)
         self.assertGreater(len(ingestion.schema.table_names), 1)
         self.assertTrue(ingestion.schema.relationships)
+
+        rendered_markdown = "\n".join(item.value for item in app.markdown)
+        self.assertIn("help you explore your data", rendered_markdown)
+        self.assertEqual(0, len(app.dataframe))
+        rendered_sql = "\n".join(item.value for item in app.code)
+        self.assertNotIn("LIMIT 10", rendered_sql)
+
+    def test_table_carousel_shows_three_row_preview(self) -> None:
+        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
+        self.assertFalse(app.exception)
+        schema = app.session_state["ingestion_result"].schema
+        selected_table = schema.table_names[0]
+
+        table_button = next(
+            button for button in app.button if button.label == selected_table
+        )
+        table_button.click().run(timeout=30)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            selected_table,
+            app.session_state["schema_browser_table"],
+        )
+        three_row_previews = [
+            frame for frame in app.dataframe if len(frame.value) == 3
+        ]
+        self.assertTrue(three_row_previews)
+        table_schema = next(
+            table
+            for table in schema.tables
+            if table.table_name == selected_table
+        )
+        self.assertEqual(
+            [column.name for column in table_schema.columns],
+            list(three_row_previews[0].value.columns),
+        )
 
     def test_student_dataset_can_be_selected(self) -> None:
         app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)

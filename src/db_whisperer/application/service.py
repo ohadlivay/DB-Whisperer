@@ -59,6 +59,37 @@ class ApplicationService:
         """Route an uploaded CSV file to Component A."""
         return self.etler.ingest(files)
 
+    def preview_table(
+        self,
+        table_name: str,
+        schema: SchemaMetadata,
+        limit: int = 10,
+    ) -> QueryResult:
+        """Return a small read-only preview of one known table."""
+        if table_name not in schema.table_names:
+            return QueryResult(
+                state=ComponentState.FAILED,
+                message="The preview table is not part of the loaded schema.",
+            )
+        if limit < 1:
+            return QueryResult(
+                state=ComponentState.FAILED,
+                message="The preview row limit must be positive.",
+            )
+
+        escaped_table = table_name.replace('"', '""')
+        quoted_table = f'"{escaped_table}"'
+        candidate = QueryCandidate(
+            attempt_number=0,
+            state=ComponentState.ACCEPTED,
+            sql=f"SELECT * FROM {quoted_table} LIMIT {limit};",
+            message="Preview query ready.",
+        )
+        return self.querier.execute_candidate(
+            candidate,
+            schema.database_path,
+        )
+
     def submit_query(
         self,
         prompt: str,

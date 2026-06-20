@@ -73,10 +73,26 @@ body,
 
 .sidebar-brand {
     padding: 1.5rem;
+    color: var(--text);
+}
+
+.sidebar-brand-title {
     font-size: 1.45rem;
     font-weight: 600;
     letter-spacing: -0.02em;
-    color: var(--text);
+}
+
+.sidebar-github-link {
+    display: inline-block;
+    margin-top: 0.25rem;
+    color: var(--secondary) !important;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.sidebar-github-link:hover {
+    text-decoration: underline;
 }
 
 [data-testid="stSidebar"] .st-key-version_usage_row {
@@ -188,6 +204,31 @@ body,
     flex-direction: column;
     gap: 1.5rem;
     padding-top: 0.5rem;
+}
+
+.st-key-schema_browser {
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 0.75rem 1rem;
+    border: 1px solid var(--outline);
+    border-radius: 0.9rem;
+    background: var(--surface-lowest);
+}
+
+.st-key-schema_browser h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.st-key-schema_table_carousel [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+    scrollbar-width: thin;
+    scrollbar-color: var(--outline) transparent;
+}
+
+.st-key-schema_table_carousel button {
+    white-space: nowrap;
 }
 
 .st-key-chat_window [data-testid="stVerticalBlockBorderWrapper"] {
