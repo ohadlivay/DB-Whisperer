@@ -293,9 +293,8 @@ def _status(label: str, ready: bool) -> None:
     )
 
 
-@st.cache_resource
 def _application_service() -> ApplicationService:
-    """Create the application coordinator once per Streamlit process."""
+    """Create a coordinator using the currently loaded service classes."""
     return ApplicationService()
 
 

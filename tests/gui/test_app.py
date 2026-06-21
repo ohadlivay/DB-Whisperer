@@ -25,6 +25,7 @@ from db_whisperer.gui.app import (
     HOURGLASS_ICON,
     MONEY_ICON,
     ModelOption,
+    _application_service,
     _chat_window_height,
     _configured_model_option,
     _example_dataset_upload,
@@ -41,6 +42,13 @@ from db_whisperer.gui.app import (
 
 
 class GuiWorkflowTest(unittest.TestCase):
+    def test_application_service_is_not_stale_across_reruns(self) -> None:
+        first = _application_service()
+        second = _application_service()
+
+        self.assertIsNot(first, second)
+        self.assertTrue(callable(second.preview_table))
+
     def _app(self) -> AppTest:
         app = AppTest.from_file(str(ROOT / "app.py"))
         app.run(timeout=20)

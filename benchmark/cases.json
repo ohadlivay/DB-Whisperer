@@ -1,0 +1,11 @@
+{
+  "name": "student_smoke",
+  "dataset": "../data/single csv/ai_student_impact_dataset.csv",
+  "cases": [
+    {
+      "id": "total_student_count",
+      "question": "How many student records are in the dataset?",
+      "expected_sql": "SELECT COUNT(*) AS student_count FROM \"ai_student_impact_dataset\";"
+    }
+  ]
+}
