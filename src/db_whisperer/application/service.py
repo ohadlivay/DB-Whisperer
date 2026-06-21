@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 from db_whisperer.contracts import (
+    AmbiguityDecision,
     AmbiguityRequest,
     ComponentState,
     CsvUpload,
@@ -260,20 +261,44 @@ class ApplicationService:
                 tuple(candidates),
             )
 
-        ambiguity = self.ambiguity.evaluate(
-            AmbiguityRequest(
-                user_query=prompt.strip(),
-                pairs=tuple(pairs),
-                api_key=api_key,
-                model=model,
-                clarifications=clarifications,
+        try:
+            ambiguity = self.ambiguity.evaluate(
+                AmbiguityRequest(
+                    user_query=prompt.strip(),
+                    pairs=tuple(pairs),
+                    api_key=api_key,
+                    model=model,
+                    clarifications=clarifications,
+                )
             )
-        )
-        if ambiguity.state == ComponentState.FAILED:
-            return QueryWorkflowResult(
+            if not isinstance(ambiguity, AmbiguityDecision):
+                raise TypeError(
+                    "Ambiguity judge returned an invalid decision."
+                )
+        except Exception as error:
+            ambiguity = AmbiguityDecision(
                 state=ComponentState.FAILED,
-                message=ambiguity.reason,
+                reason=f"Ambiguity judgment failed: {error}",
+            )
+
+        valid_clarification = (
+            ambiguity.state == ComponentState.ACCEPTED
+            and ambiguity.passed is False
+            and bool(ambiguity.question)
+            and len(ambiguity.options) == 2
+        )
+        if (
+            ambiguity.state != ComponentState.ACCEPTED
+            or (
+                ambiguity.passed is not True
+                and not valid_clarification
+            )
+        ):
+            return QueryWorkflowResult(
+                state=ComponentState.ACCEPTED,
+                message=last_result.message,
                 iteration=iteration,
+                complete=True,
                 query_result=last_result,
                 candidates=tuple(candidates),
                 ambiguity=ambiguity,
@@ -288,18 +313,6 @@ class ApplicationService:
                 candidates=tuple(candidates),
                 ambiguity=ambiguity,
             )
-        if not ambiguity.question or len(ambiguity.options) != 2:
-            return QueryWorkflowResult(
-                state=ComponentState.FAILED,
-                message=(
-                    "Ambiguity response requires one question and two options."
-                ),
-                iteration=iteration,
-                query_result=last_result,
-                candidates=tuple(candidates),
-                ambiguity=ambiguity,
-            )
-
         return QueryWorkflowResult(
             state=ComponentState.PENDING,
             message=ambiguity.question or "Please clarify your request.",

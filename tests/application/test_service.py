@@ -57,6 +57,16 @@ class AmbiguitySpy:
         return self.decisions.pop(0)
 
 
+class RaisingAmbiguitySpy:
+    def evaluate(self, request):
+        raise RuntimeError("judge unavailable")
+
+
+class InvalidAmbiguitySpy:
+    def evaluate(self, request):
+        return None
+
+
 class RecordingEventLogger:
     def __init__(self) -> None:
         self.events = []
@@ -207,6 +217,103 @@ class ApplicationServiceTest(unittest.TestCase):
         self.assertEqual(((3,),), result.query_result.rows)
         self.assertEqual(3, len(querier.generated_requests))
         self.assertEqual(3, len(ambiguity.requests[0].pairs))
+
+    def test_failed_ambiguity_returns_last_successful_query(self) -> None:
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(
+                AmbiguityDecision(
+                    state=ComponentState.FAILED,
+                    reason=(
+                        "Clarification judgment requires exactly two options."
+                    ),
+                )
+            ),
+            event_logger=self.event_logger,
+            candidates_per_iteration=3,
+        )
+
+        result = application.submit_query(
+            prompt="Return the values",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertTrue(result.complete)
+        self.assertEqual("SELECT 3 AS value", result.query_result.sql)
+        self.assertEqual(ComponentState.FAILED, result.ambiguity.state)
+
+    def test_malformed_clarification_returns_last_successful_query(
+        self,
+    ) -> None:
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(
+                AmbiguityDecision(
+                    state=ComponentState.ACCEPTED,
+                    passed=False,
+                    question="Which scope?",
+                    options=("All records",),
+                )
+            ),
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="Return the values",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertTrue(result.complete)
+        self.assertEqual("SELECT 2 AS value", result.query_result.sql)
+
+    def test_ambiguity_exception_returns_last_successful_query(self) -> None:
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=RaisingAmbiguitySpy(),
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="Return the values",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertTrue(result.complete)
+        self.assertEqual("SELECT 2 AS value", result.query_result.sql)
+        self.assertIn("judge unavailable", result.ambiguity.reason)
+
+    def test_invalid_ambiguity_result_returns_last_successful_query(
+        self,
+    ) -> None:
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=InvalidAmbiguitySpy(),
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="Return the values",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertTrue(result.complete)
+        self.assertEqual("SELECT 2 AS value", result.query_result.sql)
+        self.assertIn("invalid decision", result.ambiguity.reason)
 
     def test_submit_query_accepts_user_selected_candidate_count(self) -> None:
         querier = QuerySpy()
