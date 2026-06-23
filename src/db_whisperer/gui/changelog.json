@@ -1,6 +1,14 @@
 {
   "releases": [
     {
+      "version": "1.6.0",
+      "released_at": "2026-06-23T09:22:51+03:00",
+      "changes": [
+        "Added support for local Streamlit secrets in .streamlit/secrets.toml, using OPENROUTER_API_KEY as the hidden default before falling back to the environment.",
+        "Restricted the shared default API key to google/gemma-4-31b-it while keeping all model choices available when users enter their own key."
+      ]
+    },
+    {
       "version": "1.5.0",
       "released_at": "2026-06-20T23:48:00+03:00",
       "changes": [

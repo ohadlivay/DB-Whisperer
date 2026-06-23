@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import os
 import sys
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import unittest
 
 from streamlit.testing.v1 import AppTest
@@ -28,11 +30,13 @@ from db_whisperer.gui.app import (
     _application_service,
     _chat_window_height,
     _configured_model_option,
+    _default_openrouter_api_key,
     _example_dataset_upload,
     _format_session_usage_delta,
     _format_clarification,
     _ingest_sources,
     _latest_release,
+    _model_options_for_api_key,
     _load_changelog,
     _model_option_label,
     _model_rating_label,
@@ -242,6 +246,36 @@ class GuiWorkflowTest(unittest.TestCase):
         self.assertEqual(3, kimi.count(MONEY_ICON))
         self.assertEqual(3, kimi.count(HOURGLASS_ICON))
 
+    def test_default_api_key_allows_only_gemma_model(self) -> None:
+        self.assertEqual(
+            (ModelOption.GEMMA,),
+            _model_options_for_api_key(using_default_api_key=True),
+        )
+        self.assertEqual(
+            tuple(ModelOption),
+            _model_options_for_api_key(using_default_api_key=False),
+        )
+
+    def test_default_api_key_prefers_streamlit_secrets(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": " env-key "},
+        ), patch(
+            "db_whisperer.gui.app.st.secrets",
+            {"OPENROUTER_API_KEY": " secret-key "},
+        ):
+            self.assertEqual(
+                "secret-key",
+                _default_openrouter_api_key(),
+            )
+
+    def test_default_api_key_falls_back_to_environment(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": " env-key "},
+        ), patch("db_whisperer.gui.app.st.secrets", {}):
+            self.assertEqual("env-key", _default_openrouter_api_key())
+
     def test_changelog_uses_most_recent_release_for_version(self) -> None:
         with TemporaryDirectory(dir=ROOT) as directory:
             path = Path(directory) / "changelog.json"
@@ -281,7 +315,7 @@ class GuiWorkflowTest(unittest.TestCase):
     def test_sidebar_displays_latest_version_button(self) -> None:
         app = self._app()
 
-        self.assertIn("v1.5.0", {button.label for button in app.button})
+        self.assertIn("v1.6.0", {button.label for button in app.button})
         markdown = "\n".join(item.value for item in app.markdown)
         self.assertIn("Session usage:", markdown)
 

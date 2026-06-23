@@ -15,6 +15,7 @@ from typing import Any
 
 import requests
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 from db_whisperer.application import ApplicationService
 from db_whisperer.contracts import (
@@ -86,6 +87,15 @@ def _configured_model_option(model: str) -> ModelOption:
         if option != ModelOption.CUSTOM and option.value == normalized:
             return option
     return ModelOption.CUSTOM
+
+
+def _model_options_for_api_key(
+    using_default_api_key: bool,
+) -> tuple[ModelOption, ...]:
+    """Restrict the shared default API key to the approved model."""
+    if using_default_api_key:
+        return (ModelOption.GEMMA,)
+    return tuple(ModelOption)
 
 
 def _release_timestamp(release: dict[str, Any]) -> datetime:
@@ -162,6 +172,18 @@ def _fetch_openrouter_key_usage(
         return float(usage)
     except (TypeError, ValueError) as error:
         raise ValueError("OpenRouter key usage was not numeric.") from error
+
+
+def _default_openrouter_api_key() -> str:
+    """Return the hidden default API key from Streamlit secrets or env."""
+    try:
+        secret_key = st.secrets.get("OPENROUTER_API_KEY", "")
+    except StreamlitSecretNotFoundError:
+        secret_key = ""
+
+    if isinstance(secret_key, str) and secret_key.strip():
+        return secret_key.strip()
+    return os.getenv("OPENROUTER_API_KEY", "").strip()
 
 
 def _sync_usage_tracking(
@@ -390,7 +412,11 @@ def _render_sidebar(
 ) -> tuple[str, str, int]:
     with st.sidebar:
         existing_api_key = st.session_state.get("openrouter_api_key", "")
-        _sync_usage_tracking(existing_api_key, st.session_state)
+        default_api_key = _default_openrouter_api_key()
+        _sync_usage_tracking(
+            existing_api_key or default_api_key,
+            st.session_state,
+        )
 
         releases = _load_changelog()
         latest_release = _latest_release(releases)
@@ -455,14 +481,21 @@ def _render_sidebar(
             key="openrouter_api_key",
             help="Get your key on [OpenRouter](https://openrouter.ai/keys)"
         )
+        typed_api_key = entered_api_key.strip()
+        using_default_api_key = not typed_api_key and bool(default_api_key)
         configured_model = os.getenv("OPENROUTER_MODEL", "")
-        configured_option = _configured_model_option(configured_model)
-        model_options = list(ModelOption)
+        configured_option = (
+            ModelOption.GEMMA
+            if using_default_api_key
+            else _configured_model_option(configured_model)
+        )
+        model_options = list(_model_options_for_api_key(using_default_api_key))
         selected_model = st.selectbox(
             "Model",
             options=model_options,
             index=model_options.index(configured_option),
             format_func=_model_option_label,
+            disabled=using_default_api_key,
         )
         if selected_model == ModelOption.CUSTOM:
             model = st.text_input(
@@ -494,8 +527,8 @@ def _render_sidebar(
             help="Number of SQL candidates to generate"
         ))
 
-        api_key = entered_api_key or os.getenv("OPENROUTER_API_KEY", "")
-        _sync_usage_tracking(entered_api_key, st.session_state)
+        api_key = typed_api_key or default_api_key
+        _sync_usage_tracking(api_key, st.session_state)
 
         st.divider()
         schema = _current_schema()
@@ -807,7 +840,7 @@ def _render_workflow_response(
                     candidate_count=st.session_state.active_candidate_count,
                 )
                 _sync_usage_tracking(
-                    st.session_state.get("openrouter_api_key", ""),
+                    api_key,
                     st.session_state,
                     force_refresh=True,
                 )
@@ -870,7 +903,7 @@ def _render_chat(
                 candidate_count=st.session_state.active_candidate_count,
             )
             _sync_usage_tracking(
-                st.session_state.get("openrouter_api_key", ""),
+                api_key,
                 st.session_state,
                 force_refresh=True,
             )
