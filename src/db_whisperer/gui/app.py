@@ -11,7 +11,9 @@ from html import escape
 import json
 import os
 from pathlib import Path
+import tempfile
 from typing import Any
+from uuid import uuid4
 
 import requests
 import streamlit as st
@@ -24,6 +26,7 @@ from db_whisperer.contracts import (
     QueryResult,
     SchemaMetadata,
 )
+from db_whisperer.etler import ETLService
 
 
 class ModelOption(StrEnum):
@@ -46,6 +49,8 @@ MONEY_ICON = "\U0001F4B0"
 HOURGLASS_ICON = "\u23F3"
 CHANGELOG_PATH = Path(__file__).with_name("changelog.json")
 OPENROUTER_KEY_ENDPOINT = "https://openrouter.ai/api/v1/key"
+SESSION_DATABASE_ROOT_ENV = "DB_WHISPERER_SESSION_DATABASE_ROOT"
+SESSION_DATABASE_FILENAME = "db_whisperer.duckdb"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = PROJECT_ROOT / "data"
 RELATIONAL_DATASET_DIR = DATA_ROOT / "relational csv"
@@ -243,6 +248,34 @@ def _format_session_usage_delta(
     return f"Session usage: ${delta:.4f}"
 
 
+def _session_database_root() -> Path:
+    """Return the root directory for per-session DuckDB files."""
+    configured_root = os.getenv(SESSION_DATABASE_ROOT_ENV, "").strip()
+    if configured_root:
+        return Path(configured_root).expanduser()
+    return Path(tempfile.gettempdir()) / "db_whisperer" / "sessions"
+
+
+def _session_database_path(state: MutableMapping[str, Any]) -> Path:
+    """Return a stable, private DuckDB path for one Streamlit session."""
+    existing_path = state.get("database_path")
+    if isinstance(existing_path, str) and existing_path.strip():
+        return Path(existing_path)
+
+    session_id = state.get("database_session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        session_id = uuid4().hex
+        state["database_session_id"] = session_id
+
+    database_path = (
+        _session_database_root()
+        / session_id
+        / SESSION_DATABASE_FILENAME
+    )
+    state["database_path"] = str(database_path)
+    return database_path
+
+
 @st.dialog("Changelog", width="large")
 def _show_changelog(releases: tuple[dict[str, Any], ...]) -> None:
     """Display release notes in a modal dialog."""
@@ -271,6 +304,8 @@ def _initialize_state() -> None:
         "schema_browser_table": "",
         "active_candidate_count": 3,
         "query_pending": False,
+        "database_session_id": "",
+        "database_path": "",
         "usage_key_fingerprint": "",
         "usage_baseline": None,
         "usage_current": None,
@@ -317,7 +352,9 @@ def _status(label: str, ready: bool) -> None:
 
 def _application_service() -> ApplicationService:
     """Create a coordinator using the currently loaded service classes."""
-    return ApplicationService()
+    return ApplicationService(
+        etler=ETLService(_session_database_path(st.session_state)),
+    )
 
 
 @lru_cache(maxsize=1)

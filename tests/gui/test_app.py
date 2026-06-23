@@ -26,6 +26,7 @@ from db_whisperer.gui.app import (
     DATASET_STUDENT,
     HOURGLASS_ICON,
     MONEY_ICON,
+    SESSION_DATABASE_ROOT_ENV,
     ModelOption,
     _application_service,
     _chat_window_height,
@@ -41,6 +42,7 @@ from db_whisperer.gui.app import (
     _model_option_label,
     _model_rating_label,
     _queue_query,
+    _session_database_path,
     _sync_usage_tracking,
 )
 
@@ -52,6 +54,28 @@ class GuiWorkflowTest(unittest.TestCase):
 
         self.assertIsNot(first, second)
         self.assertTrue(callable(second.preview_table))
+
+    def test_session_database_path_is_private_and_stable(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory, patch.dict(
+            os.environ,
+            {SESSION_DATABASE_ROOT_ENV: directory},
+        ):
+            first_state = {}
+            second_state = {}
+
+            first_path = _session_database_path(first_state)
+            same_session_path = _session_database_path(first_state)
+            second_path = _session_database_path(second_state)
+
+            self.assertEqual(first_path, same_session_path)
+            self.assertNotEqual(first_path, second_path)
+            self.assertEqual(Path(directory), first_path.parent.parent)
+            self.assertEqual("db_whisperer.duckdb", first_path.name)
+            self.assertTrue(first_state["database_session_id"])
+            self.assertNotEqual(
+                first_state["database_session_id"],
+                second_state["database_session_id"],
+            )
 
     def _app(self) -> AppTest:
         app = AppTest.from_file(str(ROOT / "app.py"))
