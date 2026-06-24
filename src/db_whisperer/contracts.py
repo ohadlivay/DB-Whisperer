@@ -65,6 +65,31 @@ class Relationship:
 
 
 @dataclass(frozen=True)
+class JoinPath:
+    """One ordered chain of tables connected by discovered relationships.
+
+    ``tables`` is the node sequence visited from a source table to a target
+    table (length >= 2). ``relationships`` are the foreign-key edges used to
+    walk it, in traversal order, so ``len(relationships) == len(tables) - 1``.
+    A relationship is undirected for join purposes; the same edge can be walked
+    parent-to-child or child-to-parent depending on the surrounding tables.
+    """
+
+    tables: tuple[str, ...]
+    relationships: tuple[Relationship, ...]
+
+    @property
+    def hop_count(self) -> int:
+        """Number of join edges in the path."""
+        return len(self.relationships)
+
+    @property
+    def intermediate_tables(self) -> tuple[str, ...]:
+        """Tables strictly between the source and target endpoints."""
+        return self.tables[1:-1]
+
+
+@dataclass(frozen=True)
 class SchemaMetadata:
     """Minimal schema information exposed by the ETL component."""
 
@@ -164,14 +189,37 @@ class AmbiguityRequest:
 
 
 @dataclass(frozen=True)
+class JoinPathRequest:
+    """User request plus schema graph sent to the join-path detector.
+
+    The detector extracts the entities mentioned in ``user_query``, maps them
+    to tables in ``schema``, enumerates join paths between those tables, and
+    flags ambiguity when more than one distinct path connects an entity pair.
+    """
+
+    user_query: str
+    schema: SchemaMetadata
+    api_key: str
+    model: str
+    clarifications: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AmbiguityDecision:
-    """Pass or one two-option clarification returned by Component B."""
+    """Pass or one two-option clarification returned by Component B.
+
+    ``mechanism`` records which ambiguity mechanism produced the decision
+    (for example ``"join-path"`` for schema-graph join-path multiplicity, or
+    the default empty string for the executed-candidate comparison judge), so
+    the GUI and evaluation harness can distinguish them.
+    """
 
     state: ComponentState
     passed: bool | None = None
     question: str | None = None
     options: tuple[str, ...] = ()
     reason: str = ""
+    mechanism: str = ""
 
 
 @dataclass(frozen=True)

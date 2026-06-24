@@ -12,13 +12,14 @@ from db_whisperer.contracts import (
     CsvUpload,
     ExecutedQueryPair,
     IngestionResult,
+    JoinPathRequest,
     QueryCandidate,
     QueryRequest,
     QueryResult,
     QueryWorkflowResult,
     SchemaMetadata,
 )
-from db_whisperer.ambiguity import AmbiguityService
+from db_whisperer.ambiguity import AmbiguityService, JoinPathAmbiguityService
 from db_whisperer.etler import ETLService
 from db_whisperer.prompt_logging import PromptLogger, PromptLogSink
 from db_whisperer.querier import QueryService
@@ -36,10 +37,12 @@ class ApplicationService:
         etler: ETLService | None = None,
         querier: QueryService | None = None,
         ambiguity: AmbiguityService | None = None,
+        join_path: JoinPathAmbiguityService | None = None,
         event_logger: PromptLogSink | None = None,
         candidates_per_iteration: int = DEFAULT_CANDIDATES_PER_ITERATION,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         max_parallel_candidates: int = DEFAULT_MAX_PARALLEL_CANDIDATES,
+        enable_join_path_detection: bool = True,
     ) -> None:
         if candidates_per_iteration < 2:
             raise ValueError("At least two candidates are required.")
@@ -51,10 +54,12 @@ class ApplicationService:
         self.etler = etler or ETLService()
         self.querier = querier or QueryService()
         self.ambiguity = ambiguity or AmbiguityService()
+        self.join_path = join_path or JoinPathAmbiguityService()
         self.event_logger = event_logger or PromptLogger()
         self.candidates_per_iteration = candidates_per_iteration
         self.max_iterations = max_iterations
         self.max_parallel_candidates = max_parallel_candidates
+        self.enable_join_path_detection = enable_join_path_detection
 
     def ingest_csvs(self, files: Sequence[CsvUpload]) -> IngestionResult:
         """Route an uploaded CSV file to Component A."""
@@ -134,6 +139,23 @@ class ApplicationService:
                 "At least two SQL candidates are required.",
                 iteration,
             )
+
+        # Primary ambiguity mechanism: before generating any SQL, ask the
+        # schema graph whether the mentioned entities are connected by more
+        # than one join path. This runs on every non-terminal round of a
+        # multi-table question (the detector skips pairs already settled by a
+        # prior answer) and only when there is a graph to traverse, so
+        # single-table datasets keep their previous behaviour.
+        join_path_clarification = self._detect_join_path_ambiguity(
+            prompt=prompt,
+            schema=schema,
+            api_key=api_key,
+            model=model,
+            iteration=iteration,
+            clarifications=clarifications,
+        )
+        if join_path_clarification is not None:
+            return join_path_clarification
 
         candidates: list[QueryCandidate] = []
         successful_results: list[QueryResult] = []
@@ -320,6 +342,86 @@ class ApplicationService:
             query_result=last_result,
             candidates=tuple(candidates),
             ambiguity=ambiguity,
+        )
+
+    def _detect_join_path_ambiguity(
+        self,
+        prompt: str,
+        schema: SchemaMetadata,
+        api_key: str,
+        model: str,
+        iteration: int,
+        clarifications: tuple[str, ...],
+    ) -> QueryWorkflowResult | None:
+        """Run the schema-graph join-path gate, returning a pending result.
+
+        Returns a ``PENDING`` workflow result when a join-path clarification is
+        needed, or ``None`` when the gate is not applicable, passes, or fails
+        (in which case the caller continues to normal candidate generation).
+        """
+        if (
+            not self.enable_join_path_detection
+            # A clarification consumes an iteration, so never gate on the final
+            # allowed round -- it must return a result the user can act on. The
+            # gate may still run on earlier clarification rounds so that a
+            # multi-entity question can resolve each ambiguous join pair in
+            # turn; the detector excludes pairs already settled by an answer.
+            or iteration >= self.max_iterations
+            or len(schema.table_names) < 2
+            or not schema.relationships
+        ):
+            return None
+
+        try:
+            decision = self.join_path.detect(
+                JoinPathRequest(
+                    user_query=prompt.strip(),
+                    schema=schema,
+                    api_key=api_key,
+                    model=model,
+                    clarifications=clarifications,
+                )
+            )
+            if not isinstance(decision, AmbiguityDecision):
+                raise TypeError(
+                    "Join-path detector returned an invalid decision."
+                )
+        except Exception as error:  # noqa: BLE001 - degrade gracefully.
+            decision = AmbiguityDecision(
+                state=ComponentState.FAILED,
+                reason=f"Join-path detection failed: {error}",
+                mechanism="join-path",
+            )
+
+        self.event_logger.log_event(
+            event="join_path_detection",
+            component="application",
+            model=model,
+            details={
+                "iteration": iteration,
+                "state": decision.state,
+                "passed": decision.passed,
+                "reason": decision.reason,
+            },
+        )
+
+        is_clarification = (
+            decision.state == ComponentState.ACCEPTED
+            and decision.passed is False
+            and bool(decision.question)
+            and len(decision.options) == 2
+        )
+        if not is_clarification:
+            return None
+
+        return QueryWorkflowResult(
+            state=ComponentState.PENDING,
+            message=decision.question or "Please clarify your request.",
+            iteration=iteration,
+            complete=False,
+            query_result=None,
+            candidates=(),
+            ambiguity=decision,
         )
 
     def _process_candidate(

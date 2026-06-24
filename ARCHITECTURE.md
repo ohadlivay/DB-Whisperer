@@ -23,16 +23,31 @@ as DuckDB constraints.
 
 ### Component B: Ambiguity Specifier
 
-Evaluates whether K generated SQL queries and their executed result tables
-represent the same interpretation of the user's request.
+Detects whether the user's request maps to more than one valid interpretation
+and, if so, returns one clarifying question with exactly two answer options.
+Component B has two complementary mechanisms and never generates SQL, executes
+queries, or manages the loop.
 
-It receives the original user query plus K SQL/table pairs and uses an LLM to
-return either:
+**Primary mechanism -- schema-graph join-path multiplicity.** Before any SQL is
+generated, an LLM extracts the entities a question mentions and maps them to
+tables. The schema graph (assembled from Component A's discovered foreign keys)
+enumerates the distinct join paths between those tables. When more than one
+distinct path connects an entity pair, the request is ambiguous -- the same
+wording joins the data differently with different results. The clarifying
+question (LLM-written, with a deterministic fallback) asks the user which
+connection they mean. The canonical example is "labs for patient X", which can
+join `labevents` directly to `patients` by `subject_id` or through a hospital
+visit (`admissions`). Pure graph assembly and path enumeration live in
+`schema_graph/`; the LLM steps live in `ambiguity/`.
 
-- A pass decision.
-- One clarifying question with exactly two answer options.
+**Secondary mechanism -- executed-candidate comparison.** When join-path
+detection passes (a single path, fewer than two entity tables, or no graph), the
+application generates K SQL candidates, executes them, and Component B compares
+the SQL/table pairs to decide whether they expose a material ambiguity, again
+returning a pass or one two-option question.
 
-Component B does not generate SQL, execute queries, or manage the loop.
+Both mechanisms return a pass decision or one clarifying question with exactly
+two answer options, tagged with the mechanism that produced it.
 
 ### Component C: Querier
 
@@ -85,12 +100,13 @@ flowchart LR
 
 ```text
 src/db_whisperer/
-|-- application/   # Workflow orchestration
-|-- etler/         # CSV ingestion and schema metadata
-|-- ambiguity/     # Candidate comparison and clarification
-|-- querier/       # SQL generation, validation, and execution
-|-- gui/           # Streamlit interface
-`-- contracts.py   # Shared component data models
+|-- application/    # Workflow orchestration
+|-- etler/          # CSV ingestion and schema metadata
+|-- schema_graph/   # FK graph assembly and join-path enumeration
+|-- ambiguity/      # Join-path detection and candidate comparison
+|-- querier/        # SQL generation, validation, and execution
+|-- gui/            # Streamlit interface
+`-- contracts.py    # Shared component data models
 ```
 
 ## Key Constraints

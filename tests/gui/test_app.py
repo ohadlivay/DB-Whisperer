@@ -339,7 +339,7 @@ class GuiWorkflowTest(unittest.TestCase):
     def test_sidebar_displays_latest_version_button(self) -> None:
         app = self._app()
 
-        self.assertIn("v1.6.0", {button.label for button in app.button})
+        self.assertIn("v1.7.0", {button.label for button in app.button})
         markdown = "\n".join(item.value for item in app.markdown)
         self.assertIn("Session usage:", markdown)
 

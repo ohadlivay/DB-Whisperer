@@ -27,6 +27,7 @@ from db_whisperer.contracts import (
     SchemaMetadata,
 )
 from db_whisperer.etler import ETLService
+from db_whisperer.schema_graph import SchemaGraph
 
 
 class ModelOption(StrEnum):
@@ -590,6 +591,7 @@ def _render_sidebar(
 
         if schema.relationships:
             _render_relationships_panel(schema)
+            _render_schema_graph_panel(schema)
         if st.session_state.data_ready and not schema.discovery_complete:
             st.warning(
                 "Relationship discovery was incomplete:\n"
@@ -614,6 +616,25 @@ def _render_relationships_panel(schema: SchemaMetadata) -> None:
                 for r in schema.relationships
             ]
         )
+
+
+def _render_schema_graph_panel(schema: SchemaMetadata) -> None:
+    """Show the assembled schema graph as a per-table adjacency list.
+
+    This is the same graph the join-path ambiguity detector traverses, so the
+    user can see which tables are connected and where multi-hop joins exist.
+    """
+    graph = SchemaGraph.from_schema(schema)
+    if not graph.edges:
+        return
+    with st.expander("Schema graph"):
+        st.caption(
+            "Tables connected by discovered joins. More than one path between "
+            "two tables is where the system asks a clarifying question."
+        )
+        for table, neighbours in graph.adjacency_summary():
+            connected = ", ".join(neighbours) if neighbours else "(no joins)"
+            st.markdown(f"- **{escape(table)}** &rarr; {escape(connected)}")
 
 
 def _render_message(text: str, role: str) -> None:
