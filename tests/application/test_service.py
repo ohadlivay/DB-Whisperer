@@ -18,6 +18,7 @@ from db_whisperer.contracts import (
     ComponentState,
     QueryCandidate,
     QueryResult,
+    Relationship,
     SchemaMetadata,
 )
 
@@ -147,6 +148,285 @@ class ConcurrentQuerySpy:
             columns=("value",),
             rows=((candidate.attempt_number,),),
         )
+
+
+class JoinPathSpy:
+    def __init__(self, decision: AmbiguityDecision) -> None:
+        self.decision = decision
+        self.requests = []
+
+    def detect(self, request):
+        self.requests.append(request)
+        return self.decision
+
+
+class RaisingJoinPathSpy:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def detect(self, request):
+        self.requests.append(request)
+        raise RuntimeError("join-path detector unavailable")
+
+
+RELATIONAL_SCHEMA = SchemaMetadata(
+    database_path="database.duckdb",
+    table_names=("patients", "labevents"),
+    relationships=(
+        Relationship(
+            child_table="labevents",
+            child_column="subject_id",
+            parent_table="patients",
+            parent_column="subject_id",
+        ),
+    ),
+)
+
+
+class JoinPathGateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.event_logger = RecordingEventLogger()
+
+    def _clarify_decision(self) -> AmbiguityDecision:
+        return AmbiguityDecision(
+            state=ComponentState.ACCEPTED,
+            passed=False,
+            question="Labs for a specific visit, or all visits?",
+            options=("A specific visit", "All visits"),
+            reason="Two join paths.",
+            mechanism="join-path",
+        )
+
+    def test_join_path_clarification_short_circuits_generation(self) -> None:
+        querier = QuerySpy()
+        ambiguity = AmbiguitySpy()
+        join_path = JoinPathSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=ambiguity,
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=3,
+        )
+
+        result = application.submit_query(
+            prompt="labs for patient 123",
+            schema=RELATIONAL_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.PENDING, result.state)
+        self.assertFalse(result.complete)
+        self.assertEqual("join-path", result.ambiguity.mechanism)
+        self.assertEqual(
+            ("A specific visit", "All visits"),
+            result.ambiguity.options,
+        )
+        self.assertIsNone(result.query_result)
+        self.assertEqual((), result.candidates)
+        # No SQL was generated and the candidate judge never ran.
+        self.assertEqual([], querier.generated_requests)
+        self.assertEqual([], ambiguity.requests)
+        self.assertEqual(1, len(join_path.requests))
+        self.assertIn(
+            "join_path_detection",
+            [event[0] for event in self.event_logger.events],
+        )
+
+    def test_join_path_pass_continues_to_candidate_flow(self) -> None:
+        querier = QuerySpy()
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=True,
+                reason="Candidates agree.",
+            )
+        )
+        join_path = JoinPathSpy(
+            AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=True,
+                reason="Single path.",
+                mechanism="join-path",
+            )
+        )
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=ambiguity,
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=3,
+        )
+
+        result = application.submit_query(
+            prompt="labs for patient 123",
+            schema=RELATIONAL_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual("SELECT 3 AS value", result.query_result.sql)
+        self.assertEqual(1, len(join_path.requests))
+        self.assertEqual(3, len(querier.generated_requests))
+        self.assertEqual(1, len(ambiguity.requests))
+
+    def test_join_path_gate_skipped_after_a_clarification(self) -> None:
+        join_path = JoinPathSpy(self._clarify_decision())
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+        )
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=ambiguity,
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="labs for patient 123",
+            schema=RELATIONAL_SCHEMA,
+            api_key="key",
+            model="provider/model",
+            clarifications=("Question: scope?\nSelected answer: all",),
+            iteration=2,
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], join_path.requests)
+
+    def test_join_path_gate_skipped_without_relationships(self) -> None:
+        join_path = JoinPathSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(
+                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+            ),
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="show the data",
+            schema=SchemaMetadata(database_path="database.duckdb"),
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], join_path.requests)
+
+    def test_join_path_gate_can_be_disabled(self) -> None:
+        join_path = JoinPathSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(
+                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+            ),
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="labs for patient 123",
+            schema=RELATIONAL_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], join_path.requests)
+
+    def test_join_path_failure_degrades_to_candidate_flow(self) -> None:
+        join_path = RaisingJoinPathSpy()
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+        )
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=ambiguity,
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="labs for patient 123",
+            schema=RELATIONAL_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual(1, len(join_path.requests))
+        self.assertEqual(1, len(ambiguity.requests))
+
+    def test_join_path_gate_skipped_for_single_table_with_self_fk(self) -> None:
+        # A single table carrying a self-referential relationship must isolate
+        # the table-count guard: CLAUDE.md calls single-table behavior the most
+        # dangerous wrong assumption.
+        join_path = JoinPathSpy(self._clarify_decision())
+        single_table = SchemaMetadata(
+            database_path="database.duckdb",
+            table_names=("events",),
+            relationships=(
+                Relationship(
+                    child_table="events",
+                    child_column="parent_event_id",
+                    parent_table="events",
+                    parent_column="event_id",
+                ),
+            ),
+        )
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(
+                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+            ),
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="show the events",
+            schema=single_table,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], join_path.requests)
+
+    def test_join_path_gate_skipped_on_terminal_iteration(self) -> None:
+        # With max_iterations=1, round 1 is terminal; the gate must not fire and
+        # leave a clarification the user could never answer.
+        join_path = JoinPathSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(),
+            join_path=join_path,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            max_iterations=1,
+        )
+
+        result = application.submit_query(
+            prompt="labs for patient 123",
+            schema=RELATIONAL_SCHEMA,
+            api_key="key",
+            model="provider/model",
+            iteration=1,
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], join_path.requests)
+        self.assertEqual("SELECT 2 AS value", result.query_result.sql)
 
 
 class ApplicationServiceTest(unittest.TestCase):

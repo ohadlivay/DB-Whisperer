@@ -43,19 +43,33 @@ the user's wording maps to multiple valid interpretations.
 
 ## Important Gap From The Status PDF
 
-The PDF describes a future schema-graph architecture for multiple related CSV
-files, especially clinical/MIMIC-style data. It proposes join-path
-multiplicity as the primary ambiguity mechanism and semantic-type column
-matching as a fallback.
+The PDF describes a schema-graph architecture for multiple related CSV files,
+especially clinical/MIMIC-style data. It proposes join-path multiplicity as the
+primary ambiguity mechanism and semantic-type column matching as a fallback.
 
-That is not implemented yet. The current ETL layer intentionally rejects
-multiple CSV files and does not discover relationships, build a schema graph,
-enumerate join paths, or resolve entities. The current ambiguity mechanism is
-LLM judging over multiple generated/executed SQL candidates.
+Implemented so far:
 
-When implementing the PDF direction, treat schema-graph support as a new
-capability that will likely touch `contracts.py`, `etler/`, `querier/`,
-`ambiguity/`, `application/`, and GUI upload/session handling.
+- Multi-CSV ingestion and pairwise foreign-key discovery (`etler/`).
+- The schema graph and join-path enumeration (`schema_graph/`): discovered
+  foreign keys are assembled into an undirected multigraph and the distinct
+  simple join paths between two tables are enumerated, with hop and path caps.
+- The primary ambiguity mechanism (`ambiguity/join_path_service.py`): an LLM
+  extracts the entities in a question and maps them to tables, the graph
+  enumerates join paths between them, and a clarifying question is raised when
+  more than one distinct path connects an entity pair. The application runs
+  this before SQL generation on the first round of a multi-table question and
+  degrades to the candidate-comparison judge if detection fails.
+
+Still missing from the PDF direction:
+
+- Mechanism 2, the semantic-type column matching fallback (e.g. "dates" ->
+  admission vs discharge vs date of birth).
+- The controlled baseline-vs-full-pipeline evaluation harness. The
+  `enable_join_path_detection` flag on `ApplicationService` is the seam for the
+  ablation but no measurement harness exists yet.
+- Semantic pruning of graph paths: enumeration is faithful to the PDF
+  (all simple paths), so it can surface join paths that route through a fact
+  table, which is correct graph behaviour but not always a natural join.
 
 ## Research And Product Direction From The PDF
 

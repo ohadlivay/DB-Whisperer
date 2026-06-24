@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "1.7.0",
+      "released_at": "2026-06-24T10:00:00+03:00",
+      "changes": [
+        "Added the schema-graph join-path ambiguity mechanism: discovered foreign keys are assembled into a graph and the distinct join paths between the tables a question mentions are enumerated.",
+        "Before generating SQL, the system now uses the model to extract the entities in a question, maps them to tables, and asks one clarifying question when more than one join path connects them (for example direct versus through an intermediate table).",
+        "Added a sidebar Schema graph panel that lists each table and the tables it joins to, so multi-hop relationships are visible.",
+        "The join-path gate runs only on the first round of a multi-table question and degrades to the existing candidate-comparison flow if detection fails."
+      ]
+    },
+    {
       "version": "1.6.0",
       "released_at": "2026-06-23T09:22:51+03:00",
       "changes": [
