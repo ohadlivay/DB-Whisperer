@@ -15,7 +15,7 @@ entity extraction and clarification live in the ambiguity component.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
 from db_whisperer.contracts import JoinPath, Relationship, SchemaMetadata
@@ -182,6 +182,12 @@ class SchemaGraph:
             return empty
 
         results: list[JoinPath] = []
+        # Distinctness is by node chain plus join keys -- the same identity the
+        # sort key and ``describe_join_path`` use. De-duplicating *during*
+        # traversal (rather than after) means duplicate advisory relationships
+        # (same join keys, differing score/overlap) cannot consume the path cap
+        # and hide a genuinely distinct path behind a false truncation.
+        seen: set[tuple] = set()
         truncated = False
 
         def visit(
@@ -197,9 +203,16 @@ class SchemaGraph:
                 next_edges = edge_path + (edge,)
                 next_nodes = node_path + (neighbor,)
                 if neighbor == target:
-                    if len(results) >= self.max_paths:
+                    identity = (
+                        next_nodes,
+                        tuple(_edge_key(item) for item in next_edges),
+                    )
+                    if identity in seen:
+                        continue
+                    if len(seen) >= self.max_paths:
                         truncated = True
-                        return
+                        continue
+                    seen.add(identity)
                     results.append(
                         JoinPath(tables=next_nodes, relationships=next_edges)
                     )
@@ -214,27 +227,12 @@ class SchemaGraph:
 
         visit(source, (source,), (), frozenset((source,)))
 
-        # Distinctness is by node chain plus join keys -- the same identity the
-        # sort key and ``describe_join_path`` use. Keying on JoinPath equality
-        # instead would treat paths that differ only in advisory FK metadata
-        # (score/overlap) as distinct and inflate the ambiguity count.
-        seen: set[tuple] = set()
-        unique: list[JoinPath] = []
-        for path in results:
-            identity = (
-                path.tables,
-                tuple(_edge_key(edge) for edge in path.relationships),
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            unique.append(path)
-        unique.sort(key=_path_sort_key)
+        results.sort(key=_path_sort_key)
         return JoinPathEnumeration(
             source=source,
             target=target,
             max_hops=hop_limit,
-            paths=tuple(unique),
+            paths=tuple(results),
             truncated=truncated,
         )
 
@@ -269,19 +267,28 @@ class SchemaGraph:
         return tuple(summary)
 
 
-def describe_join_path(path: JoinPath) -> str:
+def describe_join_path(
+    path: JoinPath,
+    transform: Callable[[str], str] | None = None,
+) -> str:
     """Render a join path as a table chain plus its join conditions.
 
     Example: ``patients -> admissions -> labevents
     [admissions.subject_id = patients.subject_id;
     labevents.hadm_id = admissions.hadm_id]``.
+
+    ``transform`` is applied to every table and column identifier. Callers that
+    embed the result in an LLM prompt pass a sanitizer so an untrusted CSV
+    column name cannot forge a prompt delimiter; the default leaves identifiers
+    untouched for display and logging.
     """
-    chain = " -> ".join(path.tables)
+    render = transform or (lambda value: value)
+    chain = " -> ".join(render(table) for table in path.tables)
     if not path.relationships:
         return chain
     conditions = "; ".join(
-        f"{edge.child_table}.{edge.child_column} = "
-        f"{edge.parent_table}.{edge.parent_column}"
+        f"{render(edge.child_table)}.{render(edge.child_column)} = "
+        f"{render(edge.parent_table)}.{render(edge.parent_column)}"
         for edge in path.relationships
     )
     return f"{chain} [{conditions}]"

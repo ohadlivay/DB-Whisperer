@@ -19,6 +19,7 @@ judge.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from db_whisperer.ambiguity.join_path_prompt_builder import (
     JoinPathPromptBuilder,
@@ -137,17 +138,35 @@ class JoinPathAmbiguityService:
                 )
             )
 
-        chosen = self._choose_pair(ambiguous_pairs)
+        # Exclude pairs already resolved by a previous clarification so a
+        # multi-entity question keeps clarifying remaining pairs across rounds
+        # instead of proceeding to SQL with known join-path ambiguity left over.
+        unsettled = self._unsettled_pairs(ambiguous_pairs, request.clarifications)
+        if not unsettled:
+            return self._pass(
+                self._join_text(
+                    "All join-path ambiguities between the mentioned entities "
+                    "have already been clarified.",
+                    context_note,
+                )
+            )
+
+        chosen = self._choose_pair(unsettled)
         interpretations, extra_paths = self._select_two_paths(
             chosen.enumeration.paths
         )
         question, options, used_llm = self._clarification(
             request, chosen, interpretations
         )
+        # Name both tables in the question so the next round can recognise this
+        # pair as settled from the accumulated clarifications.
+        question = self._ensure_pair_named(
+            question, chosen.source, chosen.target
+        )
         reason = self._reason(
             chosen,
             extra_paths,
-            len(ambiguous_pairs) - 1,
+            len(unsettled) - 1,
             context_note,
             used_llm,
             any_truncated or chosen.enumeration.truncated,
@@ -266,6 +285,50 @@ class JoinPathAmbiguityService:
                 pair.source,
                 pair.target,
             ),
+        )
+
+    @classmethod
+    def _unsettled_pairs(
+        cls,
+        pairs: list[_AmbiguousPair],
+        clarifications: tuple[str, ...],
+    ) -> list[_AmbiguousPair]:
+        """Drop pairs both of whose tables were named in one prior answer."""
+        return [
+            pair
+            for pair in pairs
+            if not cls._pair_settled(pair.source, pair.target, clarifications)
+        ]
+
+    @classmethod
+    def _pair_settled(
+        cls,
+        source: str,
+        target: str,
+        clarifications: tuple[str, ...],
+    ) -> bool:
+        """True if a single clarification already named both pair tables."""
+        return any(
+            cls._names_token(clarification, source)
+            and cls._names_token(clarification, target)
+            for clarification in clarifications
+        )
+
+    @staticmethod
+    def _names_token(text: str, name: str) -> bool:
+        """Match ``name`` as a whole identifier token (so 'order' != 'order_id')."""
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
+        return re.search(pattern, text) is not None
+
+    @classmethod
+    def _ensure_pair_named(cls, question: str, source: str, target: str) -> str:
+        """Append a context clause unless the question already names both tables."""
+        if cls._names_token(question, source) and cls._names_token(
+            question, target
+        ):
+            return question
+        return (
+            f'{question} (clarifying how "{source}" and "{target}" connect)'
         )
 
     @staticmethod
@@ -390,8 +453,8 @@ class JoinPathAmbiguityService:
             )
         if other_pairs:
             parts.append(
-                f"{other_pairs} other entity pair(s) were also ambiguous and "
-                "were not clarified this round."
+                f"{other_pairs} other entity pair(s) are also ambiguous and "
+                "will be clarified in following rounds."
             )
         if not used_llm:
             parts.append(

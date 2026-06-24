@@ -287,6 +287,28 @@ class SchemaGraphTest(unittest.TestCase):
         self.assertEqual(1, len(enumeration.paths))
         self.assertFalse(enumeration.is_ambiguous)
 
+    def test_duplicate_relationships_do_not_consume_the_path_cap(self) -> None:
+        # A duplicate advisory FK (same join keys, different score) must not
+        # fill the cap and hide a genuinely distinct path behind a truncation.
+        graph = SchemaGraph(
+            ("a", "b", "c"),
+            (
+                Relationship("b", "a_id", "a", "id", score=1.0),
+                Relationship("b", "a_id", "a", "id", score=0.5),
+                Relationship("c", "a_id", "a", "id"),
+                Relationship("b", "c_id", "c", "id"),
+            ),
+            max_paths=2,
+        )
+
+        enumeration = graph.enumerate_join_paths("a", "b")
+
+        # The direct a-b path and the a-c-b path both survive; the duplicate
+        # does not crowd one out, so the pair is correctly ambiguous.
+        self.assertEqual(2, len(enumeration.paths))
+        self.assertTrue(enumeration.is_ambiguous)
+        self.assertFalse(enumeration.truncated)
+
 
 if __name__ == "__main__":
     unittest.main()

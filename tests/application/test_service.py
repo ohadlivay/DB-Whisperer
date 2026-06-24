@@ -272,8 +272,17 @@ class JoinPathGateTest(unittest.TestCase):
         self.assertEqual(3, len(querier.generated_requests))
         self.assertEqual(1, len(ambiguity.requests))
 
-    def test_join_path_gate_skipped_after_a_clarification(self) -> None:
-        join_path = JoinPathSpy(self._clarify_decision())
+    def test_join_path_gate_runs_on_nonterminal_clarification_round(self) -> None:
+        # A second entity pair can still be ambiguous after the first is
+        # answered, so the gate must run on non-terminal clarification rounds;
+        # it delegates settled-pair exclusion to the detector.
+        join_path = JoinPathSpy(
+            AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=True,
+                mechanism="join-path",
+            )
+        )
         ambiguity = AmbiguitySpy(
             AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
         )
@@ -283,6 +292,7 @@ class JoinPathGateTest(unittest.TestCase):
             join_path=join_path,
             event_logger=self.event_logger,
             candidates_per_iteration=2,
+            max_iterations=3,
         )
 
         result = application.submit_query(
@@ -295,7 +305,13 @@ class JoinPathGateTest(unittest.TestCase):
         )
 
         self.assertTrue(result.complete)
-        self.assertEqual([], join_path.requests)
+        self.assertEqual(1, len(join_path.requests))
+        # The clarification passed through to the detector for settled-pair
+        # exclusion.
+        self.assertEqual(
+            ("Question: scope?\nSelected answer: all",),
+            join_path.requests[0].clarifications,
+        )
 
     def test_join_path_gate_skipped_without_relationships(self) -> None:
         join_path = JoinPathSpy(self._clarify_decision())

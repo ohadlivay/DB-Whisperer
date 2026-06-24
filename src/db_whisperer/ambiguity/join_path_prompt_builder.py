@@ -173,9 +173,11 @@ class JoinPathPromptBuilder:
 
     @staticmethod
     def _interpretation_block(index: int, path: JoinPath) -> str:
+        # Sanitize identifiers so an untrusted column name cannot forge the
+        # "=== END CANDIDATE JOIN PATHS ===" fence inside the prompt.
         return (
             f"--- INTERPRETATION {index} ---\n"
-            f"{describe_join_path(path)}"
+            f"{describe_join_path(path, _safe_identifier)}"
         )
 
     @staticmethod

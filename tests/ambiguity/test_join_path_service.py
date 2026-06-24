@@ -150,10 +150,15 @@ class JoinPathAmbiguityServiceTest(unittest.TestCase):
 
         self.assertEqual(ComponentState.ACCEPTED, decision.state)
         self.assertFalse(decision.passed)
-        self.assertEqual(
-            "Do you want labs from a specific visit, or all visits?",
-            decision.question,
+        # The model's question is preserved; both tables are named so the next
+        # round can recognise this pair as settled.
+        self.assertTrue(
+            decision.question.startswith(
+                "Do you want labs from a specific visit, or all visits?"
+            )
         )
+        self.assertIn("patients", decision.question)
+        self.assertIn("labevents", decision.question)
         self.assertEqual(
             ("A specific visit", "All visits"),
             decision.options,
@@ -348,7 +353,10 @@ class JoinPathAmbiguityServiceTest(unittest.TestCase):
         self.assertFalse(decision.passed)
         self.assertIn("between 'r' and 's'", decision.reason)
         self.assertIn("Presented the two most distinct of 3 paths", decision.reason)
-        self.assertIn("1 other entity pair(s) were also ambiguous", decision.reason)
+        self.assertIn(
+            "1 other entity pair(s) are also ambiguous and will be clarified",
+            decision.reason,
+        )
         # Shortest (direct) and longest (through an intermediate) presented.
         self.assertEqual("Linked directly on s.r_id", decision.options[0])
         self.assertTrue(decision.options[1].startswith("Linked through"))
@@ -380,6 +388,68 @@ class JoinPathAmbiguityServiceTest(unittest.TestCase):
             )
         )
         self.assertNotIn("(option", decision.options[0])
+
+    def test_excludes_already_clarified_pair_on_later_round(self) -> None:
+        entities = {
+            "entities": [
+                {"mention": "p", "table": "p"},
+                {"mention": "q", "table": "q"},
+                {"mention": "r", "table": "r"},
+                {"mention": "s", "table": "s"},
+            ]
+        }
+        # Round 1: clarify the most ambiguous pair (r, s).
+        first = JoinPathAmbiguityService(
+            client=FakeJoinPathClient(entities, AmbiguityJudgeError("fallback"))
+        ).detect(_request(TWO_CLUSTER_SCHEMA, "connect p q r s"))
+        self.assertIn("between 'r' and 's'", first.reason)
+        answered = f"Question: {first.question}\nSelected answer: {first.options[0]}"
+
+        # Round 2: (r, s) is settled by that answer, so the next pair (p, q) is
+        # clarified instead of proceeding with unresolved ambiguity.
+        second = JoinPathAmbiguityService(
+            client=FakeJoinPathClient(entities, AmbiguityJudgeError("fallback"))
+        ).detect(
+            JoinPathRequest(
+                user_query="connect p q r s",
+                schema=TWO_CLUSTER_SCHEMA,
+                api_key="key",
+                model="provider/model",
+                clarifications=(answered,),
+            )
+        )
+
+        self.assertFalse(second.passed)
+        self.assertIn("between 'p' and 'q'", second.reason)
+
+    def test_passes_when_all_pairs_already_clarified(self) -> None:
+        client = FakeJoinPathClient(
+            {
+                "entities": [
+                    {"mention": "patient", "table": "patients"},
+                    {"mention": "labs", "table": "labevents"},
+                ]
+            }
+        )
+        answered = (
+            "Question: How should patients and labevents connect?\n"
+            "Selected answer: directly"
+        )
+
+        decision = JoinPathAmbiguityService(client=client).detect(
+            JoinPathRequest(
+                user_query="labs for patient",
+                schema=MIMIC_SCHEMA,
+                api_key="key",
+                model="provider/model",
+                clarifications=(answered,),
+            )
+        )
+
+        self.assertTrue(decision.passed)
+        self.assertIn("already been clarified", decision.reason)
+        # Entity extraction ran, but no clarification call (nothing unsettled).
+        self.assertEqual(1, len(client.prompts))
 
     def test_validation_rejects_empty_query_without_llm(self) -> None:
         client = FakeJoinPathClient()

@@ -142,9 +142,10 @@ class ApplicationService:
 
         # Primary ambiguity mechanism: before generating any SQL, ask the
         # schema graph whether the mentioned entities are connected by more
-        # than one join path. This only runs on the first round of a fresh
-        # question (no clarifications yet) and only when there is a graph to
-        # traverse, so single-table datasets keep their previous behaviour.
+        # than one join path. This runs on every non-terminal round of a
+        # multi-table question (the detector skips pairs already settled by a
+        # prior answer) and only when there is a graph to traverse, so
+        # single-table datasets keep their previous behaviour.
         join_path_clarification = self._detect_join_path_ambiguity(
             prompt=prompt,
             schema=schema,
@@ -360,11 +361,12 @@ class ApplicationService:
         """
         if (
             not self.enable_join_path_detection
-            or iteration != 1
             # A clarification consumes an iteration, so never gate on the final
-            # allowed round -- it must return a result the user can act on.
+            # allowed round -- it must return a result the user can act on. The
+            # gate may still run on earlier clarification rounds so that a
+            # multi-entity question can resolve each ambiguous join pair in
+            # turn; the detector excludes pairs already settled by an answer.
             or iteration >= self.max_iterations
-            or clarifications
             or len(schema.table_names) < 2
             or not schema.relationships
         ):
