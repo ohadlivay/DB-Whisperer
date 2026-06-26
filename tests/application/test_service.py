@@ -12,9 +12,11 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from db_whisperer.ambiguity import SemanticColumnAmbiguityService
 from db_whisperer.application import ApplicationService
 from db_whisperer.contracts import (
     AmbiguityDecision,
+    ColumnMetadata,
     ComponentState,
     QueryCandidate,
     QueryResult,
@@ -443,6 +445,366 @@ class JoinPathGateTest(unittest.TestCase):
         self.assertTrue(result.complete)
         self.assertEqual([], join_path.requests)
         self.assertEqual("SELECT 2 AS value", result.query_result.sql)
+
+
+class SemanticColumnSpy:
+    def __init__(self, decision: AmbiguityDecision) -> None:
+        self.decision = decision
+        self.requests = []
+
+    def detect(self, request):
+        self.requests.append(request)
+        return self.decision
+
+
+class RaisingSemanticColumnSpy:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def detect(self, request):
+        self.requests.append(request)
+        raise RuntimeError("semantic-column detector unavailable")
+
+
+class _FakeColumnClient:
+    """A fake AmbiguityOpenRouterClient returning queued JSON judgments."""
+
+    def __init__(self, *responses) -> None:
+        self.responses = list(responses)
+        self.prompts = []
+
+    def evaluate(self, prompt, api_key, model):
+        self.prompts.append(prompt)
+        return self.responses.pop(0)
+
+
+def _date_columns(*names: str) -> tuple[ColumnMetadata, ...]:
+    return tuple(
+        ColumnMetadata(name=name, data_type="DATE", table_name="orders")
+        for name in names
+    )
+
+
+# Single table with three DATE columns: no join graph, but a semantic-column
+# ambiguity ("which date?"). Join-path is auto-skipped (no relationships).
+COLUMN_SCHEMA = SchemaMetadata(
+    database_path="database.duckdb",
+    table_names=("orders",),
+    columns=_date_columns("order_date", "required_date", "shipped_date"),
+)
+
+# Two related tables AND multiple same-type columns, so both gates can run and
+# their ordering (join-path first, then semantic-column) can be observed.
+RELATIONAL_COLUMN_SCHEMA = SchemaMetadata(
+    database_path="database.duckdb",
+    table_names=("orders", "customers"),
+    columns=_date_columns("order_date", "required_date")
+    + (ColumnMetadata(name="customer_id", data_type="INTEGER", table_name="orders"),),
+    relationships=(
+        Relationship(
+            child_table="orders",
+            child_column="customer_id",
+            parent_table="customers",
+            parent_column="customer_id",
+        ),
+    ),
+)
+
+
+class SemanticColumnGateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.event_logger = RecordingEventLogger()
+
+    def _clarify_decision(self) -> AmbiguityDecision:
+        return AmbiguityDecision(
+            state=ComponentState.ACCEPTED,
+            passed=False,
+            question='Which date do you mean: "order_date" or "required_date"?',
+            options=("When it was placed", "When it is required"),
+            reason="Several date columns.",
+            mechanism="semantic-column",
+        )
+
+    def _pass_decision(self, mechanism: str) -> AmbiguityDecision:
+        return AmbiguityDecision(
+            state=ComponentState.ACCEPTED,
+            passed=True,
+            reason="No ambiguity.",
+            mechanism=mechanism,
+        )
+
+    def test_clarification_short_circuits_generation(self) -> None:
+        querier = QuerySpy()
+        ambiguity = AmbiguitySpy()
+        semantic = SemanticColumnSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=ambiguity,
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=3,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the dates for order 5",
+            schema=COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.PENDING, result.state)
+        self.assertFalse(result.complete)
+        self.assertEqual("semantic-column", result.ambiguity.mechanism)
+        self.assertEqual(
+            ("When it was placed", "When it is required"),
+            result.ambiguity.options,
+        )
+        self.assertIsNone(result.query_result)
+        self.assertEqual((), result.candidates)
+        # No SQL was generated and the candidate judge never ran.
+        self.assertEqual([], querier.generated_requests)
+        self.assertEqual([], ambiguity.requests)
+        self.assertEqual(1, len(semantic.requests))
+        self.assertIn(
+            "semantic_column_detection",
+            [event[0] for event in self.event_logger.events],
+        )
+
+    def test_runs_after_join_path_passes(self) -> None:
+        join_path = JoinPathSpy(self._pass_decision("join-path"))
+        semantic = SemanticColumnSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(),
+            join_path=join_path,
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="dates for orders by customer",
+            schema=RELATIONAL_COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.PENDING, result.state)
+        self.assertEqual("semantic-column", result.ambiguity.mechanism)
+        # Join-path ran first and passed; semantic-column then ran.
+        self.assertEqual(1, len(join_path.requests))
+        self.assertEqual(1, len(semantic.requests))
+
+    def test_join_path_clarification_short_circuits_semantic_column(self) -> None:
+        join_path = JoinPathSpy(
+            AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=False,
+                question="A specific visit, or all visits?",
+                options=("A specific visit", "All visits"),
+                mechanism="join-path",
+            )
+        )
+        semantic = SemanticColumnSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(),
+            join_path=join_path,
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="dates for orders by customer",
+            schema=RELATIONAL_COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual("join-path", result.ambiguity.mechanism)
+        # Join-path took precedence, so semantic-column never ran.
+        self.assertEqual(1, len(join_path.requests))
+        self.assertEqual([], semantic.requests)
+
+    def test_pass_continues_to_candidate_flow(self) -> None:
+        querier = QuerySpy()
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+        )
+        semantic = SemanticColumnSpy(self._pass_decision("semantic-column"))
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=ambiguity,
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=3,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the dates for order 5",
+            schema=COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual(1, len(semantic.requests))
+        self.assertEqual(3, len(querier.generated_requests))
+        self.assertEqual(1, len(ambiguity.requests))
+
+    def test_gate_can_be_disabled(self) -> None:
+        semantic = SemanticColumnSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(
+                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+            ),
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            enable_join_path_detection=False,
+            enable_semantic_column_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the dates for order 5",
+            schema=COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], semantic.requests)
+
+    def test_gate_skipped_with_fewer_than_two_columns(self) -> None:
+        semantic = SemanticColumnSpy(self._clarify_decision())
+        one_column = SchemaMetadata(
+            database_path="database.duckdb",
+            table_names=("orders",),
+            columns=_date_columns("order_date"),
+        )
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(
+                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+            ),
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the date",
+            schema=one_column,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], semantic.requests)
+
+    def test_failure_degrades_to_candidate_flow(self) -> None:
+        semantic = RaisingSemanticColumnSpy()
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+        )
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=ambiguity,
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the dates for order 5",
+            schema=COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual(1, len(semantic.requests))
+        self.assertEqual(1, len(ambiguity.requests))
+
+    def test_gate_skipped_on_terminal_iteration(self) -> None:
+        semantic = SemanticColumnSpy(self._clarify_decision())
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=AmbiguitySpy(),
+            semantic_column=semantic,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            max_iterations=1,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the dates for order 5",
+            schema=COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+            iteration=1,
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual([], semantic.requests)
+
+    def test_real_semantic_service_through_application(self) -> None:
+        # Drive the REAL SemanticColumnAmbiguityService (not a spy) through the
+        # real ApplicationService, faking only the OpenRouter client, so the
+        # wiring + detection compose end to end.
+        querier = QuerySpy()
+        client = _FakeColumnClient(
+            {
+                "terms": [
+                    {
+                        "term": "dates",
+                        "columns": [
+                            {"table": "orders", "column": "order_date"},
+                            {"table": "orders", "column": "required_date"},
+                            {"table": "orders", "column": "shipped_date"},
+                        ],
+                    }
+                ]
+            },
+            {
+                "question": "Which date do you mean?",
+                "options": ["When placed", "When required"],
+                "reason": "Three date columns.",
+            },
+        )
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=AmbiguitySpy(),
+            semantic_column=SemanticColumnAmbiguityService(client=client),
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the dates for order 5",
+            schema=COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.PENDING, result.state)
+        self.assertEqual("semantic-column", result.ambiguity.mechanism)
+        self.assertEqual(
+            ("When placed", "When required"), result.ambiguity.options
+        )
+        # Qualified column refs are appended for next-round settling.
+        self.assertIn("orders.order_date", result.ambiguity.question)
+        # The clarification short-circuited candidate generation.
+        self.assertEqual([], querier.generated_requests)
+        self.assertEqual(2, len(client.prompts))
 
 
 class ApplicationServiceTest(unittest.TestCase):

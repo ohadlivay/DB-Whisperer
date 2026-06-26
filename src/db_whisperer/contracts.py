@@ -205,13 +205,33 @@ class JoinPathRequest:
 
 
 @dataclass(frozen=True)
+class SemanticColumnRequest:
+    """User request plus schema sent to the semantic-column detector.
+
+    The detector (Component B's secondary mechanism) finds natural-language
+    terms whose meaning maps to more than one schema column of the same semantic
+    type -- the canonical example is "dates", which can mean an admission date,
+    a discharge date, or a date of birth -- and raises a clarification choosing
+    between the two most likely columns. It runs as a fallback after the
+    join-path mechanism finds no multiplicity.
+    """
+
+    user_query: str
+    schema: SchemaMetadata
+    api_key: str
+    model: str
+    clarifications: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AmbiguityDecision:
     """Pass or one two-option clarification returned by Component B.
 
     ``mechanism`` records which ambiguity mechanism produced the decision
-    (for example ``"join-path"`` for schema-graph join-path multiplicity, or
-    the default empty string for the executed-candidate comparison judge), so
-    the GUI and evaluation harness can distinguish them.
+    (for example ``"join-path"`` for schema-graph join-path multiplicity,
+    ``"semantic-column"`` for semantic-type column matching, or the default
+    empty string for the executed-candidate comparison judge), so the GUI and
+    evaluation harness can distinguish them.
     """
 
     state: ComponentState

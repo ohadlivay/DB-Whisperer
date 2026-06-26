@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "version": "1.8.0",
+      "released_at": "2026-06-27T12:00:00+03:00",
+      "changes": [
+        "Added a second ambiguity mechanism: when a vague word in your question maps to more than one column of the same kind (for example several dates, prices, or names), the system asks which column you mean before generating SQL.",
+        "The new semantic-column check runs after the join-path check and also works on single-CSV datasets, which previously had no pre-SQL ambiguity detection.",
+        "Each clarifying question is now tagged with the mechanism that produced it (join-path or semantic-column), and the semantic-column check can be turned off for evaluation."
+      ]
+    },
+    {
       "version": "1.7.0",
       "released_at": "2026-06-24T10:00:00+03:00",
       "changes": [

@@ -1,0 +1,72 @@
+{
+  "name": "bikestores_ambiguity",
+  "dataset": "../data/relational csv",
+  "candidate_count": 3,
+  "_notes": [
+    "Ambiguous cases use neutral phrasing that genuinely maps to two join paths in the BikeStores schema graph. The interpretation the simulated user wants is declared by 'intent' (human-readable) and 'clarification_path_index' (which of the two path-ordered options the user clicks: 0 = shortest/most-direct path, 1 = longer path through an intermediate table). The pair of stocked-vs-ordered cases share identical wording on purpose: the baseline can satisfy at most one with a single blind guess, while the full pipeline asks and reaches whichever the user confirmed.",
+    "Each ambiguous gold answer was verified to differ materially from its sibling on the real data (313 vs 226 products; 2 vs 3 staff).",
+    "Control cases are unambiguous (a single join path or one table). The full pipeline should match the baseline and should NOT ask a clarifying question; spurious questions are measured."
+  ],
+  "cases": [
+    {
+      "id": "store_products_stocked",
+      "question": "How many different products are associated with the store 'Santa Cruz Bikes'?",
+      "ambiguous": true,
+      "entity_pair": ["stores", "products"],
+      "intent": "Products currently stocked in that store's own inventory (stores -> stocks -> products).",
+      "clarification_path_index": 0,
+      "expected_sql": "SELECT COUNT(DISTINCT p.product_id) AS product_count FROM stores s JOIN stocks st ON st.store_id = s.store_id JOIN products p ON p.product_id = st.product_id WHERE s.store_name = 'Santa Cruz Bikes';"
+    },
+    {
+      "id": "store_products_ordered",
+      "question": "How many different products are associated with the store 'Santa Cruz Bikes'?",
+      "ambiguous": true,
+      "entity_pair": ["stores", "products"],
+      "intent": "Products that have actually been ordered through that store (stores -> orders -> order_items -> products).",
+      "clarification_path_index": 1,
+      "expected_sql": "SELECT COUNT(DISTINCT oi.product_id) AS product_count FROM stores s JOIN orders o ON o.store_id = s.store_id JOIN order_items oi ON oi.order_id = o.order_id WHERE s.store_name = 'Santa Cruz Bikes';"
+    },
+    {
+      "id": "customer_staff_processed",
+      "question": "How many staff members are associated with customer 1?",
+      "ambiguous": true,
+      "entity_pair": ["customers", "staffs"],
+      "intent": "Staff who personally processed this customer's orders (customers -> orders -> staffs).",
+      "clarification_path_index": 0,
+      "expected_sql": "SELECT COUNT(DISTINCT o.staff_id) AS staff_count FROM orders o WHERE o.customer_id = 1;"
+    },
+    {
+      "id": "customer_staff_store",
+      "question": "How many staff members are associated with customer 1?",
+      "ambiguous": true,
+      "entity_pair": ["customers", "staffs"],
+      "intent": "All staff working at the store(s) this customer ordered from (customers -> orders -> stores -> staffs).",
+      "clarification_path_index": 1,
+      "expected_sql": "SELECT COUNT(DISTINCT st.staff_id) AS staff_count FROM orders o JOIN staffs st ON st.store_id = o.store_id WHERE o.customer_id = 1;"
+    },
+    {
+      "id": "customer_count",
+      "question": "How many customers are registered in total?",
+      "ambiguous": false,
+      "entity_pair": ["customers"],
+      "intent": "A single-table count with no join, so no ambiguity is possible.",
+      "expected_sql": "SELECT COUNT(*) AS customer_count FROM customers;"
+    },
+    {
+      "id": "category_product_count",
+      "question": "How many products are in each category? Show the category name.",
+      "ambiguous": false,
+      "entity_pair": ["products", "categories"],
+      "intent": "Products join categories along a single path (products -> categories); unambiguous.",
+      "expected_sql": "SELECT c.category_name, COUNT(*) AS product_count FROM products p JOIN categories c ON c.category_id = p.category_id GROUP BY c.category_name ORDER BY c.category_name;"
+    },
+    {
+      "id": "brand_product_count",
+      "question": "How many products does each brand have? Show the brand name.",
+      "ambiguous": false,
+      "entity_pair": ["products", "brands"],
+      "intent": "Products join brands along a single path (products -> brands); unambiguous.",
+      "expected_sql": "SELECT b.brand_name, COUNT(*) AS product_count FROM products p JOIN brands b ON b.brand_id = p.brand_id GROUP BY b.brand_name ORDER BY b.brand_name;"
+    }
+  ]
+}
