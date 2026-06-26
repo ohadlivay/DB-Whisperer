@@ -18,8 +18,13 @@ from db_whisperer.contracts import (
     QueryResult,
     QueryWorkflowResult,
     SchemaMetadata,
+    SemanticColumnRequest,
 )
-from db_whisperer.ambiguity import AmbiguityService, JoinPathAmbiguityService
+from db_whisperer.ambiguity import (
+    AmbiguityService,
+    JoinPathAmbiguityService,
+    SemanticColumnAmbiguityService,
+)
 from db_whisperer.etler import ETLService
 from db_whisperer.prompt_logging import PromptLogger, PromptLogSink
 from db_whisperer.querier import QueryService
@@ -38,11 +43,13 @@ class ApplicationService:
         querier: QueryService | None = None,
         ambiguity: AmbiguityService | None = None,
         join_path: JoinPathAmbiguityService | None = None,
+        semantic_column: SemanticColumnAmbiguityService | None = None,
         event_logger: PromptLogSink | None = None,
         candidates_per_iteration: int = DEFAULT_CANDIDATES_PER_ITERATION,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         max_parallel_candidates: int = DEFAULT_MAX_PARALLEL_CANDIDATES,
         enable_join_path_detection: bool = True,
+        enable_semantic_column_detection: bool = True,
     ) -> None:
         if candidates_per_iteration < 2:
             raise ValueError("At least two candidates are required.")
@@ -55,11 +62,17 @@ class ApplicationService:
         self.querier = querier or QueryService()
         self.ambiguity = ambiguity or AmbiguityService()
         self.join_path = join_path or JoinPathAmbiguityService()
+        self.semantic_column = (
+            semantic_column or SemanticColumnAmbiguityService()
+        )
         self.event_logger = event_logger or PromptLogger()
         self.candidates_per_iteration = candidates_per_iteration
         self.max_iterations = max_iterations
         self.max_parallel_candidates = max_parallel_candidates
         self.enable_join_path_detection = enable_join_path_detection
+        self.enable_semantic_column_detection = (
+            enable_semantic_column_detection
+        )
 
     def ingest_csvs(self, files: Sequence[CsvUpload]) -> IngestionResult:
         """Route an uploaded CSV file to Component A."""
@@ -156,6 +169,24 @@ class ApplicationService:
         )
         if join_path_clarification is not None:
             return join_path_clarification
+
+        # Secondary ambiguity mechanism: after join-path multiplicity is ruled
+        # out, ask whether a vague term in the question maps to more than one
+        # column of the same semantic type (the PDF's "dates" -> admission vs
+        # discharge vs date of birth). This runs for single-table datasets too,
+        # which have no join graph to traverse.
+        semantic_column_clarification = (
+            self._detect_semantic_column_ambiguity(
+                prompt=prompt,
+                schema=schema,
+                api_key=api_key,
+                model=model,
+                iteration=iteration,
+                clarifications=clarifications,
+            )
+        )
+        if semantic_column_clarification is not None:
+            return semantic_column_clarification
 
         candidates: list[QueryCandidate] = []
         successful_results: list[QueryResult] = []
@@ -395,6 +426,83 @@ class ApplicationService:
 
         self.event_logger.log_event(
             event="join_path_detection",
+            component="application",
+            model=model,
+            details={
+                "iteration": iteration,
+                "state": decision.state,
+                "passed": decision.passed,
+                "reason": decision.reason,
+            },
+        )
+
+        is_clarification = (
+            decision.state == ComponentState.ACCEPTED
+            and decision.passed is False
+            and bool(decision.question)
+            and len(decision.options) == 2
+        )
+        if not is_clarification:
+            return None
+
+        return QueryWorkflowResult(
+            state=ComponentState.PENDING,
+            message=decision.question or "Please clarify your request.",
+            iteration=iteration,
+            complete=False,
+            query_result=None,
+            candidates=(),
+            ambiguity=decision,
+        )
+
+    def _detect_semantic_column_ambiguity(
+        self,
+        prompt: str,
+        schema: SchemaMetadata,
+        api_key: str,
+        model: str,
+        iteration: int,
+        clarifications: tuple[str, ...],
+    ) -> QueryWorkflowResult | None:
+        """Run the semantic-column gate, returning a pending result.
+
+        Returns a ``PENDING`` workflow result when a column clarification is
+        needed, or ``None`` when the gate is not applicable, passes, or fails
+        (in which case the caller continues to normal candidate generation).
+        """
+        if (
+            not self.enable_semantic_column_detection
+            # A clarification consumes an iteration, so never gate on the final
+            # allowed round -- it must return a result the user can act on.
+            or iteration >= self.max_iterations
+            # Need at least two columns for any same-type pair to exist.
+            or len(schema.columns) < 2
+        ):
+            return None
+
+        try:
+            decision = self.semantic_column.detect(
+                SemanticColumnRequest(
+                    user_query=prompt.strip(),
+                    schema=schema,
+                    api_key=api_key,
+                    model=model,
+                    clarifications=clarifications,
+                )
+            )
+            if not isinstance(decision, AmbiguityDecision):
+                raise TypeError(
+                    "Semantic-column detector returned an invalid decision."
+                )
+        except Exception as error:  # noqa: BLE001 - degrade gracefully.
+            decision = AmbiguityDecision(
+                state=ComponentState.FAILED,
+                reason=f"Semantic-column detection failed: {error}",
+                mechanism="semantic-column",
+            )
+
+        self.event_logger.log_event(
+            event="semantic_column_detection",
             component="application",
             model=model,
             details={

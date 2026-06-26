@@ -59,14 +59,25 @@ Implemented so far:
   more than one distinct path connects an entity pair. The application runs
   this before SQL generation on the first round of a multi-table question and
   degrades to the candidate-comparison judge if detection fails.
+- The secondary ambiguity mechanism, semantic-type column matching
+  (`ambiguity/semantic_column_service.py`): an LLM maps vague query terms to
+  candidate columns, and a deterministic guard (columns grouped into
+  temporal/numeric/boolean/textual buckets) raises a clarification when a term
+  maps to two or more columns of the same kind (the PDF's "dates" -> admission
+  vs discharge vs date of birth). It runs as a fallback after the join-path
+  mechanism finds no multiplicity, works on single-table datasets too, and is
+  gated by `enable_semantic_column_detection`.
+- The controlled baseline-vs-full-pipeline evaluation harness
+  (`benchmark/ab_run.py` with `benchmark/ab_cases.json`): the same questions run
+  through the full pipeline (`ApplicationService` with Component B) and a
+  single-pass `QueryService` baseline against one DuckDB database. A simulated
+  user answers each clarification by the interpretation the case declares; both
+  arms are scored against a gold query and compared, split into ambiguous and
+  control cases. The default suite uses the bundled BikeStores dataset, whose
+  schema graph has verified join-path multiplicity.
 
 Still missing from the PDF direction:
 
-- Mechanism 2, the semantic-type column matching fallback (e.g. "dates" ->
-  admission vs discharge vs date of birth).
-- The controlled baseline-vs-full-pipeline evaluation harness. The
-  `enable_join_path_detection` flag on `ApplicationService` is the seam for the
-  ablation but no measurement harness exists yet.
 - Semantic pruning of graph paths: enumeration is faithful to the PDF
   (all simple paths), so it can surface join paths that route through a fact
   table, which is correct graph behaviour but not always a natural join.
@@ -127,6 +138,8 @@ Focused areas:
   clarification passing: `tests/application/test_service.py`.
 - Streamlit behavior and session-state helpers: `tests/gui/test_app.py`.
 - Prompt logging: `tests/test_prompt_logging.py`.
+- A/B evaluation harness (suite validation, simulated clarification loop,
+  scoring, aggregation): `tests/benchmark/`.
 
 Add or update tests when changing component contracts, prompt sections,
 OpenRouter response parsing, SQL validation rules, candidate ordering,

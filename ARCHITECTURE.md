@@ -25,8 +25,8 @@ as DuckDB constraints.
 
 Detects whether the user's request maps to more than one valid interpretation
 and, if so, returns one clarifying question with exactly two answer options.
-Component B has two complementary mechanisms and never generates SQL, executes
-queries, or manages the loop.
+Component B has three complementary mechanisms, tried in order, and never
+generates SQL, executes queries, or manages the loop.
 
 **Primary mechanism -- schema-graph join-path multiplicity.** Before any SQL is
 generated, an LLM extracts the entities a question mentions and maps them to
@@ -40,14 +40,23 @@ join `labevents` directly to `patients` by `subject_id` or through a hospital
 visit (`admissions`). Pure graph assembly and path enumeration live in
 `schema_graph/`; the LLM steps live in `ambiguity/`.
 
-**Secondary mechanism -- executed-candidate comparison.** When join-path
-detection passes (a single path, fewer than two entity tables, or no graph), the
-application generates K SQL candidates, executes them, and Component B compares
-the SQL/table pairs to decide whether they expose a material ambiguity, again
-returning a pass or one two-option question.
+**Secondary mechanism -- semantic-type column matching.** When join-path
+detection finds no multiplicity, an LLM maps vague terms in the question to
+candidate columns, and a deterministic guard groups those columns into semantic
+buckets (temporal, numeric, boolean, textual). When a term maps to two or more
+columns of the same bucket -- the canonical example is "dates", meaning an
+admission date, a discharge date, or a date of birth -- the request is
+ambiguous, and the clarifying question (LLM-written, with a deterministic
+fallback) asks which column the user means. This mechanism also runs for
+single-table datasets, which have no join graph to traverse.
 
-Both mechanisms return a pass decision or one clarifying question with exactly
-two answer options, tagged with the mechanism that produced it.
+**Tertiary mechanism -- executed-candidate comparison.** When both schema-graph
+gates pass, the application generates K SQL candidates, executes them, and
+Component B compares the SQL/table pairs to decide whether they expose a
+material ambiguity, again returning a pass or one two-option question.
+
+All three mechanisms return a pass decision or one clarifying question with
+exactly two answer options, tagged with the mechanism that produced it.
 
 ### Component C: Querier
 
@@ -103,7 +112,7 @@ src/db_whisperer/
 |-- application/    # Workflow orchestration
 |-- etler/          # CSV ingestion and schema metadata
 |-- schema_graph/   # FK graph assembly and join-path enumeration
-|-- ambiguity/      # Join-path detection and candidate comparison
+|-- ambiguity/      # Join-path, semantic-column, and candidate comparison
 |-- querier/        # SQL generation, validation, and execution
 |-- gui/            # Streamlit interface
 `-- contracts.py    # Shared component data models
