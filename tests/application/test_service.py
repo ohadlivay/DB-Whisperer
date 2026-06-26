@@ -12,6 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from db_whisperer.ambiguity import SemanticColumnAmbiguityService
 from db_whisperer.application import ApplicationService
 from db_whisperer.contracts import (
     AmbiguityDecision,
@@ -465,6 +466,18 @@ class RaisingSemanticColumnSpy:
         raise RuntimeError("semantic-column detector unavailable")
 
 
+class _FakeColumnClient:
+    """A fake AmbiguityOpenRouterClient returning queued JSON judgments."""
+
+    def __init__(self, *responses) -> None:
+        self.responses = list(responses)
+        self.prompts = []
+
+    def evaluate(self, prompt, api_key, model):
+        self.prompts.append(prompt)
+        return self.responses.pop(0)
+
+
 def _date_columns(*names: str) -> tuple[ColumnMetadata, ...]:
     return tuple(
         ColumnMetadata(name=name, data_type="DATE", table_name="orders")
@@ -741,6 +754,57 @@ class SemanticColumnGateTest(unittest.TestCase):
 
         self.assertTrue(result.complete)
         self.assertEqual([], semantic.requests)
+
+    def test_real_semantic_service_through_application(self) -> None:
+        # Drive the REAL SemanticColumnAmbiguityService (not a spy) through the
+        # real ApplicationService, faking only the OpenRouter client, so the
+        # wiring + detection compose end to end.
+        querier = QuerySpy()
+        client = _FakeColumnClient(
+            {
+                "terms": [
+                    {
+                        "term": "dates",
+                        "columns": [
+                            {"table": "orders", "column": "order_date"},
+                            {"table": "orders", "column": "required_date"},
+                            {"table": "orders", "column": "shipped_date"},
+                        ],
+                    }
+                ]
+            },
+            {
+                "question": "Which date do you mean?",
+                "options": ["When placed", "When required"],
+                "reason": "Three date columns.",
+            },
+        )
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=AmbiguitySpy(),
+            semantic_column=SemanticColumnAmbiguityService(client=client),
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            enable_join_path_detection=False,
+        )
+
+        result = application.submit_query(
+            prompt="show me the dates for order 5",
+            schema=COLUMN_SCHEMA,
+            api_key="key",
+            model="provider/model",
+        )
+
+        self.assertEqual(ComponentState.PENDING, result.state)
+        self.assertEqual("semantic-column", result.ambiguity.mechanism)
+        self.assertEqual(
+            ("When placed", "When required"), result.ambiguity.options
+        )
+        # Qualified column refs are appended for next-round settling.
+        self.assertIn("orders.order_date", result.ambiguity.question)
+        # The clarification short-circuited candidate generation.
+        self.assertEqual([], querier.generated_requests)
+        self.assertEqual(2, len(client.prompts))
 
 
 class ApplicationServiceTest(unittest.TestCase):

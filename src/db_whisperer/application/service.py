@@ -470,13 +470,19 @@ class ApplicationService:
         needed, or ``None`` when the gate is not applicable, passes, or fails
         (in which case the caller continues to normal candidate generation).
         """
+        # The detector reads columns from schema.tables when the flat column
+        # list is empty, so the guard must count them the same way or it would
+        # skip detection on a tables-only schema the detector could analyze.
+        total_columns = len(schema.columns) or sum(
+            len(table.columns) for table in schema.tables
+        )
         if (
             not self.enable_semantic_column_detection
             # A clarification consumes an iteration, so never gate on the final
             # allowed round -- it must return a result the user can act on.
             or iteration >= self.max_iterations
             # Need at least two columns for any same-type pair to exist.
-            or len(schema.columns) < 2
+            or total_columns < 2
         ):
             return None
 

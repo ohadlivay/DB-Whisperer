@@ -341,10 +341,42 @@ class FullArmOutcome:
     result: QueryResult
     clarifications_asked: tuple[dict[str, Any], ...]
     termination: str
+    unreliable_reasons: tuple[str, ...] = ()
 
     @property
     def asked_question(self) -> bool:
         return bool(self.clarifications_asked)
+
+    @property
+    def unreliable(self) -> bool:
+        """True if the simulated user had to answer an undeclared question."""
+        return bool(self.unreliable_reasons)
+
+
+def _undeclared_cause(
+    case: AbCase,
+    is_first: bool,
+    decision: AmbiguityDecision,
+) -> str | None:
+    """Explain why a clarification falls outside what the case declared.
+
+    A case declares exactly one answer -- ``clarification_path_index`` -- for the
+    first join-path clarification, whose options are path-ordered. Any other
+    clarification cannot be answered faithfully by that single index, so it is
+    reported rather than silently defaulted. Returns ``None`` when the
+    clarification is the declared one.
+    """
+    if case.clarification_path_index is None:
+        return "case is not marked ambiguous but was asked a clarification"
+    if not is_first:
+        return "additional clarification beyond the one the case declared"
+    if decision.mechanism != "join-path":
+        return (
+            f"mechanism is '{decision.mechanism or 'candidate-comparison'}', "
+            "whose options are not path-ordered, so the declared index does "
+            "not apply"
+        )
+    return None
 
 
 def run_full(
@@ -361,9 +393,18 @@ def run_full(
     interpretation the case declares, format it as the GUI would, and resubmit
     on the next iteration. Stops at the first complete or failed result, or at
     the application's iteration cap.
+
+    The case declares one answer for one join-path clarification. If the
+    pipeline asks anything else -- a later clarification, a clarification on a
+    control case, or a non-join-path mechanism whose options are not
+    path-ordered -- the simulated user cannot answer it faithfully, so the run
+    is flagged ``unreliable`` (with a recorded reason) and option 0 is used to
+    keep the loop moving, rather than silently treating an arbitrary answer as
+    the user's intent.
     """
     clarifications: tuple[str, ...] = ()
     asked: list[dict[str, Any]] = []
+    unreliable_reasons: list[str] = []
     max_iterations = application.max_iterations
 
     last_result: QueryResult | None = None
@@ -395,11 +436,17 @@ def run_full(
                 result=last_result or _failed_result(workflow.message),
                 clarifications_asked=tuple(asked),
                 termination=termination,
+                unreliable_reasons=tuple(unreliable_reasons),
             )
 
         decision = workflow.ambiguity
         assert decision is not None  # narrowed by pending_clarification
-        index = pick_option_index(case, decision)
+        cause = _undeclared_cause(case, len(asked) == 0, decision)
+        if cause is None:
+            index = pick_option_index(case, decision)
+        else:
+            index = 0
+            unreliable_reasons.append(f"iteration {iteration}: {cause}")
         choice = decision.options[index]
         asked.append(
             {
@@ -409,6 +456,7 @@ def run_full(
                 "options": list(decision.options),
                 "chosen_index": index,
                 "chosen": choice,
+                "declared": cause is None,
                 "reason": decision.reason,
             }
         )
@@ -421,6 +469,7 @@ def run_full(
         result=last_result or _failed_result("No result produced."),
         clarifications_asked=tuple(asked),
         termination="max_iterations",
+        unreliable_reasons=tuple(unreliable_reasons),
     )
 
 
@@ -491,6 +540,8 @@ def evaluate_case(
     full["mechanisms"] = sorted(
         {entry["mechanism"] for entry in full_outcome.clarifications_asked}
     )
+    full["unreliable"] = full_outcome.unreliable
+    full["unreliable_reasons"] = list(full_outcome.unreliable_reasons)
 
     comparison = compare_scores(baseline["score"], full["score"])
     score_delta = (
@@ -572,9 +623,15 @@ def summarize(case_results: list[dict[str, Any]]) -> dict[str, Any]:
     full_asked_control = sum(
         1 for r in control if r["full"].get("clarification_asked")
     )
+    # Cases where the simulated user had to answer a clarification the case did
+    # not declare; their comparison should be read with caution.
+    unreliable_cases = [
+        r["id"] for r in case_results if r["full"].get("unreliable")
+    ]
 
     return {
         "total_cases": len(case_results),
+        "unreliable_cases": unreliable_cases,
         "baseline": _arm_breakdown(case_results, "baseline"),
         "full": _arm_breakdown(case_results, "full"),
         "overall_comparison": _comparison_counts(case_results),
@@ -653,6 +710,12 @@ def _print_summary(suite: AbSuite, summary: dict[str, Any]) -> None:
         f"baseline_better={ctl['comparison']['baseline_better']}; "
         f"spurious_clarification_rate={ctl['spurious_clarification_rate']}"
     )
+    unreliable = summary["unreliable_cases"]
+    if unreliable:
+        print(
+            f"  WARNING: {len(unreliable)} case(s) answered an undeclared "
+            f"clarification (read with caution): {', '.join(unreliable)}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -776,11 +839,12 @@ def _print_case_line(result: dict[str, Any]) -> None:
 
     tag = "AMBIG" if result["ambiguous"] else "CTRL"
     asked = "Q" if result["full"].get("clarification_asked") else "-"
+    flag = " UNRELIABLE" if result["full"].get("unreliable") else ""
     print(
         f"[{tag} {asked}] {result['id']}: "
         f"baseline={score_text(result['baseline'])} "
         f"full={score_text(result['full'])} "
-        f"-> {result['comparison']}"
+        f"-> {result['comparison']}{flag}"
     )
 
 

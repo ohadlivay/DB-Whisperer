@@ -349,24 +349,29 @@ class SemanticColumnAmbiguityService:
     ) -> bool:
         """True if one clarification already named two of the term's columns.
 
-        The clarification text includes the asked question, which names both
-        candidate columns, so a settled term's two columns both appear in the
-        accumulated answer.
+        Columns are matched as fully-qualified ``table.column`` references, so
+        two same-named columns in different tables (``customers.name`` vs
+        ``stores.name``) cannot settle from a single bare-name token. The asked
+        question always names both presented columns this way, so a settled
+        term's two columns both appear in the accumulated answer.
         """
         for clarification in clarifications:
             named = sum(
                 1
-                for _table, column in term.columns
-                if cls._names_token(clarification, column)
+                for table, column in term.columns
+                if cls._names_qualified_ref(clarification, table, column)
             )
             if named >= 2:
                 return True
         return False
 
     @staticmethod
-    def _names_token(text: str, name: str) -> bool:
-        """Match ``name`` as a whole identifier token."""
-        pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
+    def _names_qualified_ref(text: str, table: str, column: str) -> bool:
+        """Match ``table.column`` as a whole identifier token."""
+        pattern = (
+            rf"(?<![A-Za-z0-9_]){re.escape(table)}\.{re.escape(column)}"
+            r"(?![A-Za-z0-9_])"
+        )
         return re.search(pattern, text) is not None
 
     @classmethod
@@ -375,11 +380,17 @@ class SemanticColumnAmbiguityService:
         question: str,
         interpretations: tuple[ColumnRef, ColumnRef],
     ) -> str:
-        """Append the two column names unless the question already names both."""
+        """Append both qualified column refs unless the question already has them.
+
+        The appended ``"table.column"`` references are what ``_term_settled``
+        looks for next round, so they must always reach the recorded
+        clarification -- an LLM-written question rarely contains the literal
+        qualified form, so this normally appends.
+        """
         first, second = interpretations
-        if cls._names_token(question, first[1]) and cls._names_token(
-            question, second[1]
-        ):
+        if cls._names_qualified_ref(
+            question, *first
+        ) and cls._names_qualified_ref(question, *second):
             return question
         return (
             f'{question} (clarifying which column: '

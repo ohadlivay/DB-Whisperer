@@ -33,7 +33,11 @@ def _accepted(rows, columns=("n",), sql="SELECT 1;") -> QueryResult:
     )
 
 
-def _pending(question="Which connection?", options=("direct", "through visit")):
+def _pending(
+    question="Which connection?",
+    options=("direct", "through visit"),
+    mechanism="join-path",
+):
     return QueryWorkflowResult(
         state=ComponentState.PENDING,
         message=question,
@@ -45,7 +49,7 @@ def _pending(question="Which connection?", options=("direct", "through visit")):
             passed=False,
             question=question,
             options=options,
-            mechanism="join-path",
+            mechanism=mechanism,
         ),
     )
 
@@ -108,6 +112,9 @@ class RunFullTest(unittest.TestCase):
         self.assertEqual(asked["chosen_index"], 1)
         self.assertEqual(asked["chosen"], "through visit")
         self.assertEqual(asked["mechanism"], "join-path")
+        # A declared first join-path clarification is reliably answered.
+        self.assertTrue(asked["declared"])
+        self.assertFalse(outcome.unreliable)
         # The second submit carries exactly the GUI-formatted clarification.
         self.assertEqual(
             app.calls[1]["clarifications"],
@@ -124,15 +131,30 @@ class RunFullTest(unittest.TestCase):
         self.assertEqual(outcome.clarifications_asked, ())
         self.assertEqual(len(app.calls), 1)
 
-    def test_control_case_without_index_defaults_to_first_option(self) -> None:
+    def test_control_case_asked_is_flagged_unreliable(self) -> None:
         control = _case(ambiguous=False, clarification_path_index=None)
         app = _ScriptedApp([_pending(), _complete([(1,)])])
         outcome = ab_run.run_full(control, SCHEMA, app, "key", "model")
 
-        # A control case is not expected to be asked, but if it is, the choice
-        # is recorded (visible) and defaults to the first option.
+        # A control case should not be asked; if it is, the run is flagged
+        # unreliable (not silently treated as a clean answer) and defaults to 0.
         self.assertTrue(outcome.asked_question)
+        self.assertTrue(outcome.unreliable)
+        self.assertFalse(outcome.clarifications_asked[0]["declared"])
         self.assertEqual(outcome.clarifications_asked[0]["chosen_index"], 0)
+        self.assertIn("not marked ambiguous", outcome.unreliable_reasons[0])
+
+    def test_non_join_path_first_clarification_is_unreliable(self) -> None:
+        # The declared index is path-ordered, so it does not apply to a
+        # semantic-column (or candidate-comparison) question even on round one.
+        app = _ScriptedApp(
+            [_pending(mechanism="semantic-column"), _complete([(1,)])]
+        )
+        outcome = ab_run.run_full(_case(), SCHEMA, app, "key", "model")
+
+        self.assertTrue(outcome.unreliable)
+        self.assertFalse(outcome.clarifications_asked[0]["declared"])
+        self.assertIn("not path-ordered", outcome.unreliable_reasons[0])
 
     def test_failed_workflow_terminates(self) -> None:
         failed = QueryWorkflowResult(
@@ -156,6 +178,9 @@ class RunFullTest(unittest.TestCase):
 
         self.assertEqual(outcome.termination, "max_iterations")
         self.assertEqual(len(outcome.clarifications_asked), app.max_iterations)
+        # The first question is declared; the extra rounds are not, so the run
+        # is flagged unreliable.
+        self.assertTrue(outcome.unreliable)
 
 
 class PickOptionIndexTest(unittest.TestCase):
@@ -240,12 +265,25 @@ class CompareScoresTest(unittest.TestCase):
 
 class SummarizeTest(unittest.TestCase):
     @staticmethod
-    def _result(ambiguous, comparison, baseline_score, full_score, asked):
+    def _result(
+        ambiguous,
+        comparison,
+        baseline_score,
+        full_score,
+        asked,
+        unreliable=False,
+        case_id="c",
+    ):
         return {
+            "id": case_id,
             "ambiguous": ambiguous,
             "comparison": comparison,
             "baseline": {"score": baseline_score},
-            "full": {"score": full_score, "clarification_asked": asked},
+            "full": {
+                "score": full_score,
+                "clarification_asked": asked,
+                "unreliable": unreliable,
+            },
         }
 
     def test_splits_ambiguous_and_control(self) -> None:
@@ -275,6 +313,17 @@ class SummarizeTest(unittest.TestCase):
         # Baseline mean ignores the None score and averages only the 4.
         self.assertEqual(summary["baseline"]["mean_score"], 4.0)
         self.assertEqual(summary["baseline"]["scored"], 1)
+
+    def test_lists_unreliable_cases(self) -> None:
+        results = [
+            self._result(True, "tie", 4, 4, True, case_id="ok"),
+            self._result(
+                False, "baseline_better", 4, 0, True,
+                unreliable=True, case_id="bad",
+            ),
+        ]
+        summary = ab_run.summarize(results)
+        self.assertEqual(summary["unreliable_cases"], ["bad"])
 
 
 class LoadAbSuiteTest(unittest.TestCase):

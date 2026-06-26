@@ -124,6 +124,13 @@ into **ambiguous** and **control** groups, plus:
 - on control cases: the `spurious_clarification_rate` (the layer asking when it
   should not).
 
+A case declares one answer (`clarification_path_index`) for one join-path
+clarification. If the pipeline asks anything else -- a second clarification, a
+clarification on a control case, or a non-join-path mechanism whose options are
+not path-ordered -- the simulated user cannot answer it faithfully, so that case
+is flagged **`unreliable`** in the report (with a recorded reason) and listed in
+`summary.unreliable_cases`. Read an unreliable case's comparison with caution.
+
 **User trust is intentionally not scored automatically.** It is assessed by a
 human reading the recorded clarification questions, which the report preserves
 verbatim.

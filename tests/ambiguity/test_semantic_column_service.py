@@ -277,9 +277,12 @@ class SemanticColumnServiceTest(unittest.TestCase):
         self.assertIn("1 other ambiguous term(s)", decision.reason)
 
     def test_excludes_settled_term_on_later_round(self) -> None:
+        # The recorded clarification carries the qualified refs the question
+        # appends, which is what settles the term on the next round.
         answered = (
-            "Question: Which column do you mean: order_date or required_date?\n"
-            "Selected answer: order_date"
+            "Question: Which date? (clarifying which column: "
+            '"orders.order_date" or "orders.required_date")\n'
+            "Selected answer: orders.order_date"
         )
         client = FakeColumnClient(
             _dates_term("order_date", "required_date", "shipped_date")
@@ -293,6 +296,55 @@ class SemanticColumnServiceTest(unittest.TestCase):
         self.assertIn("already been clarified", decision.reason)
         # Only the extraction call ran; nothing left to clarify.
         self.assertEqual(1, len(client.prompts))
+
+    def test_same_named_columns_across_tables_do_not_false_settle(self) -> None:
+        # customers.name and stores.name share a bare column name; an unrelated
+        # prior clarification that merely mentions "name" once must NOT settle
+        # the term. (Matching bare names would falsely count it twice.)
+        schema = SchemaMetadata(
+            database_path="shop.duckdb",
+            table_names=("customers", "stores"),
+            columns=(
+                _column("name", "VARCHAR", "customers"),
+                _column("name", "VARCHAR", "stores"),
+                _column("customer_id", "INTEGER", "customers"),
+            ),
+        )
+        prior = "Question: Whose name?\nSelected answer: the customer name"
+        client = FakeColumnClient(
+            {
+                "terms": [
+                    {
+                        "term": "name",
+                        "columns": [
+                            {"table": "customers", "column": "name"},
+                            {"table": "stores", "column": "name"},
+                        ],
+                    }
+                ]
+            },
+            {
+                "question": "Which name?",
+                "options": ["Customer name", "Store name"],
+                "reason": "Two name columns.",
+            },
+        )
+
+        decision = SemanticColumnAmbiguityService(client=client).detect(
+            SemanticColumnRequest(
+                user_query="show me the name",
+                schema=schema,
+                api_key="key",
+                model="provider/model",
+                clarifications=(prior,),
+            )
+        )
+
+        self.assertFalse(decision.passed)
+        self.assertEqual("semantic-column", decision.mechanism)
+        # The asked question carries qualified refs so the NEXT round can settle.
+        self.assertIn("customers.name", decision.question)
+        self.assertIn("stores.name", decision.question)
 
     def test_falls_back_when_clarify_returns_one_option(self) -> None:
         client = FakeColumnClient(
