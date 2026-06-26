@@ -55,10 +55,16 @@ SESSION_DATABASE_FILENAME = "db_whisperer.duckdb"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = PROJECT_ROOT / "data"
 RELATIONAL_DATASET_DIR = DATA_ROOT / "relational csv"
+MIMIC_DATASET_DIR = (
+    DATA_ROOT
+    / "mimic-iii-clinical-database-demo-1.4-20260615T211207Z-3-001"
+    / "mimic-iii-clinical-database-demo-1.4"
+)
 SINGLE_DATASET_PATH = DATA_ROOT / "single csv" / "ai_student_impact_dataset.csv"
 EXAMPLE_DATASET_PATH = SINGLE_DATASET_PATH
 
 DATASET_BIKESTORES = "BikeStores (relational)"
+DATASET_MIMIC = "MIMIC-III clinical demo (relational)"
 DATASET_STUDENT = "Student impact (single CSV)"
 DATASET_UPLOAD = "Upload your own"
 WELCOME_MESSAGE = (
@@ -490,7 +496,12 @@ def _render_sidebar(
         _section_label("Data source")
         dataset_choice = st.selectbox(
             "Dataset",
-            options=[DATASET_BIKESTORES, DATASET_STUDENT, DATASET_UPLOAD],
+            options=[
+                DATASET_BIKESTORES,
+                DATASET_MIMIC,
+                DATASET_STUDENT,
+                DATASET_UPLOAD,
+            ],
             index=0,
             label_visibility="collapsed",
         )
@@ -507,6 +518,12 @@ def _render_sidebar(
         elif dataset_choice == DATASET_STUDENT:
             _ingest_builtin(SINGLE_DATASET_PATH, "student", application)
             st.caption(f"Using bundled example: {SINGLE_DATASET_PATH.name}")
+        elif dataset_choice == DATASET_MIMIC:
+            _ingest_builtin(MIMIC_DATASET_DIR, "mimic", application)
+            st.caption(
+                "Using bundled example: MIMIC-III clinical demo "
+                "(26 related tables, ODbL). First load takes a few seconds."
+            )
         else:
             _ingest_builtin(RELATIONAL_DATASET_DIR, "bikestores", application)
             st.caption("Using bundled example: BikeStores (9 related tables)")

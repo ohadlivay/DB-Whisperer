@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "version": "1.9.0",
+      "released_at": "2026-06-27T16:00:00+03:00",
+      "changes": [
+        "Added the MIMIC-III clinical demo as a bundled dataset: a 26-table critical-care database (patients, admissions, ICU stays, lab and chart events, prescriptions, and more) you can pick from the sidebar dataset selector.",
+        "This is the project's canonical schema-graph example: questions like \"labs for a patient\" can join through the patient directly or through a hospital admission, which triggers a join-path clarifying question.",
+        "The demo is the openly licensed (ODbL) 100-patient subset; the first load takes a few seconds while the 26 tables are imported and their relationships discovered."
+      ]
+    },
+    {
       "version": "1.8.0",
       "released_at": "2026-06-27T12:00:00+03:00",
       "changes": [

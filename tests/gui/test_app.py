@@ -23,8 +23,10 @@ from db_whisperer.contracts import (
     QueryWorkflowResult,
 )
 from db_whisperer.gui.app import (
+    DATASET_MIMIC,
     DATASET_STUDENT,
     HOURGLASS_ICON,
+    MIMIC_DATASET_DIR,
     MONEY_ICON,
     SESSION_DATABASE_ROOT_ENV,
     ModelOption,
@@ -473,6 +475,24 @@ class GuiWorkflowTest(unittest.TestCase):
             ("ai_student_impact_dataset.csv",),
             ingestion.schema.source_names,
         )
+
+    def test_mimic_dataset_is_offered_in_selector(self) -> None:
+        app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
+        self.assertFalse(app.exception)
+
+        # selectbox[0] is the dataset picker (model selector comes later).
+        self.assertIn(DATASET_MIMIC, list(app.selectbox[0].options))
+
+    def test_mimic_dataset_directory_is_bundled(self) -> None:
+        # Fail loudly if the bundled MIMIC demo data is missing or moved, so
+        # the sidebar option never points at an absent folder.
+        self.assertTrue(
+            MIMIC_DATASET_DIR.is_dir(),
+            f"MIMIC dataset directory is missing: {MIMIC_DATASET_DIR}",
+        )
+        csv_names = {path.name for path in MIMIC_DATASET_DIR.glob("*.csv")}
+        for core_table in ("PATIENTS.csv", "ADMISSIONS.csv", "LABEVENTS.csv"):
+            self.assertIn(core_table, csv_names)
 
     def test_relationships_panel_lists_discovered_fks(self) -> None:
         app = AppTest.from_file(str(ROOT / "app.py")).run(timeout=30)
