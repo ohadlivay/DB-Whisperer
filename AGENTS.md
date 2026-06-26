@@ -75,6 +75,14 @@ Implemented so far:
   arms are scored against a gold query and compared, split into ambiguous and
   control cases. The default suite uses the bundled BikeStores dataset, whose
   schema graph has verified join-path multiplicity.
+- The bundled MIMIC-III clinical demo dataset (26 critical-care tables, ODbL,
+  in `data/mimic-iii-clinical-database-demo-1.4-.../`), selectable from the GUI
+  dataset picker. It is the PDF's canonical schema-graph example: the
+  hub-and-spoke `subject_id`/`hadm_id`/`icustay_id` keys give "labs for a
+  patient" more than one join path. Loading is slower (~10s) and the CSV loader
+  skips ~0.2% of malformed `CHARTEVENTS` rows, surfaced as an incomplete-
+  discovery warning. The slow end-to-end ETL test is gated behind
+  `DB_WHISPERER_RUN_MIMIC_TEST=1` (`tests/etler/test_relational_integration.py`).
 
 Still missing from the PDF direction:
 
