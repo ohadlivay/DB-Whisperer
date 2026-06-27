@@ -77,7 +77,12 @@ def _single_choice(label: str, options: list[str], key: str) -> str | None:
 def _init_state() -> None:
     defaults = {
         "phase": "welcome",
-        "participant_id": uuid4().hex[:8],
+        # Stable participant id, assigned once at Start. It must NOT be the
+        # text_input's widget key: Streamlit garbage-collects widget keys when
+        # the widget stops rendering (after the welcome screen), which would make
+        # this setdefault regenerate a fresh id every rerun and scatter each
+        # task's record into a different file.
+        "participant_id": "",
         "plan": (),
         "idx": 0,
         "cur_idx": -1,
@@ -87,6 +92,7 @@ def _init_state() -> None:
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+    st.session_state.setdefault("pid_input", uuid4().hex[:8])
 
 
 def _reset_task_state(idx: int) -> None:
@@ -119,7 +125,9 @@ def _render_welcome() -> None:
         "much you trust the answer. There are no right or wrong responses about "
         "*you* — we're testing the assistant, not you. It takes about 15 minutes."
     )
-    st.text_input("Participant ID", key="participant_id")
+    # The input uses its own widget key; the chosen value is copied to the
+    # stable participant_id at Start (see _init_state for why they differ).
+    st.text_input("Participant ID", key="pid_input")
     role = _single_choice(
         "Your background",
         ["General (no clinical training)", "Clinically / health-informatics trained"],
@@ -135,22 +143,24 @@ def _render_welcome() -> None:
         "recorded for research.",
         key="consent",
     )
+    participant_id = st.session_state.pid_input.strip()
     ready = (
         consent
         and role is not None
         and comfort is not None
-        and st.session_state.participant_id.strip()
+        and bool(participant_id)
     )
     if st.button("Start", type="primary", disabled=not ready):
+        st.session_state.participant_id = participant_id
         st.session_state.plan = build_plan(
             load_scenarios(SCENARIOS_PATH),
-            st.session_state.participant_id,
+            participant_id,
         )
         _append_record(
-            st.session_state.participant_id,
+            participant_id,
             {
                 "type": "session_start",
-                "participant_id": st.session_state.participant_id,
+                "participant_id": participant_id,
                 "role": role,
                 "data_comfort": comfort,
                 "n_tasks": len(st.session_state.plan),

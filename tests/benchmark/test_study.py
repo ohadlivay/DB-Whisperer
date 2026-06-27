@@ -271,7 +271,10 @@ class StudyAppSmokeTest(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file(str(self.APP)).run(timeout=30)
-        self._by_key(app.text_input, "participant_id").set_value(self.PID)
+        # The input is keyed separately ("pid_input") from the stable
+        # "participant_id" so the id survives Streamlit's widget cleanup after
+        # the welcome screen unmounts the input.
+        self._by_key(app.text_input, "pid_input").set_value(self.PID)
         self._by_key(app.radio, "screen_role").set_value(
             "General (no clinical training)"
         )
@@ -284,6 +287,8 @@ class StudyAppSmokeTest(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state["phase"], "task")
         self.assertEqual(len(app.session_state["plan"]), 8)
+        # The chosen id is copied to the stable key, used for all logging.
+        self.assertEqual(app.session_state["participant_id"], self.PID)
 
         self._button(app, "Ask the assistant").click()
         app.run(timeout=30)
