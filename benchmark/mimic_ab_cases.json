@@ -1,0 +1,74 @@
+{
+  "name": "mimic_join_path_ambiguity",
+  "dataset": "../data/mimic-iii-clinical-database-demo-1.4-20260615T211207Z-3-001/mimic-iii-clinical-database-demo-1.4",
+  "candidate_count": 3,
+  "_notes": [
+    "MIMIC-III clinical demo (ODbL, 100-patient subset). This suite exercises the PDF's canonical join-path example -- 'labs for a patient' -- where the same wording reaches the data either directly by patient id or through a hospital admission, returning materially different results.",
+    "DENSITY FINDING (important): MIMIC's schema graph is a dense hub-and-spoke (almost every fact table carries subject_id, hadm_id, and icustay_id). Of the 325 table pairs, 96 are disconnected, exactly 1 has a single join path, and the rest explode to 2..40 simple paths within the 3-hop cap. The mechanism presents only the shortest and longest of the chosen (most-paths) pair, so for the dense event tables (labevents, chartevents) the 'longest' path is an unnatural chain and makes a poor case. The ONLY clean two-path pairs are those involving d_labitems -- the lab-item dictionary, a leaf reachable solely through labevents -- so every ambiguous case below is anchored on d_labitems. This confirms the gap noted in AGENTS.md: faithful all-simple-path enumeration needs semantic pruning before it yields natural choices on a real clinical schema.",
+    "ENTITY-EXTRACTION DEPENDENCY: each ambiguous question is phrased 'types of lab test' so the entity-extraction LLM maps that mention to d_labitems (the dictionary of lab-test types), NOT to labevents (the dense measurement hub). If a given run's model instead surfaces labevents, the denser patients<->labevents pair (40 paths) is chosen and the index-1 (longer-path) case may be mis-scored; the report records every clarification question and mechanism verbatim, and the harness flags non-join-path or extra clarifications as 'unreliable', so read the recorded questions before trusting an ambiguous comparison.",
+    "MATERIALITY (verified on the demo data): patient 10006 has 132 distinct lab-test types linked directly vs 67 linked through admissions; ICU stay 204132 has 98 lab-test types from its own admission vs 254 across the whole patient. The two store-style sibling cases per pair share identical wording on purpose: the baseline can satisfy at most one with a single blind guess, while the full pipeline asks and reaches whichever interpretation the simulated user confirmed.",
+    "Control cases are unambiguous (a single table, or the one single-path join labevents -> d_labitems). The full pipeline should match the baseline and should NOT ask; spurious questions are measured."
+  ],
+  "cases": [
+    {
+      "id": "patient_lab_types_anywhere",
+      "question": "How many different types of lab test are associated with patient 10006?",
+      "ambiguous": true,
+      "entity_pair": ["patients", "d_labitems"],
+      "intent": "Every lab-test type ever recorded for the patient, linked directly by patient id (labevents.subject_id = patients.subject_id). Includes labs not tied to any admission, e.g. outpatient labs with a null hadm_id.",
+      "clarification_path_index": 0,
+      "expected_sql": "SELECT COUNT(DISTINCT le.itemid) AS lab_test_type_count FROM patients p JOIN labevents le ON le.subject_id = p.subject_id WHERE p.subject_id = 10006;"
+    },
+    {
+      "id": "patient_lab_types_during_admissions",
+      "question": "How many different types of lab test are associated with patient 10006?",
+      "ambiguous": true,
+      "entity_pair": ["patients", "d_labitems"],
+      "intent": "Only lab-test types recorded during the patient's hospital admissions, linked through the admission (labevents.hadm_id = admissions.hadm_id, admissions.subject_id = patients.subject_id). Excludes labs with no admission.",
+      "clarification_path_index": 1,
+      "expected_sql": "SELECT COUNT(DISTINCT le.itemid) AS lab_test_type_count FROM patients p JOIN admissions a ON a.subject_id = p.subject_id JOIN labevents le ON le.hadm_id = a.hadm_id WHERE p.subject_id = 10006;"
+    },
+    {
+      "id": "icustay_lab_types_same_admission",
+      "question": "How many different types of lab test are associated with ICU stay 204132?",
+      "ambiguous": true,
+      "entity_pair": ["icustays", "d_labitems"],
+      "intent": "Lab-test types from the single hospital admission this ICU stay belongs to, linked through the admission (labevents.hadm_id = icustays.hadm_id). This is the shortest path, presented first.",
+      "clarification_path_index": 0,
+      "expected_sql": "SELECT COUNT(DISTINCT le.itemid) AS lab_test_type_count FROM icustays i JOIN admissions a ON a.hadm_id = i.hadm_id JOIN labevents le ON le.hadm_id = a.hadm_id WHERE i.icustay_id = 204132;"
+    },
+    {
+      "id": "icustay_lab_types_same_patient",
+      "question": "How many different types of lab test are associated with ICU stay 204132?",
+      "ambiguous": true,
+      "entity_pair": ["icustays", "d_labitems"],
+      "intent": "Lab-test types from anywhere in the patient's record, linked through the patient (labevents.subject_id = icustays.subject_id), spanning all of that patient's admissions and outpatient labs. This is the longer path, presented second.",
+      "clarification_path_index": 1,
+      "expected_sql": "SELECT COUNT(DISTINCT le.itemid) AS lab_test_type_count FROM icustays i JOIN patients p ON p.subject_id = i.subject_id JOIN labevents le ON le.subject_id = p.subject_id WHERE i.icustay_id = 204132;"
+    },
+    {
+      "id": "patient_count",
+      "question": "How many patients are in the database in total?",
+      "ambiguous": false,
+      "entity_pair": ["patients"],
+      "intent": "A single-table count with no join, so no join-path ambiguity is possible.",
+      "expected_sql": "SELECT COUNT(*) AS patient_count FROM patients;"
+    },
+    {
+      "id": "admissions_by_type",
+      "question": "How many hospital admissions are there for each admission type?",
+      "ambiguous": false,
+      "entity_pair": ["admissions"],
+      "intent": "A single-table group-by over one table, so unambiguous.",
+      "expected_sql": "SELECT a.admission_type AS admission_type, COUNT(*) AS admission_count FROM admissions a GROUP BY a.admission_type ORDER BY a.admission_type;"
+    },
+    {
+      "id": "top_lab_tests_by_volume",
+      "question": "What are the five most frequently recorded lab tests? Show the lab test label and how many times it was measured.",
+      "ambiguous": false,
+      "entity_pair": ["labevents", "d_labitems"],
+      "intent": "labevents joins d_labitems along the single available path (labevents.itemid = d_labitems.itemid); exactly one join path connects them, so unambiguous.",
+      "expected_sql": "SELECT dl.label AS lab_test, COUNT(*) AS measurement_count FROM labevents le JOIN d_labitems dl ON dl.itemid = le.itemid GROUP BY dl.label ORDER BY measurement_count DESC, lab_test ASC LIMIT 5;"
+    }
+  ]
+}

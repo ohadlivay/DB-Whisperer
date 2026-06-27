@@ -89,8 +89,41 @@ python benchmark/ab_run.py `
 
 `OPENROUTER_API_KEY` and a judge model are required, as for `run.py`. The
 default suite (`ab_cases.json`) uses the bundled multi-CSV **BikeStores**
-dataset, the only bundled dataset whose schema graph contains genuine
-join-path multiplicity.
+dataset, whose schema graph has hand-verified, clean join-path multiplicity.
+
+### MIMIC suite and the path-density finding
+
+`mimic_ab_cases.json` runs the same protocol against the bundled **MIMIC-III
+clinical demo**, the PDF's canonical dataset. Run it with:
+
+```powershell
+python benchmark/ab_run.py `
+  --cases benchmark/mimic_ab_cases.json `
+  --model google/gemma-4-31b-it `
+  --judge-model provider/judge-model
+```
+
+Authoring these cases surfaced a real finding about applying the join-path
+mechanism to a realistic clinical schema. MIMIC is a dense hub-and-spoke graph:
+almost every fact table carries `subject_id`, `hadm_id`, and `icustay_id`. Of
+its 325 table pairs, 96 are disconnected, exactly **one** has a single join
+path, and the rest explode to **2–40** distinct simple paths within the 3-hop
+cap. Because the detector presents only the *shortest* and *longest* path of the
+most-ambiguous pair, the dense event tables (`labevents`, `chartevents`) yield a
+"longest path" that is an unnatural chain through an unrelated fact table — a
+poor clarification. The only pairs with a clean two-path choice are those
+through `d_labitems` (the lab-item dictionary, a leaf reachable solely via
+`labevents`), so every ambiguous MIMIC case is anchored there and phrased
+"types of lab test" to steer entity extraction onto the dictionary rather than
+the dense measurement hub. This is the concrete version of the gap recorded in
+`AGENTS.md`: faithful all-simple-path enumeration needs **semantic path
+pruning** before it produces natural choices on a schema like MIMIC. The
+materiality of the surviving cases is verified on the demo data (patient 10006:
+132 vs 67 distinct lab-test types; ICU stay 204132: 98 vs 254) and pinned by
+`tests/benchmark/test_ab_run.py::MimicAbSuiteTest`.
+
+Both suites share the same case schema, simulated-user contract, scoring, and
+report format described below.
 
 ### Case schema
 
@@ -133,7 +166,9 @@ is flagged **`unreliable`** in the report (with a recorded reason) and listed in
 
 **User trust is intentionally not scored automatically.** It is assessed by a
 human reading the recorded clarification questions, which the report preserves
-verbatim.
+verbatim. A concrete protocol for measuring trust, clarification comprehension,
+and real-user intent matching — the axes the simulated user cannot cover — is
+proposed in [HUMAN_IN_THE_LOOP.md](HUMAN_IN_THE_LOOP.md).
 
 Because SQL generation runs at the production temperature (1.3), individual runs
 vary; treat one report as a sample, not a fixed number. The reference execution

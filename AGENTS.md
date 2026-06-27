@@ -74,7 +74,11 @@ Implemented so far:
   user answers each clarification by the interpretation the case declares; both
   arms are scored against a gold query and compared, split into ambiguous and
   control cases. The default suite uses the bundled BikeStores dataset, whose
-  schema graph has verified join-path multiplicity.
+  schema graph has verified join-path multiplicity. A second suite
+  (`benchmark/mimic_ab_cases.json`) runs the same protocol on the MIMIC demo;
+  its ambiguous cases are anchored on the `d_labitems` dictionary pair (the only
+  MIMIC pairs with a clean two-path choice) and its gold materiality is pinned by
+  `tests/benchmark/test_ab_run.py::MimicAbSuiteTest`.
 - The bundled MIMIC-III clinical demo dataset (26 critical-care tables, ODbL,
   in `data/mimic-iii-clinical-database-demo-1.4-.../`), selectable from the GUI
   dataset picker. It is the PDF's canonical schema-graph example: the
@@ -88,7 +92,15 @@ Still missing from the PDF direction:
 
 - Semantic pruning of graph paths: enumeration is faithful to the PDF
   (all simple paths), so it can surface join paths that route through a fact
-  table, which is correct graph behaviour but not always a natural join.
+  table, which is correct graph behaviour but not always a natural join. The
+  MIMIC A/B suite makes this concrete: on its dense hub-and-spoke graph the
+  detector's shortest/longest pair often has an unnatural longest path, and only
+  `d_labitems`-anchored questions yield a clean choice (see the density finding
+  in `benchmark/README.md`).
+- An automated measure of user trust / perceived usefulness. The A/B harness
+  scores interpretive accuracy with a simulated user only; a human-in-the-loop
+  protocol covering trust, clarification comprehension, and real-user intent
+  matching is proposed in `benchmark/HUMAN_IN_THE_LOOP.md` but not implemented.
 
 ## Research And Product Direction From The PDF
 
