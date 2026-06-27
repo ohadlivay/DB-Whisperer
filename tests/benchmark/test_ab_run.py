@@ -171,6 +171,33 @@ class RunFullTest(unittest.TestCase):
         self.assertFalse(outcome.clarifications_asked[0]["declared"])
         self.assertIn("not path-ordered", outcome.unreliable_reasons[0])
 
+    def test_wrong_entity_pair_first_clarification_is_unreliable(self) -> None:
+        # A dense schema can make entity extraction clarify a different pair than
+        # the case targets; the path-ordered index would then mean the wrong
+        # thing, so the run must be flagged rather than scored as the user's
+        # intent.
+        case = _case(entity_pair=("patients", "d_labitems"))
+        app = _ScriptedApp(
+            [_pending(question='Connect "patients" and "labevents" how?'),
+             _complete([(1,)])]
+        )
+        outcome = ab_run.run_full(case, SCHEMA, app, "key", "model")
+
+        self.assertTrue(outcome.unreliable)
+        self.assertFalse(outcome.clarifications_asked[0]["declared"])
+        self.assertIn("different table pair", outcome.unreliable_reasons[0])
+
+    def test_declared_entity_pair_first_clarification_is_reliable(self) -> None:
+        case = _case(entity_pair=("patients", "d_labitems"))
+        app = _ScriptedApp(
+            [_pending(question='For "patients" and "d_labitems", which labs?'),
+             _complete([(1,)])]
+        )
+        outcome = ab_run.run_full(case, SCHEMA, app, "key", "model")
+
+        self.assertFalse(outcome.unreliable)
+        self.assertTrue(outcome.clarifications_asked[0]["declared"])
+
     def test_failed_workflow_terminates(self) -> None:
         failed = QueryWorkflowResult(
             state=ComponentState.FAILED,

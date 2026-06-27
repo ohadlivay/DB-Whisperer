@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -135,6 +137,19 @@ class BuildPlanTest(unittest.TestCase):
         self.assertEqual(counts[VERSION_ASKING], 2)
         self.assertEqual(counts[VERSION_DIRECT], 2)
 
+    def test_versions_are_balanced_within_strata(self) -> None:
+        # Each (ambiguity) cell must see both versions, not just the overall
+        # split -- otherwise a participant could get every ambiguous task in one
+        # version. Holds for any participant id because each stratum has 2 tasks.
+        for participant in ("p1", "p2", "p27", "zzz"):
+            plan = build_plan(FIXTURE, participant)
+            ambiguous = Counter(i.version for i in plan if i.ambiguous)
+            control = Counter(i.version for i in plan if not i.ambiguous)
+            self.assertEqual(ambiguous[VERSION_ASKING], 1, participant)
+            self.assertEqual(ambiguous[VERSION_DIRECT], 1, participant)
+            self.assertEqual(control[VERSION_ASKING], 1, participant)
+            self.assertEqual(control[VERSION_DIRECT], 1, participant)
+
     def test_goal_is_a_valid_interpretation(self) -> None:
         plan = build_plan(FIXTURE, "p")
         for instance in plan:
@@ -190,6 +205,38 @@ class GeneratedScenariosTest(unittest.TestCase):
             if instance.ambiguous:
                 self.assertEqual(len(instance.interpretations), 2)
                 self.assertTrue(instance.clarification_question)
+
+    def test_real_ambiguous_tasks_split_both_versions(self) -> None:
+        # The bundled suite has 4 ambiguous tasks across 2 datasets, so a
+        # participant should get 2 asking and 2 direct ambiguous trials.
+        scenarios = load_scenarios(SCENARIOS_PATH)
+        ambiguous = Counter(
+            i.version for i in build_plan(scenarios, "reviewer") if i.ambiguous
+        )
+        self.assertEqual(ambiguous[VERSION_ASKING], 2)
+        self.assertEqual(ambiguous[VERSION_DIRECT], 2)
+
+    @unittest.skipUnless(
+        os.environ.get("DB_WHISPERER_RUN_MIMIC_TEST"),
+        "Set DB_WHISPERER_RUN_MIMIC_TEST=1 to rebuild and compare scenarios.",
+    )
+    def test_scenarios_json_is_not_stale(self) -> None:
+        # Rebuild the stimuli from the gold queries and compare to the committed
+        # file, so a future gold-SQL change can't leave stale study answers that
+        # still pass the shape-only checks.
+        import build_scenarios
+
+        fresh = build_scenarios._assemble(
+            build_scenarios._load_gold(build_scenarios.SUITES)
+        )
+        committed = json.loads(
+            SCENARIOS_PATH.read_text(encoding="utf-8")
+        )["scenarios"]
+        self.assertEqual(
+            fresh,
+            committed,
+            "scenarios.json is stale; rerun benchmark/study/build_scenarios.py",
+        )
 
 
 class StudyAppSmokeTest(unittest.TestCase):

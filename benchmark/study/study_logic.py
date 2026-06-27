@@ -113,21 +113,41 @@ def build_plan(
     scenarios: tuple[dict[str, Any], ...],
     participant_id: str,
 ) -> tuple[TaskInstance, ...]:
-    """Deterministically lay out one participant's session."""
+    """Deterministically lay out one participant's session.
+
+    Versions are balanced *within* each (dataset, ambiguity) stratum, not just
+    overall, so a participant always contributes both an asking and a direct
+    trial for ambiguous tasks and for control tasks. A single overall balance
+    could otherwise hand one participant every ambiguous task in the same
+    version, contributing no within-cell comparison.
+    """
     rng = Random(_seed(participant_id))
+
+    strata: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+    for scenario in scenarios:
+        strata.setdefault(
+            (scenario["dataset"], scenario["ambiguous"]), []
+        ).append(scenario)
+    version_by_id: dict[str, str] = {}
+    for key in sorted(strata):
+        group = strata[key]
+        for scenario, version in zip(
+            group, assign_versions(len(group), rng), strict=True
+        ):
+            version_by_id[scenario["id"]] = version
+
     order = list(scenarios)
     rng.shuffle(order)
-    versions = assign_versions(len(order), rng)
 
     plan: list[TaskInstance] = []
-    for scenario, version in zip(order, versions, strict=True):
+    for scenario in order:
         goals = scenario["goals"]
         goal = goals[rng.randrange(len(goals))] if len(goals) > 1 else goals[0]
         plan.append(
             TaskInstance(
                 task_id=scenario["id"],
                 dataset=scenario["dataset"],
-                version=version,
+                version=version_by_id[scenario["id"]],
                 ambiguous=scenario["ambiguous"],
                 question=scenario["question"],
                 clarification_question=scenario.get("clarification_question", ""),

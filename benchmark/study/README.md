@@ -31,11 +31,12 @@ stimuli* below).
    They rate **trust** (1–5), plus **clarity** and **naturalness** when asked.
 3. **Two wrap-up questions** about the overall experience.
 
-Each participant sees every task once; half the tasks use the asking version and
-half the direct version, balanced and ordered deterministically from the
-participant id (so a session is reproducible and the comparison is
-counterbalanced). For an ambiguous task the participant gets one of the two
-sibling goals, so the goal text never hints at the "expected" answer.
+Each participant sees every task once; the asking and direct versions are
+balanced *within each dataset×ambiguity cell* (not just overall, so every
+participant contributes both an asking and a direct trial for ambiguous and for
+control tasks), and the order is shuffled — all seeded by the participant id, so
+a session is reproducible. For an ambiguous task the participant gets one of the
+two sibling goals, so the goal text never hints at the "expected" answer.
 
 ## Deterministic stimuli (why no model is called)
 

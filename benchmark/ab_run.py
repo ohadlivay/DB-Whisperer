@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from time import perf_counter
 from typing import Any, Callable
@@ -353,6 +354,24 @@ class FullArmOutcome:
         return bool(self.unreliable_reasons)
 
 
+def _names_table(text: str, name: str) -> bool:
+    """True when ``name`` appears in ``text`` as a whole identifier token."""
+    pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
+    return re.search(pattern, text or "") is not None
+
+
+def _clarifies_declared_pair(case: AbCase, decision: AmbiguityDecision) -> bool:
+    """True when the join-path clarification is about the case's entity_pair.
+
+    The join-path service always names both connected tables in the question
+    (via its pair-naming fallback) and in the reason ("...paths between 'X' and
+    'Y'."), so a clarification about a *different* pair than the case declares is
+    detectable by token-matching both declared table names.
+    """
+    haystack = f"{decision.question or ''}\n{decision.reason or ''}"
+    return all(_names_table(haystack, table) for table in case.entity_pair)
+
+
 def _undeclared_cause(
     case: AbCase,
     is_first: bool,
@@ -361,8 +380,10 @@ def _undeclared_cause(
     """Explain why a clarification falls outside what the case declared.
 
     A case declares exactly one answer -- ``clarification_path_index`` -- for the
-    first join-path clarification, whose options are path-ordered. Any other
-    clarification cannot be answered faithfully by that single index, so it is
+    first join-path clarification *about its declared entity pair*, whose options
+    are path-ordered. Any other clarification (a later one, a non-join-path
+    mechanism, or a join-path question about a different pair than the case
+    declares) cannot be answered faithfully by that single index, so it is
     reported rather than silently defaulted. Returns ``None`` when the
     clarification is the declared one.
     """
@@ -375,6 +396,15 @@ def _undeclared_cause(
             f"mechanism is '{decision.mechanism or 'candidate-comparison'}', "
             "whose options are not path-ordered, so the declared index does "
             "not apply"
+        )
+    # A dense schema (e.g. MIMIC) can make entity extraction pick a different,
+    # denser pair than the case targets; its path-ordered options then mean
+    # something else, so the declared index must not be trusted.
+    if case.entity_pair and not _clarifies_declared_pair(case, decision):
+        return (
+            "join-path clarification is about a different table pair than the "
+            f"case declares ({', '.join(case.entity_pair)}), so the declared "
+            "index does not apply"
         )
     return None
 

@@ -97,10 +97,12 @@ Still missing from the PDF direction:
   detector's shortest/longest pair often has an unnatural longest path, and only
   `d_labitems`-anchored questions yield a clean choice (see the density finding
   in `benchmark/README.md`).
-- An automated measure of user trust / perceived usefulness. The A/B harness
-  scores interpretive accuracy with a simulated user only; a human-in-the-loop
+- A complete measure of user trust / perceived usefulness. The A/B harness
+  scores interpretive accuracy with a simulated user only. A human-in-the-loop
   protocol covering trust, clarification comprehension, and real-user intent
-  matching is proposed in `benchmark/HUMAN_IN_THE_LOOP.md` but not implemented.
+  matching is proposed in `benchmark/HUMAN_IN_THE_LOOP.md`, and a runnable
+  scripted Protocol 1 GUI ships in `benchmark/study/`; the live recruitment
+  study and the Protocol 2 annotation pass are not done.
 
 ## Research And Product Direction From The PDF
 
