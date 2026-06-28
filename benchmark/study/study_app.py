@@ -38,11 +38,6 @@ STUDY_DIR = Path(__file__).resolve().parent
 SCENARIOS_PATH = STUDY_DIR / "scenarios.json"
 RESULTS_DIR = STUDY_DIR / "results"
 RATING_HELP = "1 = not at all, 5 = completely"
-# A leading sentinel keeps every choice explicit (nothing is pre-selected) while
-# still giving each widget a real default value, which the rest of the app and
-# the tests rely on.
-SENTINEL = "— select —"
-RATING_CHOICES = [SENTINEL, "1", "2", "3", "4", "5"]
 
 
 def _now() -> str:
@@ -61,17 +56,15 @@ def _append_record(participant_id: str, record: dict[str, Any]) -> None:
 
 
 def _rating(label: str, key: str, help_text: str = RATING_HELP) -> int | None:
-    """A 1–5 rating that returns ``None`` until the participant picks."""
-    choice = st.radio(
-        label, RATING_CHOICES, index=0, horizontal=True, key=key, help=help_text
+    """A 1–5 rating, genuinely unselected until the participant picks."""
+    return st.radio(
+        label, [1, 2, 3, 4, 5], index=None, horizontal=True, key=key, help=help_text
     )
-    return None if choice == SENTINEL else int(choice)
 
 
 def _single_choice(label: str, options: list[str], key: str) -> str | None:
-    """A required single choice that returns ``None`` until picked."""
-    choice = st.radio(label, [SENTINEL, *options], index=0, key=key)
-    return None if choice == SENTINEL else choice
+    """A required single choice, genuinely unselected until picked."""
+    return st.radio(label, options, index=None, key=key)
 
 
 def _init_state() -> None:

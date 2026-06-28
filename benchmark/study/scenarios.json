@@ -142,12 +142,12 @@
         {
           "goal_id": "patient_lab_types_anywhere",
           "correct_key": "anywhere",
-          "text": "You're reviewing patient #10006's full medical history. You want to know how many different kinds of lab test this patient has ever had — including any taken outside of a hospital stay."
+          "text": "You're reviewing patient #10006's full medical history. You want to know how many different types of lab test this patient has ever had — including any taken outside of a hospital stay."
         },
         {
           "goal_id": "patient_lab_types_during_admissions",
           "correct_key": "during_admissions",
-          "text": "You're auditing patient #10006's hospital stays. You want to know how many different kinds of lab test were done while this patient was admitted to the hospital."
+          "text": "You're auditing patient #10006's hospital stays. You want to know how many different types of lab test were done while this patient was admitted to the hospital."
         }
       ]
     },
@@ -192,12 +192,12 @@
         {
           "goal_id": "icustay_lab_types_same_admission",
           "correct_key": "same_admission",
-          "text": "You're looking at ICU stay #204132. You want to know how many different kinds of lab test were done during that particular hospital stay."
+          "text": "You're looking at ICU stay #204132. You want to know how many different types of lab test were done during that particular hospital stay."
         },
         {
           "goal_id": "icustay_lab_types_same_patient",
           "correct_key": "same_patient",
-          "text": "You're looking at the patient who had ICU stay #204132. You want to know how many different kinds of lab test that patient has had in their whole record, across everything."
+          "text": "You're looking at the patient who had ICU stay #204132. You want to know how many different types of lab test that patient has had in their whole record, across everything."
         }
       ]
     },
