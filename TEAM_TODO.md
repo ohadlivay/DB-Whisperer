@@ -38,7 +38,7 @@
 - Keep the latest user request authoritative so old context helps follow-ups without overriding new questions.
 - Avoid sending full previous result tables unless a small preview is explicitly useful.
 
-## 6. Reset Conversation Button
+## 6. Reset Conversation Button - DONE
 
 - Add a reset button that starts a fresh chat session without clearing settings.
 - Keep API key, selected model, candidate count, and uploaded files.

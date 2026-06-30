@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .fab {
+    background: #b8c9d3;
+    color: black;
+    border: none;
+    border-radius: 50%;
+    width: 48px;
+    height: 48px;
+    cursor: pointer;
+    font-size: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+  }
+  .fab:hover {
+    filter: brightness(1.15);
+  }
+</style>
+</head>
+<body>
+
+<button id="fab-button" class="fab">↑</button>
+
+<script>
+  // Access the parent Streamlit window
+  const frame = window.frameElement;
+  const parentDoc = window.parent.document;
+  
+  if (frame) {
+      // Streamlit wraps components in a div with class 'element-container'
+      const container = frame.closest('.element-container');
+      if (container) {
+          // Break out of the document flow and float the container
+          container.style.position = "fixed";
+          container.style.bottom = "100px";
+          container.style.right = "40px";
+          container.style.zIndex = "99999";
+          container.style.width = "50px";
+          container.style.height = "50px";
+      }
+      frame.style.width = "100%";
+      frame.style.height = "100%";
+  }
+
+  const fabBtn = document.getElementById("fab-button");
+  
+  function initScrollListener() {
+    // Attempt 1: The specific chat window container
+    let scrollContainer = parentDoc.querySelector('.st-key-chat_window [data-testid="stVerticalBlockBorderWrapper"]');
+    
+    // If it doesn't have scroll space, fallback to the main page scroll container
+    if (!scrollContainer || (scrollContainer.scrollHeight - scrollContainer.clientHeight) <= 10) {
+        scrollContainer = parentDoc.querySelector('[data-testid="stAppScrollToBottomContainer"]')
+                       || parentDoc.querySelector('section.stMain')
+                       || parentDoc.querySelector('[data-testid="stAppViewMain"]') 
+                       || parentDoc.querySelector('.stAppViewContainer') 
+                       || parentDoc.documentElement;
+    }
+    
+    if (!scrollContainer) {
+        setTimeout(initScrollListener, 500);
+        return;
+    }
+    
+    function updateFab() {
+        // Handle window/document scrolling vs div scrolling
+        const scrollTop = scrollContainer.scrollTop || window.parent.scrollY || 0;
+        const scrollHeight = scrollContainer.scrollHeight || parentDoc.documentElement.scrollHeight;
+        const clientHeight = scrollContainer.clientHeight || window.parent.innerHeight;
+        
+        const maxScroll = scrollHeight - clientHeight;
+        const containerElem = frame ? frame.closest('.element-container') : null;
+        
+        if (maxScroll <= 20) {
+            if (containerElem) containerElem.style.display = "none";
+        } else {
+            if (containerElem) containerElem.style.display = "block";
+            
+            // If we've scrolled down a bit, point UP
+            if (scrollTop > 50) {
+                fabBtn.innerHTML = "↑";
+                fabBtn.onclick = () => {
+                    scrollContainer.scrollTo ? scrollContainer.scrollTo({top: 0, behavior: 'smooth'}) : window.parent.scrollTo({top: 0, behavior: 'smooth'});
+                };
+            } else {
+                // We are at the top, point DOWN
+                fabBtn.innerHTML = "↓";
+                fabBtn.onclick = () => {
+                    scrollContainer.scrollTo ? scrollContainer.scrollTo({top: scrollHeight, behavior: 'smooth'}) : window.parent.scrollTo({top: scrollHeight, behavior: 'smooth'});
+                };
+            }
+        }
+    }
+    
+    scrollContainer.addEventListener('scroll', updateFab);
+    window.parent.addEventListener('scroll', updateFab);
+    updateFab();
+  }
+  
+  initScrollListener();
+</script>
+
+</body>
+</html>

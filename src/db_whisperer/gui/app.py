@@ -18,6 +18,7 @@ from uuid import uuid4
 import requests
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
+import streamlit.components.v1 as components
 
 from db_whisperer.application import ApplicationService
 from db_whisperer.contracts import (
@@ -754,8 +755,11 @@ def _render_completed_workflow(workflow: Any) -> None:
 
 
 def _select_schema_table(table_name: str) -> None:
-    """Store the table selected in the schema browser."""
-    st.session_state.schema_browser_table = table_name
+    """Store the table selected in the schema browser, or clear it if already selected."""
+    if st.session_state.schema_browser_table == table_name:
+        st.session_state.schema_browser_table = ""
+    else:
+        st.session_state.schema_browser_table = table_name
 
 
 def _render_schema_browser(application: ApplicationService) -> None:
@@ -776,26 +780,27 @@ def _render_schema_browser(application: ApplicationService) -> None:
                 st.caption("Select a table to inspect its columns and first three rows.")
 
             with st.container(key="schema_actions"):
-                st.button(
-                    "Clear Session",
-                    on_click=_reset_conversation,
-                    use_container_width=False,
-                    type="secondary", 
-                    icon="🗑️",
-                    icon_position="left",
-                )
+                with st.popover("Clear Session", use_container_width=False):
+                    st.markdown("⚠️ **This will clear all previous chats and cannot be undone.**")
+                    st.button(
+                        "Confirm Reset",
+                        on_click=_reset_conversation,
+                        use_container_width=False,
+                        type="primary"
+                    )
 
-        with st.container(
-            horizontal=True,
-            gap="small",
-            key="schema_table_carousel",
-        ):
-            for index, table_name in enumerate(schema.table_names):
-                st.button(
-                    table_name,
-                    key=f"schema-table-{index}",
-                    type=(
-                        "primary"
+        with st.expander("Available Tables", expanded=True):
+            with st.container(
+                horizontal=True,
+                gap="small",
+                key="schema_table_carousel",
+            ):
+                for index, table_name in enumerate(schema.table_names):
+                    st.button(
+                        table_name,
+                        key=f"schema-table-{index}",
+                        type=(
+                            "primary"
                         if table_name == selected_table
                         else "secondary"
                     ),
@@ -1006,6 +1011,15 @@ def _render_chat(
         st.rerun()
 
 
+def _render_scroll_fab() -> None:
+    """Inject the floating action button for scrolling."""
+    fab_path = Path(__file__).parent / "scroll_fab.html"
+    if fab_path.exists():
+        html_content = fab_path.read_text(encoding="utf-8")
+        # Render an iframe; the JS inside will style its container to float on top.
+        components.html(html_content, height=60, width=60)
+
+
 def main() -> None:
     """Render the DB Whisperer Streamlit application."""
     st.set_page_config(
@@ -1020,6 +1034,7 @@ def main() -> None:
     api_key, model, candidate_count = _render_sidebar(application)
     _render_schema_browser(application)
     _render_chat(application, api_key, model, candidate_count)
+    _render_scroll_fab()
 
 
 if __name__ == "__main__":

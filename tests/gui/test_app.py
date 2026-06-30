@@ -547,7 +547,7 @@ class GuiWorkflowTest(unittest.TestCase):
 
         # Simulate clicking the button
         reset_button = next(
-            button for button in app.button if button.label in ("Clear Session", "Reset Conversation")
+            button for button in app.button if button.label == "Confirm Reset"
         )
         reset_button.click().run(timeout=20)
 
