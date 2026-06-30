@@ -507,6 +507,68 @@ class GuiWorkflowTest(unittest.TestCase):
         # session state, so previously ingested data is preserved.
         self.assertIsNone(_ingest_sources([], ("upload", ()), object()))
 
+    def test_reset_conversation_button(self) -> None:
+        app = self._app()
+        workflow = QueryWorkflowResult(
+            state=ComponentState.ACCEPTED,
+            message="Returned 1 row(s).",
+            iteration=1,
+            complete=True,
+            query_result=self._query_result(),
+        )
+        
+        # Initialize settings first
+        app.session_state["openrouter_api_key"] = "test-key"
+        app.session_state["openrouter_model"] = "test-model"
+        app.session_state["active_candidate_count"] = 5
+
+        # Run to let the app initialize its internal states (like upload_signature)
+        app.run(timeout=20)
+        self.assertFalse(app.exception)
+        
+        # Now set the chat state that we want to see cleared
+        app.session_state["active_query"] = "Show all data"
+        app.session_state["workflow_result"] = workflow
+        app.session_state["clarifications"] = ("c1",)
+        app.session_state["clarification_history"] = (("q", "a"),)
+        app.session_state["chat_history"] = ({
+            "query": "old",
+            "clarification_history": (),
+            "workflow_result": workflow,
+        },)
+        app.session_state["schema_browser_table"] = "orders"
+        app.session_state["query_pending"] = True
+
+        app.run(timeout=20)
+        self.assertFalse(app.exception)
+
+        # Record upload signature before reset
+        expected_signature = app.session_state["upload_signature"]
+
+        # Simulate clicking the button
+        reset_button = next(
+            button for button in app.button if button.label in ("Clear Session", "Reset Conversation")
+        )
+        reset_button.click().run(timeout=20)
+
+        self.assertFalse(app.exception)
+        
+        # Assert chat-related fields are cleared
+        self.assertEqual("", app.session_state["active_query"])
+        self.assertIsNone(app.session_state["workflow_result"])
+        self.assertEqual((), app.session_state["clarifications"])
+        self.assertEqual((), app.session_state["clarification_history"])
+        self.assertEqual((), app.session_state["chat_history"])
+        self.assertEqual("", app.session_state["schema_browser_table"])
+        self.assertFalse(app.session_state["query_pending"])
+        
+        # Assert settings remain intact
+        self.assertEqual("test-key", app.session_state["openrouter_api_key"])
+        self.assertEqual("test-model", app.session_state["openrouter_model"])
+        self.assertEqual(5, app.session_state["active_candidate_count"])
+        self.assertEqual(expected_signature, app.session_state["upload_signature"])
+
+
 
 if __name__ == "__main__":
     unittest.main()

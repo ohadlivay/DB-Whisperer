@@ -770,10 +770,21 @@ def _render_schema_browser(application: ApplicationService) -> None:
         st.session_state.schema_browser_table = ""
 
     with st.container(key="schema_browser"):
-        st.subheader("Database tables")
-        st.caption(
-            "Select a table to inspect its columns and first three rows."
-        )
+        with st.container(key="schema_header", horizontal=True):
+            with st.container(key="schema_title"):
+                st.subheader("Database tables")
+                st.caption("Select a table to inspect its columns and first three rows.")
+
+            with st.container(key="schema_actions"):
+                st.button(
+                    "Clear Session",
+                    on_click=_reset_conversation,
+                    use_container_width=False,
+                    type="secondary", 
+                    icon="🗑️",
+                    icon_position="left",
+                )
+
         with st.container(
             horizontal=True,
             gap="small",
@@ -837,6 +848,15 @@ def _archive_active_conversation() -> None:
             "workflow_result": workflow,
         },
     )
+
+def _reset_conversation() -> None:
+    st.session_state.active_query = ""
+    st.session_state.workflow_result = None
+    st.session_state.clarifications = ()
+    st.session_state.clarification_history = ()
+    st.session_state.chat_history = ()
+    st.session_state.schema_browser_table = ""
+    st.session_state.query_pending = False
 
 
 def _render_archived_conversations() -> None:

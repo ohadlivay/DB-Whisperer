@@ -207,11 +207,33 @@ body,
 }
 
 .st-key-schema_browser {
+    margin-top: 1rem;
     margin-bottom: 0.75rem;
     padding: 0.75rem 0.75rem 1rem;
     border: 1px solid var(--outline);
     border-radius: 0.9rem;
     background: var(--surface-lowest);
+}
+
+.st-key-schema_header {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    width: 100% !important;
+    gap: 1rem;
+}
+
+.st-key-schema_actions {
+    margin-inline-start: 10% !important;
+    display: inline-flex !important;
+    justify-content: flex-start !important;
+    align-items: flex-start !important;
+    direction: rtl;
+}
+
+.st-key-schema_actions .stButton {
+    display: flex !important;
+    justify-content: flex-end !important;
 }
 
 .st-key-schema_browser h3 {
