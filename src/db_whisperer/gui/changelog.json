@@ -1,6 +1,14 @@
 {
   "releases": [
     {
+      "version": "1.10.0",
+      "released_at": "2026-06-30T16:00:00+03:00",
+      "changes": [
+        "Added a Reset Conversation button that allows starting a fresh chat session while keeping current settings and uploaded datasets intact.",
+        "Added a smart floating action button (FAB) that dynamically appears when scrolling long conversations, allowing you to instantly scroll up to the database schema or down to the most recent messages."
+      ]
+    },
+    {
       "version": "1.9.0",
       "released_at": "2026-06-27T16:00:00+03:00",
       "changes": [
