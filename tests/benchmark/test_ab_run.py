@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 import json
+import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -14,12 +16,25 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "benchmark"))
 
 import ab_run  # noqa: E402
+from _harness import DEFAULT_MAX_REFERENCE_ROWS, execute_reference  # noqa: E402
 from db_whisperer.contracts import (  # noqa: E402
     AmbiguityDecision,
     ComponentState,
+    CsvUpload,
     QueryResult,
     QueryWorkflowResult,
     SchemaMetadata,
+)
+from db_whisperer.etler import ETLService  # noqa: E402
+
+
+BENCHMARK_DIR = ROOT / "benchmark"
+MIMIC_CASES_PATH = BENCHMARK_DIR / "mimic_ab_cases.json"
+MIMIC_DIR = (
+    ROOT
+    / "data"
+    / "mimic-iii-clinical-database-demo-1.4-20260615T211207Z-3-001"
+    / "mimic-iii-clinical-database-demo-1.4"
 )
 
 
@@ -155,6 +170,33 @@ class RunFullTest(unittest.TestCase):
         self.assertTrue(outcome.unreliable)
         self.assertFalse(outcome.clarifications_asked[0]["declared"])
         self.assertIn("not path-ordered", outcome.unreliable_reasons[0])
+
+    def test_wrong_entity_pair_first_clarification_is_unreliable(self) -> None:
+        # A dense schema can make entity extraction clarify a different pair than
+        # the case targets; the path-ordered index would then mean the wrong
+        # thing, so the run must be flagged rather than scored as the user's
+        # intent.
+        case = _case(entity_pair=("patients", "d_labitems"))
+        app = _ScriptedApp(
+            [_pending(question='Connect "patients" and "labevents" how?'),
+             _complete([(1,)])]
+        )
+        outcome = ab_run.run_full(case, SCHEMA, app, "key", "model")
+
+        self.assertTrue(outcome.unreliable)
+        self.assertFalse(outcome.clarifications_asked[0]["declared"])
+        self.assertIn("different table pair", outcome.unreliable_reasons[0])
+
+    def test_declared_entity_pair_first_clarification_is_reliable(self) -> None:
+        case = _case(entity_pair=("patients", "d_labitems"))
+        app = _ScriptedApp(
+            [_pending(question='For "patients" and "d_labitems", which labs?'),
+             _complete([(1,)])]
+        )
+        outcome = ab_run.run_full(case, SCHEMA, app, "key", "model")
+
+        self.assertFalse(outcome.unreliable)
+        self.assertTrue(outcome.clarifications_asked[0]["declared"])
 
     def test_failed_workflow_terminates(self) -> None:
         failed = QueryWorkflowResult(
@@ -413,6 +455,75 @@ class LoadAbSuiteTest(unittest.TestCase):
             tmp = Path(name)
             with self.assertRaises(ValueError):
                 ab_run.load_ab_suite(self._write_suite(tmp, suite))
+
+
+@unittest.skipUnless(MIMIC_DIR.is_dir(), "MIMIC demo data not present.")
+class MimicAbSuiteTest(unittest.TestCase):
+    """The bundled MIMIC A/B suite is well-formed and its gold is material."""
+
+    def test_suite_loads_with_expected_shape(self) -> None:
+        suite = ab_run.load_ab_suite(MIMIC_CASES_PATH)
+        self.assertEqual(suite.dataset_path, MIMIC_DIR.resolve())
+
+        ambiguous = [c for c in suite.cases if c.ambiguous]
+        control = [c for c in suite.cases if not c.ambiguous]
+        self.assertEqual(len(ambiguous), 4)
+        self.assertEqual(len(control), 3)
+
+        # Every ambiguous case is anchored on the d_labitems dictionary pair --
+        # the only MIMIC pairs with exactly two join paths within the hop cap,
+        # so the mechanism's shortest/longest options are both natural.
+        for case in ambiguous:
+            self.assertIn("d_labitems", case.entity_pair)
+            self.assertIn(case.clarification_path_index, (0, 1))
+
+        # Each ambiguous question is a 0/1 sibling pair: identical wording,
+        # opposite declared interpretation, so a single blind baseline guess can
+        # satisfy at most one of the two.
+        siblings: dict[str, list[int]] = defaultdict(list)
+        for case in ambiguous:
+            siblings[case.question].append(case.clarification_path_index)
+        self.assertEqual(len(siblings), 2)
+        for indices in siblings.values():
+            self.assertEqual(sorted(indices), [0, 1])
+
+    @unittest.skipUnless(
+        os.environ.get("DB_WHISPERER_RUN_MIMIC_TEST"),
+        "Set DB_WHISPERER_RUN_MIMIC_TEST=1 to run the slow MIMIC gold check.",
+    )
+    def test_gold_sql_executes_and_siblings_differ(self) -> None:
+        # Exercises the same reference executor the harness uses, against the
+        # real ETL-loaded MIMIC database, so a broken gold query or an
+        # accidentally-equal sibling pair fails loudly instead of at run time.
+        suite = ab_run.load_ab_suite(MIMIC_CASES_PATH)
+        with TemporaryDirectory(dir=ROOT) as directory:
+            database_path = Path(directory) / "mimic_ab.duckdb"
+            uploads = [
+                CsvUpload(name=path.name, content=path.read_bytes())
+                for path in sorted(MIMIC_DIR.glob("*.csv"))
+            ]
+            ingestion = ETLService(database_path=database_path).ingest(uploads)
+            self.assertEqual(
+                ComponentState.ACCEPTED, ingestion.state, ingestion.message
+            )
+            answers: dict[str, tuple] = {}
+            for case in suite.cases:
+                _columns, rows = execute_reference(
+                    str(database_path), case.expected_sql
+                )
+                self.assertLessEqual(len(rows), DEFAULT_MAX_REFERENCE_ROWS)
+                answers[case.id] = rows
+
+        # Sibling interpretations must return materially different tables, or the
+        # ambiguous case proves nothing about clarification.
+        self.assertNotEqual(
+            answers["patient_lab_types_anywhere"],
+            answers["patient_lab_types_during_admissions"],
+        )
+        self.assertNotEqual(
+            answers["icustay_lab_types_same_admission"],
+            answers["icustay_lab_types_same_patient"],
+        )
 
 
 if __name__ == "__main__":
