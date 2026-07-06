@@ -25,11 +25,21 @@ reported as `self_judged: true`.
 - The test suite design now contains 16 MIMIC-III cases.
 - The HTML report requirement is documented: generate a nested report page
   matching `docs/db_whisperer_embedded_site.html`.
-- No benchmark implementation has been changed yet.
+- Iteration 1 implementation has started:
+  - Added `benchmark/mimic_ab_cases.json` with 16 MIMIC-III cases.
+  - Added `tests/benchmark/test_mimic_cases.py` to validate the case-file
+    contract.
+  - Verified the JSON parses with PowerShell and resolves to the bundled MIMIC
+    dataset.
+  - Python test execution is currently blocked in this shell because neither
+    `python` nor `py` is available on `PATH`.
 
 ## Iteration Plan
 
 ### Iteration 1 - Case File And Schema Validation
+
+Status: implemented, pending Python test execution in an environment with a
+Python interpreter.
 
 Create `benchmark/mimic_ab_cases.json` from `EVALUATION.md`.
 
@@ -162,4 +172,3 @@ Exit criteria:
   independent judge model can be swapped in later.
 - Prefer additive benchmark files over disrupting the existing BikeStores
   benchmark until the MIMIC harness is stable.
-
