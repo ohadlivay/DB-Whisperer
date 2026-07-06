@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DB Whisperer Project Site</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-dark: #1e40af;
+      --accent: #06b6d4;
+      --accent-dark: #0891b2;
+      --bg: #f8fafc;
+      --bg-soft: #eff6ff;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #64748b;
+      --border: #dbeafe;
+      --shadow: 0 18px 45px rgba(30, 64, 175, 0.12);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: Inter, Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: linear-gradient(135deg, #eff6ff 0%, #ecfeff 45%, #ffffff 100%);
+      line-height: 1.6;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    .site {
+      min-height: 100vh;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.1;
+      font-weight: 800;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .brand-subtitle {
+      margin: 3px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 18px;
+      font-size: 14px;
+      font-weight: 650;
+      color: #475569;
+    }
+
+    nav a:hover { color: var(--primary); }
+
+    section {
+      padding: 76px 24px;
+    }
+
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 92px 24px 72px;
+      text-align: center;
+    }
+
+    .hero h2 {
+      margin: 0 auto 18px;
+      max-width: 980px;
+      font-size: clamp(42px, 7vw, 78px);
+      line-height: 1.02;
+      font-weight: 900;
+      letter-spacing: -0.055em;
+      background: linear-gradient(90deg, var(--primary), var(--accent), var(--primary-dark));
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .hero .subtitle {
+      margin: 0 0 28px;
+      font-size: clamp(18px, 2.5vw, 25px);
+      color: #475569;
+      font-weight: 550;
+    }
+
+    .hero-card {
+      max-width: 910px;
+      margin: 0 auto 26px;
+      padding: 30px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.78);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-card p {
+      margin: 0;
+      font-size: 18px;
+      color: #334155;
+    }
+
+    .chips, .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 15px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-weight: 750;
+      font-size: 13px;
+      border: 1px solid #bfdbfe;
+    }
+
+    .chip:nth-child(even) {
+      background: #cffafe;
+      color: #0e7490;
+      border-color: #a5f3fc;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 18px;
+      border-radius: 12px;
+      font-weight: 800;
+      font-size: 14px;
+      border: 1px solid transparent;
+      background: var(--primary);
+      color: white;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px rgba(37, 99, 235, .18);
+      background: var(--primary-dark);
+    }
+
+    .button.secondary {
+      background: white;
+      color: var(--primary);
+      border-color: #bfdbfe;
+    }
+
+    .button.secondary:hover {
+      background: #eff6ff;
+    }
+
+    .section-soft {
+      background: rgba(255, 255, 255, 0.48);
+    }
+
+    .section-blue {
+      background: linear-gradient(120deg, rgba(239, 246, 255, .92), rgba(236, 254, 255, .92));
+    }
+
+    .section-title {
+      text-align: center;
+      margin: 0 0 44px;
+    }
+
+    .section-title h3 {
+      margin: 0 0 12px;
+      font-size: clamp(32px, 4vw, 46px);
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    .section-title p {
+      margin: 0 auto;
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 22px;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card {
+      background: rgba(255, 255, 255, .86);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 28px rgba(30, 64, 175, .08);
+      padding: 26px;
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+      border-color: #93c5fd;
+      box-shadow: 0 18px 45px rgba(30, 64, 175, .14);
+    }
+
+    .card h4 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      line-height: 1.18;
+      color: var(--primary-dark);
+    }
+
+    .card p {
+      margin: 0 0 14px;
+      color: #475569;
+    }
+
+    .card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .member {
+      text-align: center;
+      min-height: 190px;
+    }
+
+    .avatar {
+      width: 78px;
+      height: 78px;
+      margin: 0 auto 16px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-size: 29px;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      box-shadow: 0 12px 30px rgba(37, 99, 235, .2);
+    }
+
+    .member h4 {
+      color: var(--text);
+      font-size: 20px;
+    }
+
+    .paper-card h4 {
+      color: var(--primary-dark);
+      min-height: 64px;
+    }
+
+    .paper-meta {
+      margin-bottom: 16px;
+      color: var(--accent-dark);
+      font-weight: 750;
+      font-size: 14px;
+    }
+
+    .flow-card {
+      text-align: center;
+    }
+
+    .step-num {
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 17px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      color: white;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 26px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+      color: #475569;
+    }
+
+    li { margin-bottom: 9px; }
+
+    .code {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 16px;
+      padding: 18px;
+      overflow-x: auto;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 14px;
+      margin: 14px 0 0;
+    }
+
+    .callout {
+      background: #ecfdf5;
+      border-color: #bbf7d0;
+    }
+
+    .warning {
+      background: #fff7ed;
+      border-color: #fed7aa;
+    }
+
+    .todo {
+      background: #f8fafc;
+      border-style: dashed;
+      color: #64748b;
+    }
+
+    .footer {
+      padding: 62px 24px;
+      color: white;
+      background: linear-gradient(90deg, var(--primary-dark), var(--primary), var(--accent-dark));
+      text-align: center;
+    }
+
+    .footer h3 {
+      margin: 0 0 10px;
+      font-size: 32px;
+    }
+
+    .footer p {
+      margin: 0 0 26px;
+      color: #dbeafe;
+    }
+
+    .footer .button {
+      background: white;
+      color: var(--primary-dark);
+    }
+
+    .footer-note {
+      margin-top: 34px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255,255,255,.25);
+      color: #dbeafe;
+      font-size: 14px;
+    }
+
+    @media (max-width: 920px) {
+      header { position: static; }
+      .nav { flex-direction: column; align-items: flex-start; }
+      nav { justify-content: flex-start; }
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-3, .grid-2, .split { grid-template-columns: 1fr; }
+      section { padding: 58px 18px; }
+      .hero { padding-top: 64px; }
+    }
+
+    @media (max-width: 560px) {
+      .grid-4 { grid-template-columns: 1fr; }
+      .hero-card { padding: 22px; }
+      .card { padding: 22px; }
+      nav { gap: 12px; font-size: 13px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="site">
+    <header>
+      <div class="nav">
+        <div>
+          <h1 class="brand-title">DB Whisperer</h1>
+          <p class="brand-subtitle">Software Engineering in the Age of AI · Seminar 2026</p>
+        </div>
+        <nav>
+          <a href="#home">Home</a>
+          <a href="#team">Team</a>
+          <a href="#research">Research</a>
+          <a href="#system">System</a>
+          <a href="#evaluation">Evaluation</a>
+          <a href="#manual">Manual</a>
+          <a href="#materials">Materials</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section id="home" class="hero">
+        <div class="container">
+          <h2>Interactive Natural-Language Database Exploration</h2>
+          <p class="subtitle">Query CSV-based databases with LLM-generated SQL, schema context, and ambiguity clarification.</p>
+          <div class="hero-card">
+            <p>
+              DB Whisperer allows users to explore CSV-based databases using natural language.
+              The system loads data into DuckDB, generates read-only SQL through an LLM-based workflow,
+              detects ambiguous requests, and displays query results through a Streamlit interface.
+            </p>
+          </div>
+          <div class="chips" aria-label="Technology stack">
+            <span class="chip">Python</span>
+            <span class="chip">Streamlit</span>
+            <span class="chip">DuckDB</span>
+            <span class="chip">OpenRouter</span>
+            <span class="chip">SQL</span>
+            <span class="chip">LLMs</span>
+            <span class="chip">CSV Data</span>
+          </div>
+          <div class="buttons" style="margin-top: 26px;">
+            <a class="button" href="https://db-whisperer.streamlit.app/" target="_blank" rel="noopener">Open Live Demo</a>
+            <a class="button secondary" href="https://github.com/ohadlivay/DB-Whisperer" target="_blank" rel="noopener">GitHub Repository</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="team" class="section-soft">
+        <div class="container">
+          <div class="section-title">
+            <h3>Team Members</h3>
+            <p>
+              This project was developed as part of the Software Engineering in the Age of AI seminar.
+              Please verify final English spelling before submission and do not include ID numbers.
+            </p>
+          </div>
+          <div class="grid grid-4">
+            <article class="card member"><div class="avatar">O</div><h4>Ohad Livay</h4></article>
+            <article class="card member"><div class="avatar">Y</div><h4>Yotam Katz</h4></article>
+            <article class="card member"><div class="avatar">T</div><h4>Tali Ratner</h4></article>
+            <article class="card member"><div class="avatar">L</div><h4>Liran Becher</h4></article>
+          </div>
+        </div>
+      </section>
+
+      <section id="research">
+        <div class="container">
+          <div class="section-title">
+            <h3>Papers We Studied</h3>
+            <p>
+              The project connects academic research about LLM-based software engineering with a practical system for database exploration.
+            </p>
+          </div>
+          <div class="grid grid-2">
+            <article class="card paper-card">
+              <h4>CODEXGRAPH: Bridging Large Language Models and Code Repositories via Code Graph Databases</h4>
+              <div class="paper-meta">Presented by: Ohad Livay, Yotam Katz</div>
+              <p>
+                CODEXGRAPH explores how graph database representations can help LLMs understand and interact with code repositories more effectively.
+                Its central idea is that structured knowledge can improve retrieval, reasoning, and repository-scale software tasks.
+              </p>
+              <p>
+                <strong>Contribution to our project:</strong>
+                DB Whisperer similarly uses structured schema metadata and discovered relationships to provide better context for LLM-based reasoning.
+              </p>
+              <div class="buttons" style="justify-content:flex-start;">
+                <a class="button secondary" href="https://arxiv.org/pdf/2408.03910" target="_blank" rel="noopener">Paper PDF</a>
+                <a class="button secondary" href="#materials">Presentation TODO</a>
+              </div>
+            </article>
+
+            <article class="card paper-card">
+              <h4>ClarifyGPT: Empowering LLM-based Code Generation with Intention Clarification</h4>
+              <div class="paper-meta">Presented by: Tali Ratner, Liran Becher</div>
+              <p>
+                ClarifyGPT focuses on improving LLM-based code generation by asking clarification questions when user intent is ambiguous.
+                The paper motivates interactive clarification instead of assuming the first interpretation is correct.
+              </p>
+              <p>
+                <strong>Contribution to our project:</strong>
+                This idea directly connects to DB Whisperer’s ambiguity-handling workflow for natural-language database questions.
+              </p>
+              <div class="buttons" style="justify-content:flex-start;">
+                <a class="button secondary" href="https://arxiv.org/pdf/2310.10996" target="_blank" rel="noopener">Paper PDF</a>
+                <a class="button secondary" href="#materials">Presentation TODO</a>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="system" class="section-blue">
+        <div class="container">
+          <div class="section-title">
+            <h3>The System We Built</h3>
+            <p>
+              DB Whisperer is organized around CSV ingestion, schema analysis, SQL generation, ambiguity detection, and result display.
+            </p>
+          </div>
+
+          <div class="grid grid-3">
+            <article class="card flow-card">
+              <div class="step-num">1</div>
+              <h4>CSV Input</h4>
+              <p>The user provides one or more CSV files to explore.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">2</div>
+              <h4>ETLer</h4>
+              <p>The system imports CSV data into DuckDB and extracts schema metadata.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">3</div>
+              <h4>User Question</h4>
+              <p>The user asks a natural-language question about the data.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">4</div>
+              <h4>Querier</h4>
+              <p>The system generates read-only DuckDB SQL using database context and OpenRouter.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">5</div>
+              <h4>Ambiguity Handling</h4>
+              <p>The system checks whether the request has multiple valid interpretations and may ask for clarification.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">6</div>
+              <h4>Results Display</h4>
+              <p>The final SQL is executed and the result is displayed in the Streamlit interface.</p>
+            </article>
+          </div>
+
+          <div class="split" style="margin-top: 28px;">
+            <article class="card">
+              <h4>Technologies</h4>
+              <ul>
+                <li><strong>Python</strong> for the implementation.</li>
+                <li><strong>Streamlit</strong> for the user interface.</li>
+                <li><strong>DuckDB</strong> for CSV-based analytical querying.</li>
+                <li><strong>OpenRouter</strong> for LLM access.</li>
+                <li><strong>Requests</strong> and <strong>pytz</strong> as supporting dependencies.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <h4>Engineering Challenges</h4>
+              <ul>
+                <li>Translating vague natural language into valid SQL.</li>
+                <li>Handling ambiguous user requests.</li>
+                <li>Discovering relationships between CSV tables.</li>
+                <li>Restricting execution to read-only SQL.</li>
+                <li>Managing prompts, SQL candidates, and LLM responses.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="evaluation">
+        <div class="container">
+          <div class="section-title">
+            <h3>Evaluation and Results</h3>
+            <p>
+              This section should be completed only with real experiments, screenshots, examples, or measured results.
+            </p>
+          </div>
+          <div class="grid grid-2">
+            <article class="card todo">
+              <h4>Evaluation Setup</h4>
+              <p>[TODO: Add datasets, test questions, evaluation process, and screenshots.]</p>
+            </article>
+            <article class="card todo">
+              <h4>Baseline</h4>
+              <p>[TODO: Add baseline comparison if one was used, such as one-shot SQL generation without clarification.]</p>
+            </article>
+            <article class="card callout">
+              <h4>What Worked Well</h4>
+              <p>[TODO: Add real examples. Do not invent results.]</p>
+            </article>
+            <article class="card warning">
+              <h4>Limitations and Future Work</h4>
+              <ul>
+                <li>Depends on LLM output quality.</li>
+                <li>Ambiguity detection may not catch every unclear request.</li>
+                <li>Logs may contain database context and CSV values.</li>
+                <li>Future work: more formats, richer evaluation, improved privacy controls, and better visual summaries.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="manual" class="section-soft">
+        <div class="container">
+          <div class="section-title">
+            <h3>User Manual</h3>
+            <p>Basic usage instructions for the live demo and local execution.</p>
+          </div>
+
+          <div class="grid grid-2">
+            <article class="card">
+              <h4>Using the Live Demo</h4>
+              <ol>
+                <li>Get an API key from OpenRouter.</li>
+                <li>Open the DB Whisperer live demo.</li>
+                <li>Start chatting with the database.</li>
+              </ol>
+              <p>The API key is used for the current session and is not saved by the application.</p>
+            </article>
+
+            <article class="card">
+              <h4>Running Locally</h4>
+              <p>Install dependencies and run the Streamlit application:</p>
+              <pre class="code">python -m pip install -r requirements.txt
+streamlit run app.py</pre>
+            </article>
+
+            <article class="card">
+              <h4>Inputs</h4>
+              <ul>
+                <li>CSV file or files.</li>
+                <li>Natural-language question.</li>
+                <li>OpenRouter API key/configuration.</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <h4>Outputs</h4>
+              <ul>
+                <li>Generated SQL query.</li>
+                <li>Query result.</li>
+                <li>Clarification question when ambiguity is detected.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="materials">
+        <div class="container">
+          <div class="section-title">
+            <h3>Materials and Downloads</h3>
+            <p>All final work materials should be uploaded or linked here before submission.</p>
+          </div>
+          <div class="grid grid-3">
+            <article class="card">
+              <h4>Project Repository</h4>
+              <p>Source code and project files.</p>
+              <a class="button secondary" href="https://github.com/ohadlivay/DB-Whisperer" target="_blank" rel="noopener">Open GitHub</a>
+            </article>
+            <article class="card">
+              <h4>Live Demo</h4>
+              <p>Streamlit application.</p>
+              <a class="button secondary" href="https://db-whisperer.streamlit.app/" target="_blank" rel="noopener">Open Demo</a>
+            </article>
+            <article class="card todo">
+              <h4>Final Report</h4>
+              <p>[TODO: Upload final report and replace this placeholder.]</p>
+            </article>
+            <article class="card todo">
+              <h4>Final Presentation</h4>
+              <p>[TODO: Upload final presentation and replace this placeholder.]</p>
+            </article>
+            <article class="card">
+              <h4>CODEXGRAPH Paper</h4>
+              <a class="button secondary" href="https://arxiv.org/pdf/2408.03910" target="_blank" rel="noopener">Open Paper</a>
+            </article>
+            <article class="card">
+              <h4>ClarifyGPT Paper</h4>
+              <a class="button secondary" href="https://arxiv.org/pdf/2310.10996" target="_blank" rel="noopener">Open Paper</a>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <h3>DB Whisperer</h3>
+        <p>Interactive natural-language exploration for CSV-based databases.</p>
+        <div class="buttons">
+          <a class="button" href="https://db-whisperer.streamlit.app/" target="_blank" rel="noopener">Live Demo</a>
+          <a class="button" href="https://github.com/ohadlivay/DB-Whisperer" target="_blank" rel="noopener">GitHub</a>
+          <a class="button" href="#materials">Materials</a>
+        </div>
+        <div class="footer-note">
+          Software Engineering in the Age of AI · Seminar 2026 · Replace all TODO placeholders before final submission.
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
