@@ -31,8 +31,17 @@ reported as `self_judged: true`.
     contract.
   - Verified the JSON parses with PowerShell and resolves to the bundled MIMIC
     dataset.
-  - Python test execution is currently blocked in this shell because neither
-    `python` nor `py` is available on `PATH`.
+- Iteration 1 verification completed:
+  - Ran `tests.benchmark.test_mimic_cases` with
+    `C:\Users\talir\AppData\Local\Python\pythoncore-3.14-64\python.exe`.
+  - Result: 7 tests passed.
+- Iteration 2 implementation completed:
+  - Added `benchmark/mimic_ab_run.py`, a MIMIC-specific A/B harness skeleton.
+  - Added `tests/benchmark/test_mimic_ab_run.py` for suite loading, raw
+    baseline/full execution with fakes, and report-shape validation.
+  - Ran `tests.benchmark.test_mimic_cases` and
+    `tests.benchmark.test_mimic_ab_run` together.
+  - Result: 12 tests passed.
 
 ## Iteration Plan
 
@@ -60,6 +69,8 @@ Exit criteria:
   expectation.
 
 ### Iteration 2 - MIMIC A/B Harness Skeleton
+
+Status: implemented and focused tests passing.
 
 Create or extend a harness that can run MIMIC cases through both arms.
 
