@@ -43,12 +43,17 @@ class FakeApplication:
     """Small ApplicationService stand-in returning a pending clarification."""
 
     candidates_per_iteration = 3
+    max_iterations = 3
 
-    def __init__(self) -> None:
+    def __init__(self, workflows=None) -> None:
         self.calls = []
+        self.workflows = list(workflows) if workflows is not None else None
 
     def submit_query(self, **kwargs):
         self.calls.append(kwargs)
+        if self.workflows is not None:
+            index = min(len(self.calls) - 1, len(self.workflows) - 1)
+            return self.workflows[index]
         return QueryWorkflowResult(
             state=ComponentState.PENDING,
             message="Which path?",
@@ -146,7 +151,7 @@ class EvaluateCaseRawTest(unittest.TestCase):
         self.assertEqual(result["id"], "tc_04_patient_labs_subject_history")
         self.assertEqual(len(query.requests), 1)
         self.assertEqual(query.requests[0].prompt, case.question)
-        self.assertEqual(len(app.calls), 1)
+        self.assertEqual(len(app.calls), app.max_iterations)
         self.assertEqual(app.calls[0]["prompt"], case.question)
         self.assertEqual(result["baseline"]["result"]["state"], "accepted")
         self.assertEqual(result["baseline"]["result"]["table"]["rows"], [[1]])
@@ -154,6 +159,94 @@ class EvaluateCaseRawTest(unittest.TestCase):
         self.assertEqual(
             result["full"]["workflow"]["ambiguity"]["mechanism"],
             "join-path",
+        )
+        self.assertEqual(result["full"]["termination"], "max_iterations")
+        self.assertTrue(result["full"]["unreliable"])
+
+
+class ClarificationSimulationTest(unittest.TestCase):
+    def _pending(self, options=("Direct SUBJECT_ID path", "Admission HADM_ID path")):
+        return QueryWorkflowResult(
+            state=ComponentState.PENDING,
+            message="Which path?",
+            iteration=1,
+            complete=False,
+            ambiguity=AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=False,
+                question="Which path?",
+                options=options,
+                reason="Multiple paths.",
+                mechanism="join-path",
+            ),
+        )
+
+    def _complete(self):
+        return QueryWorkflowResult(
+            state=ComponentState.ACCEPTED,
+            message="done",
+            iteration=2,
+            complete=True,
+            query_result=QueryResult(
+                state=ComponentState.ACCEPTED,
+                message="ok",
+                sql="SELECT 1;",
+                columns=("n",),
+                rows=((1,),),
+            ),
+        )
+
+    def test_selects_option_by_simulated_answer_overlap(self) -> None:
+        suite = mimic_ab_run.load_mimic_suite(
+            ROOT / "benchmark" / "mimic_ab_cases.json"
+        )
+        case = suite.cases[4]
+        schema = SchemaMetadata(database_path="mimic.duckdb")
+        app = FakeApplication([self._pending(), self._complete()])
+
+        outcome = mimic_ab_run.run_full_simulated(
+            case,
+            schema,
+            app,  # type: ignore[arg-type]
+            "key",
+            "model",
+        )
+
+        self.assertEqual(outcome["termination"], "complete")
+        self.assertFalse(outcome["unreliable"])
+        self.assertEqual(outcome["clarifications"][0]["chosen_index"], 1)
+        self.assertEqual(outcome["clarifications"][0]["chosen"], "Admission HADM_ID path")
+        self.assertEqual(
+            app.calls[1]["clarifications"],
+            ("Question: Which path?\nSelected answer: Admission HADM_ID path",),
+        )
+
+    def test_marks_unmatched_option_fallback_unreliable(self) -> None:
+        suite = mimic_ab_run.load_mimic_suite(
+            ROOT / "benchmark" / "mimic_ab_cases.json"
+        )
+        case = suite.cases[4]
+        schema = SchemaMetadata(database_path="mimic.duckdb")
+        app = FakeApplication(
+            [
+                self._pending(options=("alpha", "beta")),
+                self._complete(),
+            ]
+        )
+
+        outcome = mimic_ab_run.run_full_simulated(
+            case,
+            schema,
+            app,  # type: ignore[arg-type]
+            "key",
+            "model",
+        )
+
+        self.assertTrue(outcome["unreliable"])
+        self.assertEqual(outcome["clarifications"][0]["chosen"], "alpha")
+        self.assertIn(
+            "no clarification option matched",
+            outcome["unreliable_reasons"][0],
         )
 
 
@@ -181,7 +274,7 @@ class BuildReportTest(unittest.TestCase):
             prompt_log_path=Path("prompts.jsonl"),
         )
 
-        self.assertEqual(report["stage"], "iteration_2_raw_outputs")
+        self.assertEqual(report["stage"], "iteration_3_clarification_simulation")
         self.assertFalse(report["scoring"]["deterministic_scores_available"])
         self.assertEqual(report["schema"]["table_count"], 2)
         self.assertEqual(report["schema"]["discovery_notes"], ["Skipped one table."])
@@ -190,4 +283,3 @@ class BuildReportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

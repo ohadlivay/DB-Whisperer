@@ -45,7 +45,7 @@ from db_whisperer.etler import ETLService  # noqa: E402
 from db_whisperer.prompt_logging import PromptLogger  # noqa: E402
 from db_whisperer.querier import QueryService  # noqa: E402
 
-from _harness import load_env_file, table  # noqa: E402
+from _harness import format_clarification, load_env_file, table  # noqa: E402
 
 
 DEFAULT_CASES_PATH = BENCHMARK_DIR / "mimic_ab_cases.json"
@@ -292,6 +292,195 @@ def run_full_once(
     )
 
 
+def choose_clarification_option(
+    case: MimicCase,
+    decision: AmbiguityDecision,
+) -> tuple[int, str, bool, str | None]:
+    """Pick the live option that best matches the case's simulated answer.
+
+    The case declares intent as free text because the model may phrase
+    clarification options differently across runs. Selection is deterministic:
+    exact/substring matches win first, then token-overlap score. If nothing
+    matches, option 0 is used so the workflow can continue, but the choice is
+    marked unreliable.
+    """
+    options = tuple(option.strip() for option in decision.options if option.strip())
+    if not options:
+        return 0, "", False, "clarification had no selectable options"
+
+    target = (case.simulated_user_answer or "").strip()
+    if not case.should_clarify or not target:
+        return (
+            0,
+            options[0],
+            False,
+            "case did not declare a simulated clarification answer",
+        )
+
+    normalized_target = _normalize_for_match(target)
+    if not normalized_target:
+        return 0, options[0], False, "simulated answer had no matchable text"
+
+    for index, option in enumerate(options):
+        normalized_option = _normalize_for_match(option)
+        if (
+            normalized_target == normalized_option
+            or normalized_target in normalized_option
+            or normalized_option in normalized_target
+        ):
+            return index, option, True, None
+
+    target_tokens = set(normalized_target.split())
+    best_index = 0
+    best_score = 0
+    for index, option in enumerate(options):
+        option_tokens = set(_normalize_for_match(option).split())
+        score = len(target_tokens & option_tokens)
+        if score > best_score:
+            best_index = index
+            best_score = score
+
+    if best_score > 0:
+        return best_index, options[best_index], True, None
+    return (
+        0,
+        options[0],
+        False,
+        "no clarification option matched the simulated answer",
+    )
+
+
+def _normalize_for_match(value: str) -> str:
+    """Lowercase text and keep alphanumeric token boundaries for matching."""
+    chars = [
+        char.lower() if char.isalnum() else " "
+        for char in value
+    ]
+    return " ".join("".join(chars).split())
+
+
+def _unexpected_clarification_reason(
+    case: MimicCase,
+    decision: AmbiguityDecision,
+    *,
+    is_first: bool,
+) -> str | None:
+    """Return a reliability warning when the clarification was not declared."""
+    if not case.should_clarify:
+        return "case should not clarify but full pipeline asked a question"
+    if not is_first:
+        return "additional clarification beyond the case's declared answer"
+    if case.ambiguity_type == "underspecified":
+        return None
+    if decision.mechanism != case.ambiguity_type:
+        actual = decision.mechanism or "candidate-comparison"
+        return (
+            f"case expects {case.ambiguity_type} clarification but got {actual}"
+        )
+    return None
+
+
+def run_full_simulated(
+    case: MimicCase,
+    schema: SchemaMetadata,
+    application: ApplicationService,
+    api_key: str,
+    model: str,
+) -> dict[str, Any]:
+    """Run the full arm, answering pending clarifications automatically."""
+    clarifications: tuple[str, ...] = ()
+    asked: list[dict[str, Any]] = []
+    unreliable_reasons: list[str] = []
+    last_workflow: QueryWorkflowResult | None = None
+
+    max_iterations = application.max_iterations
+    for iteration in range(1, max_iterations + 1):
+        workflow = application.submit_query(
+            prompt=case.question,
+            schema=schema,
+            api_key=api_key,
+            model=model,
+            clarifications=clarifications,
+            iteration=iteration,
+            candidate_count=application.candidates_per_iteration,
+        )
+        last_workflow = workflow
+        if workflow.state != ComponentState.PENDING:
+            return {
+                "workflow": workflow_result_payload(workflow),
+                "clarifications": asked,
+                "termination": "complete"
+                if workflow.state == ComponentState.ACCEPTED
+                else "failed",
+                "unreliable": bool(unreliable_reasons),
+                "unreliable_reasons": unreliable_reasons,
+            }
+
+        decision = workflow.ambiguity
+        if decision is None:
+            unreliable_reasons.append(
+                "workflow was pending without an ambiguity decision"
+            )
+            return {
+                "workflow": workflow_result_payload(workflow),
+                "clarifications": asked,
+                "termination": "pending_without_decision",
+                "unreliable": True,
+                "unreliable_reasons": unreliable_reasons,
+            }
+
+        index, chosen, matched, match_reason = choose_clarification_option(
+            case,
+            decision,
+        )
+        declared_reason = _unexpected_clarification_reason(
+            case,
+            decision,
+            is_first=(len(asked) == 0),
+        )
+        if declared_reason is not None:
+            unreliable_reasons.append(declared_reason)
+        if match_reason is not None:
+            unreliable_reasons.append(match_reason)
+
+        asked.append(
+            {
+                "question": decision.question,
+                "options": list(decision.options),
+                "mechanism": decision.mechanism,
+                "reason": decision.reason,
+                "chosen_index": index,
+                "chosen": chosen,
+                "matched_simulated_answer": matched,
+                "declared": declared_reason is None and matched,
+                "simulated_user_answer": case.simulated_user_answer,
+            }
+        )
+        if not chosen:
+            return {
+                "workflow": workflow_result_payload(workflow),
+                "clarifications": asked,
+                "termination": "unanswerable_clarification",
+                "unreliable": True,
+                "unreliable_reasons": unreliable_reasons,
+            }
+
+        clarifications = clarifications + (
+            format_clarification(decision.question or "", chosen),
+        )
+
+    return {
+        "workflow": workflow_result_payload(last_workflow)
+        if last_workflow is not None
+        else None,
+        "clarifications": asked,
+        "termination": "max_iterations",
+        "unreliable": True,
+        "unreliable_reasons": unreliable_reasons
+        + ["full pipeline did not complete within max_iterations"],
+    }
+
+
 def evaluate_case_raw(
     case: MimicCase,
     schema: SchemaMetadata,
@@ -308,7 +497,7 @@ def evaluate_case_raw(
     baseline_duration = perf_counter() - baseline_started
 
     full_started = perf_counter()
-    full_result = run_full_once(case, schema, application, api_key, model)
+    full_outcome = run_full_simulated(case, schema, application, api_key, model)
     full_duration = perf_counter() - full_started
 
     return {
@@ -329,7 +518,7 @@ def evaluate_case_raw(
         },
         "full": {
             "duration_seconds": round(full_duration, 4),
-            "workflow": workflow_result_payload(full_result),
+            **full_outcome,
         },
     }
 
@@ -406,13 +595,13 @@ def build_report(
         "started_at": started_at.isoformat(),
         "completed_at": completed_at.isoformat(),
         "prompt_log": str(prompt_log_path),
-        "stage": "iteration_2_raw_outputs",
+        "stage": "iteration_3_clarification_simulation",
         "scoring": {
             "deterministic_scores_available": False,
             "self_judge_available": False,
             "notes": (
-                "Iteration 2 records raw baseline and full-pipeline outputs. "
-                "Scoring is added in a later iteration."
+                "Iteration 3 records raw outputs and simulated clarification "
+                "history. Scoring is added in a later iteration."
             ),
         },
         "schema": {

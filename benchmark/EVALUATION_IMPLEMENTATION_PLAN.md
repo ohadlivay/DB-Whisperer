@@ -42,6 +42,20 @@ reported as `self_judged: true`.
   - Ran `tests.benchmark.test_mimic_cases` and
     `tests.benchmark.test_mimic_ab_run` together.
   - Result: 12 tests passed.
+- Iteration 3 implementation completed:
+  - Extended `benchmark/mimic_ab_run.py` with a simulated clarification loop
+    for the full-pipeline arm.
+  - Added deterministic clarification option selection from each case's
+    free-text `simulated_user_answer` using exact/substring/token-overlap
+    matching.
+  - Added reliability warnings when the full pipeline asks an unexpected
+    clarification, asks additional clarifications, or no option matches the
+    simulated answer.
+  - Updated `tests/benchmark/test_mimic_ab_run.py` with clarification
+    simulation coverage.
+  - Ran `tests.benchmark.test_mimic_cases` and
+    `tests.benchmark.test_mimic_ab_run` together.
+  - Result: 14 tests passed.
 
 ## Iteration Plan
 
@@ -89,6 +103,8 @@ Exit criteria:
 - Results JSON contains baseline and full-pipeline sections per case.
 
 ### Iteration 3 - Clarification Simulation
+
+Status: implemented and focused tests passing.
 
 Add simulated user handling for pending clarification states.
 
