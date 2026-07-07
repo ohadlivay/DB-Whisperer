@@ -112,6 +112,21 @@ reported as `self_judged: true`.
     `docs/evaluation_report_preview.html` and
     `docs/evaluation_report_preview_cases.html`.
   - Re-ran focused tests; result: 28 tests passed.
+- Iteration 7 implementation completed:
+  - Updated `docs/db_whisperer_embedded_site.html` to link to the future real
+    `evaluation_report.html` page, not the synthetic preview.
+  - Replaced evaluation TODO placeholders with a concise description of the
+    MIMIC benchmark, the baseline comparison, and the report link.
+  - Added `tests/benchmark/test_docs_site.py` to verify the site links to
+    `evaluation_report.html` and not `evaluation_report_preview.html`.
+  - Ran `tests.benchmark.test_mimic_cases`,
+    `tests.benchmark.test_mimic_ab_run`,
+    `tests.benchmark.test_render_evaluation_report`, and
+    `tests.benchmark.test_docs_site` together.
+  - Result: 29 tests passed.
+  - Framework implementation is complete. Remaining work is operational:
+    implement or run a 10-run aggregation workflow, execute the benchmark, and
+    render the real report.
 
 ## Iteration Plan
 
@@ -236,6 +251,8 @@ Exit criteria:
 - The page is suitable to link from the existing project site.
 
 ### Iteration 7 - Site Integration And Full Verification
+
+Status: implemented and focused tests passing.
 
 Wire the generated page into the docs site and run verification.
 

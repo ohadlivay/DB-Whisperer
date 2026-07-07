@@ -590,21 +590,31 @@
           <div class="section-title">
             <h3>Evaluation and Results</h3>
             <p>
-              This section should be completed only with real experiments, screenshots, examples, or measured results.
+              The evaluation compares DB Whisperer with a simpler baseline that answers immediately without asking clarification questions.
             </p>
           </div>
           <div class="grid grid-2">
-            <article class="card todo">
+            <article class="card">
               <h4>Evaluation Setup</h4>
-              <p>[TODO: Add datasets, test questions, evaluation process, and screenshots.]</p>
+              <p>
+                The benchmark uses the MIMIC-III clinical demo database and includes clear questions, ambiguous questions,
+                safety checks, and cases that test whether clarification improves the final answer.
+              </p>
             </article>
-            <article class="card todo">
-              <h4>Baseline</h4>
-              <p>[TODO: Add baseline comparison if one was used, such as one-shot SQL generation without clarification.]</p>
+            <article class="card">
+              <h4>Baseline Comparison</h4>
+              <p>
+                Each case is run twice: once through a direct no-clarification baseline and once through the full
+                ambiguity-aware DB Whisperer pipeline.
+              </p>
             </article>
             <article class="card callout">
-              <h4>What Worked Well</h4>
-              <p>[TODO: Add real examples. Do not invent results.]</p>
+              <h4>Evaluation Report</h4>
+              <p>
+                The final report will summarize the aggregated results from multiple evaluation runs and link to detailed
+                case-level results separately.
+              </p>
+              <a class="button secondary" href="evaluation_report.html">Open Evaluation Report</a>
             </article>
             <article class="card warning">
               <h4>Limitations and Future Work</h4>
