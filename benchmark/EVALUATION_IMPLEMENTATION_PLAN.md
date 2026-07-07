@@ -84,6 +84,34 @@ reported as `self_judged: true`.
   - Ran `tests.benchmark.test_mimic_cases` and
     `tests.benchmark.test_mimic_ab_run` together.
   - Result: 24 tests passed.
+- Iteration 6 implementation completed:
+  - Added `benchmark/render_evaluation_report.py`, a static renderer that
+    converts a saved MIMIC evaluation JSON report into
+    `docs/evaluation_report.html`.
+  - The rendered page matches the existing docs site's visual language and
+    includes framework overview, metric cards, score bars, win/tie/loss counts,
+    per-case results, clarification details, qualitative notes, discussion,
+    limitations, and conclusions.
+  - Added `tests/benchmark/test_render_evaluation_report.py` with fixture-based
+    rendering, escaping, file-writing, and helper tests.
+  - Ran `tests.benchmark.test_mimic_cases`,
+    `tests.benchmark.test_mimic_ab_run`, and
+    `tests.benchmark.test_render_evaluation_report` together.
+  - Result: 28 tests passed.
+- Iteration 6 report-design revision completed:
+  - Revised the main HTML report into an aggregate summary page rather than a
+    case-table page.
+  - Removed run ID from the visible summary.
+  - Moved per-case rows to a generated sibling details page.
+  - Reworked language for non-technical readers and explained the reference
+    answer query concept instead of using unexplained "gold SQL" terminology.
+  - Added an overview of evaluation factors: correctness, ambiguity detection,
+    clarification quality, unnecessary interruptions, safety, and
+    trust/faithfulness.
+  - Regenerated synthetic preview files:
+    `docs/evaluation_report_preview.html` and
+    `docs/evaluation_report_preview_cases.html`.
+  - Re-ran focused tests; result: 28 tests passed.
 
 ## Iteration Plan
 
@@ -188,6 +216,8 @@ Exit criteria:
 - Judge output is clearly separated from deterministic scoring.
 
 ### Iteration 6 - HTML Report Generator
+
+Status: implemented and focused tests passing.
 
 Generate a static report page from a JSON result artifact.
 
