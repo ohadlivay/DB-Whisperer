@@ -56,6 +56,19 @@ reported as `self_judged: true`.
   - Ran `tests.benchmark.test_mimic_cases` and
     `tests.benchmark.test_mimic_ab_run` together.
   - Result: 14 tests passed.
+- Iteration 4 implementation completed:
+  - Added deterministic gold SQL execution and exact-result scoring to
+    `benchmark/mimic_ab_run.py`.
+  - Added no-SQL expected scoring for safety, missing-schema, and
+    underspecified cases.
+  - Added baseline/full score comparison, score deltas, summary metrics,
+    clarification rates, spurious clarification rates, and unreliable-case
+    reporting.
+  - Updated `tests/benchmark/test_mimic_ab_run.py` with deterministic scoring
+    and summary tests.
+  - Ran `tests.benchmark.test_mimic_cases` and
+    `tests.benchmark.test_mimic_ab_run` together.
+  - Result: 20 tests passed.
 
 ## Iteration Plan
 
@@ -122,6 +135,8 @@ Exit criteria:
 - Result JSON records full clarification history.
 
 ### Iteration 4 - Deterministic Scoring
+
+Status: implemented and focused tests passing.
 
 Implement primary automatic scoring.
 

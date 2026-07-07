@@ -266,7 +266,22 @@ class BuildReportTest(unittest.TestCase):
         report = mimic_ab_run.build_report(
             suite,
             schema,
-            [{"id": "case"}],
+            [
+                {
+                    "id": "case",
+                    "ambiguous": False,
+                    "should_clarify": False,
+                    "comparison": "tie",
+                    "baseline": {
+                        "deterministic_score": {"score": 4},
+                    },
+                    "full": {
+                        "deterministic_score": {"score": 4},
+                        "clarifications": [],
+                        "unreliable": False,
+                    },
+                }
+            ],
             run_id="run",
             model="gemma",
             started_at=now,
@@ -274,11 +289,189 @@ class BuildReportTest(unittest.TestCase):
             prompt_log_path=Path("prompts.jsonl"),
         )
 
-        self.assertEqual(report["stage"], "iteration_3_clarification_simulation")
-        self.assertFalse(report["scoring"]["deterministic_scores_available"])
+        self.assertEqual(report["stage"], "iteration_4_deterministic_scoring")
+        self.assertTrue(report["scoring"]["deterministic_scores_available"])
         self.assertEqual(report["schema"]["table_count"], 2)
         self.assertEqual(report["schema"]["discovery_notes"], ["Skipped one table."])
-        self.assertEqual(report["cases"], [{"id": "case"}])
+        self.assertEqual(report["summary"]["total_cases"], 1)
+
+
+class DeterministicScoringTest(unittest.TestCase):
+    def _case(self, expected_sql="SELECT 1;"):
+        suite = mimic_ab_run.load_mimic_suite(
+            ROOT / "benchmark" / "mimic_ab_cases.json"
+        )
+        source = suite.cases[0]
+        return mimic_ab_run.MimicCase(
+            id=source.id,
+            category=source.category,
+            question=source.question,
+            ambiguous=source.ambiguous,
+            ambiguity_type=source.ambiguity_type,
+            intent=source.intent,
+            schema_elements=source.schema_elements,
+            expected_sql=expected_sql,
+            should_clarify=source.should_clarify,
+            simulated_user_answer=source.simulated_user_answer,
+            expected_behavior=source.expected_behavior,
+            tests=source.tests,
+        )
+
+    def test_exact_match_scores_four(self) -> None:
+        score = mimic_ab_run.score_query_result_payload(
+            self._case(),
+            {
+                "state": "accepted",
+                "message": "ok",
+                "sql": "SELECT 1;",
+                "table": {"columns": ["n"], "rows": [[1]]},
+            },
+            {"columns": ["n"], "rows": [[1]]},
+        )
+
+        self.assertEqual(score["score"], 4)
+        self.assertEqual(score["comparison"], "exact")
+        self.assertTrue(score["exact_match"])
+
+    def test_mismatch_scores_zero_without_judge(self) -> None:
+        score = mimic_ab_run.score_query_result_payload(
+            self._case(),
+            {
+                "state": "accepted",
+                "message": "ok",
+                "sql": "SELECT 2;",
+                "table": {"columns": ["n"], "rows": [[2]]},
+            },
+            {"columns": ["n"], "rows": [[1]]},
+        )
+
+        self.assertEqual(score["score"], 0)
+        self.assertEqual(score["comparison"], "deterministic_mismatch")
+
+    def test_no_sql_expected_scores_refusal_as_four(self) -> None:
+        score = mimic_ab_run.score_query_result_payload(
+            self._case(expected_sql=None),
+            {
+                "state": "failed",
+                "message": "read only",
+                "sql": None,
+                "table": {"columns": [], "rows": []},
+            },
+            None,
+        )
+
+        self.assertEqual(score["score"], 4)
+        self.assertEqual(score["comparison"], "no_sql_expected")
+
+    def test_no_sql_expected_scores_accepted_sql_as_zero(self) -> None:
+        score = mimic_ab_run.score_query_result_payload(
+            self._case(expected_sql=None),
+            {
+                "state": "accepted",
+                "message": "ok",
+                "sql": "SELECT * FROM x;",
+                "table": {"columns": [], "rows": []},
+            },
+            None,
+        )
+
+        self.assertEqual(score["score"], 0)
+        self.assertEqual(score["comparison"], "unexpected_sql")
+
+    def test_full_score_tracks_clarification_quality(self) -> None:
+        case = self._case()
+        full = {
+            "workflow": {
+                "query_result": {
+                    "state": "accepted",
+                    "message": "ok",
+                    "sql": "SELECT 1;",
+                    "table": {"columns": ["n"], "rows": [[1]]},
+                }
+            },
+            "clarifications": [],
+            "termination": "complete",
+            "unreliable": False,
+        }
+
+        score = mimic_ab_run.score_full(
+            case,
+            full,
+            {"columns": ["n"], "rows": [[1]]},
+        )
+
+        self.assertEqual(score["score"], 4)
+        self.assertEqual(score["clarification_score"], "not_applicable")
+
+
+class SummaryTest(unittest.TestCase):
+    def _result(
+        self,
+        *,
+        case_id,
+        ambiguous,
+        should_clarify,
+        comparison,
+        baseline_score,
+        full_score,
+        asked,
+        unreliable=False,
+    ):
+        return {
+            "id": case_id,
+            "ambiguous": ambiguous,
+            "should_clarify": should_clarify,
+            "comparison": comparison,
+            "baseline": {
+                "deterministic_score": {"score": baseline_score},
+            },
+            "full": {
+                "deterministic_score": {"score": full_score},
+                "clarifications": [{}] if asked else [],
+                "unreliable": unreliable,
+            },
+        }
+
+    def test_summarizes_scores_and_clarification_rates(self) -> None:
+        summary = mimic_ab_run.summarize(
+            [
+                self._result(
+                    case_id="amb",
+                    ambiguous=True,
+                    should_clarify=True,
+                    comparison="full_better",
+                    baseline_score=0,
+                    full_score=4,
+                    asked=True,
+                ),
+                self._result(
+                    case_id="ctl",
+                    ambiguous=False,
+                    should_clarify=False,
+                    comparison="tie",
+                    baseline_score=4,
+                    full_score=4,
+                    asked=False,
+                ),
+                self._result(
+                    case_id="bad",
+                    ambiguous=False,
+                    should_clarify=False,
+                    comparison="baseline_better",
+                    baseline_score=4,
+                    full_score=0,
+                    asked=True,
+                    unreliable=True,
+                ),
+            ]
+        )
+
+        self.assertEqual(summary["total_cases"], 3)
+        self.assertEqual(summary["baseline"]["mean_score"], 2.6667)
+        self.assertEqual(summary["full"]["mean_score"], 2.6667)
+        self.assertEqual(summary["ambiguous"]["expected_clarification_rate"], 1.0)
+        self.assertEqual(summary["control"]["spurious_clarification_rate"], 0.5)
+        self.assertEqual(summary["unreliable_cases"], ["bad"])
 
 
 if __name__ == "__main__":

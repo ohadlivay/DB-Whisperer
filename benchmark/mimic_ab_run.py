@@ -45,7 +45,14 @@ from db_whisperer.etler import ETLService  # noqa: E402
 from db_whisperer.prompt_logging import PromptLogger  # noqa: E402
 from db_whisperer.querier import QueryService  # noqa: E402
 
-from _harness import format_clarification, load_env_file, table  # noqa: E402
+from _harness import (  # noqa: E402
+    DEFAULT_MAX_REFERENCE_ROWS,
+    exact_match,
+    execute_reference,
+    format_clarification,
+    load_env_file,
+    table,
+)
 
 
 DEFAULT_CASES_PATH = BENCHMARK_DIR / "mimic_ab_cases.json"
@@ -523,6 +530,194 @@ def evaluate_case_raw(
     }
 
 
+def evaluate_case(
+    case: MimicCase,
+    schema: SchemaMetadata,
+    query_service: QueryService,
+    application: ApplicationService,
+    api_key: str,
+    model: str,
+    max_reference_rows: int = DEFAULT_MAX_REFERENCE_ROWS,
+) -> dict[str, Any]:
+    """Run both arms and add deterministic scoring."""
+    raw = evaluate_case_raw(
+        case,
+        schema,
+        query_service,
+        application,
+        api_key,
+        model,
+    )
+    expected = expected_result_payload(case, schema, max_reference_rows)
+    raw["expected"] = expected
+
+    baseline_score = score_baseline(case, raw["baseline"]["result"], expected)
+    full_score = score_full(case, raw["full"], expected)
+    raw["baseline"]["deterministic_score"] = baseline_score
+    raw["full"]["deterministic_score"] = full_score
+    raw["comparison"] = compare_scores(
+        baseline_score["score"],
+        full_score["score"],
+    )
+    raw["score_delta"] = (
+        full_score["score"] - baseline_score["score"]
+        if baseline_score["score"] is not None
+        and full_score["score"] is not None
+        else None
+    )
+    return raw
+
+
+def expected_result_payload(
+    case: MimicCase,
+    schema: SchemaMetadata,
+    max_reference_rows: int = DEFAULT_MAX_REFERENCE_ROWS,
+) -> dict[str, Any] | None:
+    """Execute gold SQL when a case has a deterministic reference query."""
+    if case.expected_sql is None:
+        return None
+    if not schema.database_path:
+        raise ValueError("Schema database_path is required for scoring.")
+    columns, rows = execute_reference(
+        schema.database_path,
+        case.expected_sql,
+        max_reference_rows,
+    )
+    return table(columns, rows)
+
+
+def score_baseline(
+    case: MimicCase,
+    result: dict[str, Any] | None,
+    expected: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Score the baseline arm deterministically."""
+    return score_query_result_payload(case, result, expected)
+
+
+def score_full(
+    case: MimicCase,
+    full: dict[str, Any],
+    expected: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Score the full-pipeline arm deterministically."""
+    workflow = full.get("workflow")
+    query_result = workflow.get("query_result") if isinstance(workflow, dict) else None
+    score = score_query_result_payload(case, query_result, expected)
+    score["clarification_asked"] = bool(full.get("clarifications"))
+    score["termination"] = full.get("termination")
+    score["unreliable"] = bool(full.get("unreliable"))
+
+    if case.should_clarify and not score["clarification_asked"]:
+        score["clarification_score"] = "fail"
+    elif not case.should_clarify and score["clarification_asked"]:
+        score["clarification_score"] = "spurious"
+    elif case.should_clarify and score["clarification_asked"]:
+        score["clarification_score"] = (
+            "partial" if score["unreliable"] else "pass"
+        )
+    else:
+        score["clarification_score"] = "not_applicable"
+    return score
+
+
+def score_query_result_payload(
+    case: MimicCase,
+    result: dict[str, Any] | None,
+    expected: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Deterministically score one serialized QueryResult payload."""
+    if expected is None:
+        if _accepted_sql(result):
+            return {
+                "score": 0,
+                "comparison": "unexpected_sql",
+                "exact_match": False,
+                "reason": (
+                    "Case expects refusal, clarification, or graceful failure, "
+                    "but the arm returned accepted SQL."
+                ),
+            }
+        return {
+            "score": 4,
+            "comparison": "no_sql_expected",
+            "exact_match": False,
+            "reason": (
+                "Case expects no accepted SQL, and the arm did not return one."
+            ),
+        }
+
+    if result is None:
+        return {
+            "score": 0,
+            "comparison": "missing_result",
+            "exact_match": False,
+            "reason": "No query result was available for scoring.",
+        }
+    if result.get("state") != ComponentState.ACCEPTED.value:
+        return {
+            "score": 0,
+            "comparison": "system_failure",
+            "exact_match": False,
+            "reason": str(result.get("message") or "Query failed."),
+        }
+
+    actual = result.get("table")
+    if not isinstance(actual, dict):
+        return {
+            "score": 0,
+            "comparison": "missing_table",
+            "exact_match": False,
+            "reason": "Accepted result did not include a table.",
+        }
+
+    actual_columns = tuple(actual.get("columns", ()))
+    actual_rows = tuple(tuple(row) for row in actual.get("rows", ()))
+    expected_columns = tuple(expected.get("columns", ()))
+    expected_rows = tuple(tuple(row) for row in expected.get("rows", ()))
+    matched = exact_match(
+        actual_columns,
+        actual_rows,
+        expected_columns,
+        expected_rows,
+    )
+    if matched:
+        return {
+            "score": 4,
+            "comparison": "exact",
+            "exact_match": True,
+            "reason": "Generated result exactly matches the gold SQL result.",
+        }
+    return {
+        "score": 0,
+        "comparison": "deterministic_mismatch",
+        "exact_match": False,
+        "reason": "Generated result did not exactly match the gold SQL result.",
+    }
+
+
+def _accepted_sql(result: dict[str, Any] | None) -> bool:
+    return bool(
+        isinstance(result, dict)
+        and result.get("state") == ComponentState.ACCEPTED.value
+        and result.get("sql")
+    )
+
+
+def compare_scores(
+    baseline_score: int | None,
+    full_score: int | None,
+) -> str:
+    """Classify full-pipeline performance against baseline."""
+    if baseline_score is None or full_score is None:
+        return "unscored"
+    if full_score > baseline_score:
+        return "full_better"
+    if full_score < baseline_score:
+        return "baseline_better"
+    return "tie"
+
+
 def query_result_payload(result: QueryResult | None) -> dict[str, Any] | None:
     """Convert a QueryResult into JSON-friendly data."""
     if result is None:
@@ -595,13 +790,13 @@ def build_report(
         "started_at": started_at.isoformat(),
         "completed_at": completed_at.isoformat(),
         "prompt_log": str(prompt_log_path),
-        "stage": "iteration_3_clarification_simulation",
+        "stage": "iteration_4_deterministic_scoring",
         "scoring": {
-            "deterministic_scores_available": False,
+            "deterministic_scores_available": True,
             "self_judge_available": False,
             "notes": (
-                "Iteration 3 records raw outputs and simulated clarification "
-                "history. Scoring is added in a later iteration."
+                "Iteration 4 adds deterministic exact-result scoring against "
+                "gold SQL. Self-judging is added in a later iteration."
             ),
         },
         "schema": {
@@ -611,6 +806,7 @@ def build_report(
             "discovery_complete": schema.discovery_complete,
             "discovery_notes": list(schema.discovery_notes),
         },
+        "summary": summarize(case_results),
         "cases": case_results,
     }
 
@@ -645,10 +841,97 @@ def run_suite_raw(
 
     selected_cases = suite.cases[:limit] if limit is not None else suite.cases
     results = [
-        evaluate_case_raw(case, schema, query, app, api_key, model)
+        evaluate_case(case, schema, query, app, api_key, model)
         for case in selected_cases
     ]
     return schema, results
+
+
+def summarize(case_results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate deterministic comparison metrics."""
+    ambiguous = [case for case in case_results if case["ambiguous"]]
+    control = [case for case in case_results if not case["ambiguous"]]
+
+    return {
+        "total_cases": len(case_results),
+        "baseline": _arm_summary(case_results, "baseline"),
+        "full": _arm_summary(case_results, "full"),
+        "overall_comparison": _comparison_counts(case_results),
+        "ambiguous": _group_summary(ambiguous),
+        "control": _group_summary(control),
+        "unreliable_cases": [
+            case["id"]
+            for case in case_results
+            if case["full"].get("unreliable")
+        ],
+    }
+
+
+def _group_summary(case_results: list[dict[str, Any]]) -> dict[str, Any]:
+    asked = [
+        case for case in case_results
+        if case["full"].get("clarifications")
+    ]
+    should_clarify = [
+        case for case in case_results
+        if case.get("should_clarify")
+    ]
+    should_not_clarify = [
+        case for case in case_results
+        if not case.get("should_clarify")
+    ]
+    return {
+        "count": len(case_results),
+        "baseline": _arm_summary(case_results, "baseline"),
+        "full": _arm_summary(case_results, "full"),
+        "comparison": _comparison_counts(case_results),
+        "clarification_rate": _rate(len(asked), len(case_results)),
+        "expected_clarification_rate": _rate(
+            len([case for case in should_clarify if case["full"].get("clarifications")]),
+            len(should_clarify),
+        ),
+        "spurious_clarification_rate": _rate(
+            len(
+                [
+                    case for case in should_not_clarify
+                    if case["full"].get("clarifications")
+                ]
+            ),
+            len(should_not_clarify),
+        ),
+    }
+
+
+def _arm_summary(case_results: list[dict[str, Any]], arm: str) -> dict[str, Any]:
+    scores = [
+        case[arm]["deterministic_score"]["score"]
+        for case in case_results
+        if isinstance(case[arm]["deterministic_score"].get("score"), int)
+    ]
+    mean = sum(scores) / len(scores) if scores else None
+    return {
+        "scored": len(scores),
+        "mean_score": round(mean, 4) if mean is not None else None,
+        "normalized_percentage": round((mean / 4) * 100, 2)
+        if mean is not None
+        else None,
+    }
+
+
+def _comparison_counts(case_results: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {
+        "full_better": 0,
+        "tie": 0,
+        "baseline_better": 0,
+        "unscored": 0,
+    }
+    for case in case_results:
+        counts[case.get("comparison", "unscored")] += 1
+    return counts
+
+
+def _rate(numerator: int, denominator: int) -> float | None:
+    return round(numerator / denominator, 4) if denominator else None
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
