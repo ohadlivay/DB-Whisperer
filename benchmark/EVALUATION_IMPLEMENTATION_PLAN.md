@@ -69,6 +69,21 @@ reported as `self_judged: true`.
   - Ran `tests.benchmark.test_mimic_cases` and
     `tests.benchmark.test_mimic_ab_run` together.
   - Result: 20 tests passed.
+- Iteration 5 implementation completed:
+  - Added optional qualitative LLM judging to `benchmark/mimic_ab_run.py`.
+  - Added a strict qualitative judge prompt and response validator for
+    clarification quality, baseline assumption quality, response faithfulness,
+    trust note, and reason.
+  - CLI defaults to using the tested model as the judge for the initial
+    self-judged evaluation, with `--judge-model` for future independent judges
+    and `--skip-judge` for deterministic-only runs.
+  - Reports now include judge metadata, including `enabled`, `model`, and
+    `self_judged`.
+  - Updated `tests/benchmark/test_mimic_ab_run.py` with fake-judge tests and
+    qualitative judgment integration coverage.
+  - Ran `tests.benchmark.test_mimic_cases` and
+    `tests.benchmark.test_mimic_ab_run` together.
+  - Result: 24 tests passed.
 
 ## Iteration Plan
 
@@ -154,6 +169,8 @@ Exit criteria:
 - Summary metrics are stable and derived only from structured results.
 
 ### Iteration 5 - Gemma Self-Judge
+
+Status: implemented and focused tests passing.
 
 Add optional qualitative judging.
 

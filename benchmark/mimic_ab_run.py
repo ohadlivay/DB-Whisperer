@@ -23,8 +23,9 @@ import os
 from pathlib import Path
 import sys
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 
+import requests
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BENCHMARK_DIR.parent
@@ -47,6 +48,7 @@ from db_whisperer.querier import QueryService  # noqa: E402
 
 from _harness import (  # noqa: E402
     DEFAULT_MAX_REFERENCE_ROWS,
+    OPENROUTER_ENDPOINT,
     exact_match,
     execute_reference,
     format_clarification,
@@ -94,6 +96,9 @@ class MimicSuite:
     judge: dict[str, Any]
     notes: tuple[str, ...]
     cases: tuple[MimicCase, ...]
+
+
+QualitativeJudgeFn = Callable[[MimicCase, dict[str, Any]], dict[str, Any]]
 
 
 def dataset_uploads(dataset_path: Path) -> list[CsvUpload]:
@@ -538,6 +543,7 @@ def evaluate_case(
     api_key: str,
     model: str,
     max_reference_rows: int = DEFAULT_MAX_REFERENCE_ROWS,
+    qualitative_judge_fn: QualitativeJudgeFn | None = None,
 ) -> dict[str, Any]:
     """Run both arms and add deterministic scoring."""
     raw = evaluate_case_raw(
@@ -565,7 +571,150 @@ def evaluate_case(
         and full_score["score"] is not None
         else None
     )
+    if qualitative_judge_fn is not None:
+        try:
+            raw["qualitative_judgment"] = qualitative_judge_fn(case, raw)
+        except Exception as error:  # pragma: no cover - exercised by tests.
+            raw["qualitative_judgment"] = {
+                "status": "judge_failure",
+                "error": str(error),
+            }
     return raw
+
+
+def qualitative_judge_prompt(case: MimicCase, result: dict[str, Any]) -> str:
+    """Build a qualitative self-judge prompt for one evaluated case."""
+    payload = {
+        "case": {
+            "id": case.id,
+            "question": case.question,
+            "ambiguity_type": case.ambiguity_type,
+            "intent": case.intent,
+            "should_clarify": case.should_clarify,
+            "simulated_user_answer": case.simulated_user_answer,
+            "expected_behavior": list(case.expected_behavior),
+        },
+        "deterministic_result": {
+            "comparison": result.get("comparison"),
+            "score_delta": result.get("score_delta"),
+            "baseline": result["baseline"].get("deterministic_score"),
+            "full": result["full"].get("deterministic_score"),
+            "full_clarifications": result["full"].get("clarifications", []),
+            "full_unreliable": result["full"].get("unreliable"),
+            "full_unreliable_reasons": result["full"].get(
+                "unreliable_reasons",
+                [],
+            ),
+        },
+        "baseline_sql": result["baseline"]["result"].get("sql")
+        if result["baseline"].get("result")
+        else None,
+        "full_sql": (
+            result["full"].get("workflow", {})
+            .get("query_result", {})
+            .get("sql")
+            if isinstance(result["full"].get("workflow"), dict)
+            else None
+        ),
+    }
+    return "\n\n".join(
+        (
+            "You are evaluating a DBWhisperer benchmark case. The primary "
+            "score has already been computed deterministically by comparing "
+            "query results against gold SQL. Your task is qualitative only.",
+            "Return exactly one JSON object with these keys and no extras:\n"
+            "{\n"
+            '  "clarification_quality": "pass|partial|fail|not_applicable",\n'
+            '  "baseline_assumption": "reasonable|questionable|wrong|not_applicable",\n'
+            '  "response_faithfulness": "pass|partial|fail|not_applicable",\n'
+            '  "trust_note": "one concise sentence",\n'
+            '  "reason": "one concise sentence"\n'
+            "}",
+            "Do not change deterministic scores. Do not assume clinical facts "
+            "not present in the supplied data.",
+            "CASE AND RESULTS\n"
+            + json.dumps(payload, ensure_ascii=True, default=str),
+        )
+    )
+
+
+def qualitative_judge(
+    api_key: str,
+    model: str,
+    case: MimicCase,
+    result: dict[str, Any],
+    *,
+    post: Callable[..., Any] = requests.post,
+    timeout_seconds: float = 60,
+) -> dict[str, Any]:
+    """Ask an LLM for qualitative notes about one evaluated case."""
+    response = post(
+        OPENROUTER_ENDPOINT,
+        headers={
+            "Authorization": f"Bearer {api_key.strip()}",
+            "Content-Type": "application/json",
+            "X-OpenRouter-Title": "DB Whisperer MIMIC Evaluation Judge",
+        },
+        json={
+            "model": model.strip(),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": qualitative_judge_prompt(case, result),
+                }
+            ],
+            "temperature": 0,
+            "max_tokens": 700,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    judgment = content if isinstance(content, dict) else json.loads(content)
+    return validate_qualitative_judgment(judgment)
+
+
+def validate_qualitative_judgment(value: Any) -> dict[str, Any]:
+    """Validate the qualitative judge JSON contract."""
+    required = {
+        "clarification_quality",
+        "baseline_assumption",
+        "response_faithfulness",
+        "trust_note",
+        "reason",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("Qualitative judge returned an invalid key set.")
+    allowed = {
+        "clarification_quality": {"pass", "partial", "fail", "not_applicable"},
+        "baseline_assumption": {
+            "reasonable",
+            "questionable",
+            "wrong",
+            "not_applicable",
+        },
+        "response_faithfulness": {"pass", "partial", "fail", "not_applicable"},
+    }
+    for field_name, choices in allowed.items():
+        field_value = value[field_name]
+        if field_value not in choices:
+            raise ValueError(
+                f"Qualitative judge returned invalid {field_name}."
+            )
+    for field_name in ("trust_note", "reason"):
+        if not isinstance(value[field_name], str) or not value[field_name].strip():
+            raise ValueError(f"Qualitative judge returned empty {field_name}.")
+    return {
+        "status": "accepted",
+        **{
+            key: value[key].strip()
+            if isinstance(value[key], str)
+            else value[key]
+            for key in required
+        },
+    }
 
 
 def expected_result_payload(
@@ -775,6 +924,9 @@ def build_report(
     *,
     run_id: str,
     model: str,
+    judge_model: str | None,
+    judge_enabled: bool,
+    self_judged: bool,
     started_at: datetime,
     completed_at: datetime,
     prompt_log_path: Path,
@@ -785,18 +937,24 @@ def build_report(
         "suite": suite.name,
         "dataset": str(suite.dataset_path),
         "tested_model": model,
-        "judge": suite.judge,
+        "judge": {
+            **suite.judge,
+            "enabled": judge_enabled,
+            "model": judge_model,
+            "self_judged": self_judged,
+        },
         "candidate_count": suite.candidate_count,
         "started_at": started_at.isoformat(),
         "completed_at": completed_at.isoformat(),
         "prompt_log": str(prompt_log_path),
-        "stage": "iteration_4_deterministic_scoring",
+        "stage": "iteration_5_qualitative_self_judge",
         "scoring": {
             "deterministic_scores_available": True,
-            "self_judge_available": False,
+            "self_judge_available": judge_enabled and self_judged,
             "notes": (
                 "Iteration 4 adds deterministic exact-result scoring against "
-                "gold SQL. Self-judging is added in a later iteration."
+                "gold SQL. Iteration 5 adds optional qualitative judging, "
+                "which is non-independent when self_judged is true."
             ),
         },
         "schema": {
@@ -822,6 +980,7 @@ def run_suite_raw(
     query_service: QueryService | None = None,
     application: ApplicationService | None = None,
     etl_service: ETLService | None = None,
+    qualitative_judge_fn: QualitativeJudgeFn | None = None,
 ) -> tuple[SchemaMetadata, list[dict[str, Any]]]:
     """Ingest the suite dataset and run raw baseline/full outputs."""
     etler = etl_service or ETLService(database_path=database_path)
@@ -841,7 +1000,15 @@ def run_suite_raw(
 
     selected_cases = suite.cases[:limit] if limit is not None else suite.cases
     results = [
-        evaluate_case(case, schema, query, app, api_key, model)
+        evaluate_case(
+            case,
+            schema,
+            query,
+            app,
+            api_key,
+            model,
+            qualitative_judge_fn=qualitative_judge_fn,
+        )
         for case in selected_cases
     ]
     return schema, results
@@ -946,6 +1113,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument(
+        "--judge-model",
+        default=os.getenv("BENCHMARK_JUDGE_MODEL", ""),
+        help=(
+            "Model used for qualitative judging. Defaults to --model for the "
+            "initial self-judged evaluation."
+        ),
+    )
+    parser.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="Disable qualitative LLM judging and run deterministic scoring only.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -967,6 +1147,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit is not None and args.limit < 1:
         print("--limit must be positive when provided.", file=sys.stderr)
         return 2
+    judge_model = args.judge_model.strip() or args.model.strip()
+    judge_enabled = not args.skip_judge
+    self_judged = judge_enabled and judge_model == args.model.strip()
 
     try:
         suite = load_mimic_suite(args.cases)
@@ -984,6 +1167,17 @@ def main(argv: list[str] | None = None) -> int:
     prompt_log_path = output_dir / f"mimic_ab_{run_id}.prompts.jsonl"
     os.environ["DB_WHISPERER_PROMPT_LOG"] = str(prompt_log_path)
 
+    qualitative_judge_fn: QualitativeJudgeFn | None = None
+    if judge_enabled:
+        qualitative_judge_fn = (
+            lambda case, result: qualitative_judge(
+                api_key,
+                judge_model,
+                case,
+                result,
+            )
+        )
+
     try:
         schema, case_results = run_suite_raw(
             suite,
@@ -992,6 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
             database_path=database_path,
             prompt_log_path=prompt_log_path,
             limit=args.limit,
+            qualitative_judge_fn=qualitative_judge_fn,
         )
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
@@ -1004,6 +1199,9 @@ def main(argv: list[str] | None = None) -> int:
         case_results,
         run_id=run_id,
         model=args.model,
+        judge_model=judge_model if judge_enabled else None,
+        judge_enabled=judge_enabled,
+        self_judged=self_judged,
         started_at=started_at,
         completed_at=completed_at,
         prompt_log_path=prompt_log_path,

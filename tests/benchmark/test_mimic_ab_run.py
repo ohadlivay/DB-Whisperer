@@ -284,13 +284,18 @@ class BuildReportTest(unittest.TestCase):
             ],
             run_id="run",
             model="gemma",
+            judge_model="gemma",
+            judge_enabled=True,
+            self_judged=True,
             started_at=now,
             completed_at=now,
             prompt_log_path=Path("prompts.jsonl"),
         )
 
-        self.assertEqual(report["stage"], "iteration_4_deterministic_scoring")
+        self.assertEqual(report["stage"], "iteration_5_qualitative_self_judge")
         self.assertTrue(report["scoring"]["deterministic_scores_available"])
+        self.assertTrue(report["scoring"]["self_judge_available"])
+        self.assertTrue(report["judge"]["self_judged"])
         self.assertEqual(report["schema"]["table_count"], 2)
         self.assertEqual(report["schema"]["discovery_notes"], ["Skipped one table."])
         self.assertEqual(report["summary"]["total_cases"], 1)
@@ -472,6 +477,149 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(summary["ambiguous"]["expected_clarification_rate"], 1.0)
         self.assertEqual(summary["control"]["spurious_clarification_rate"], 0.5)
         self.assertEqual(summary["unreliable_cases"], ["bad"])
+
+
+class QualitativeJudgeTest(unittest.TestCase):
+    def _case_and_result(self):
+        suite = mimic_ab_run.load_mimic_suite(
+            ROOT / "benchmark" / "mimic_ab_cases.json"
+        )
+        case = suite.cases[3]
+        result = {
+            "comparison": "full_better",
+            "score_delta": 4,
+            "baseline": {
+                "result": {"sql": "SELECT baseline;"},
+                "deterministic_score": {"score": 0},
+            },
+            "full": {
+                "workflow": {
+                    "query_result": {"sql": "SELECT full;"}
+                },
+                "deterministic_score": {"score": 4},
+                "clarifications": [
+                    {
+                        "question": "Which path?",
+                        "chosen": "direct",
+                    }
+                ],
+                "unreliable": False,
+                "unreliable_reasons": [],
+            },
+        }
+        return case, result
+
+    def test_validates_qualitative_judgment(self) -> None:
+        judgment = mimic_ab_run.validate_qualitative_judgment(
+            {
+                "clarification_quality": "pass",
+                "baseline_assumption": "wrong",
+                "response_faithfulness": "not_applicable",
+                "trust_note": "Clarification improved interpretability.",
+                "reason": "The full pipeline followed the declared intent.",
+            }
+        )
+
+        self.assertEqual(judgment["status"], "accepted")
+        self.assertEqual(judgment["clarification_quality"], "pass")
+
+    def test_rejects_invalid_qualitative_judgment(self) -> None:
+        with self.assertRaises(ValueError):
+            mimic_ab_run.validate_qualitative_judgment(
+                {
+                    "clarification_quality": "excellent",
+                    "baseline_assumption": "wrong",
+                    "response_faithfulness": "pass",
+                    "trust_note": "x",
+                    "reason": "x",
+                }
+            )
+
+    def test_qualitative_judge_parses_json_response(self) -> None:
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": {
+                                    "clarification_quality": "pass",
+                                    "baseline_assumption": "wrong",
+                                    "response_faithfulness": "not_applicable",
+                                    "trust_note": "Useful clarification.",
+                                    "reason": "It selected the intended path.",
+                                }
+                            }
+                        }
+                    ]
+                }
+
+        calls = []
+
+        def post(*args, **kwargs):
+            calls.append((args, kwargs))
+            return Response()
+
+        case, result = self._case_and_result()
+        judgment = mimic_ab_run.qualitative_judge(
+            "key",
+            "gemma",
+            case,
+            result,
+            post=post,
+        )
+
+        self.assertEqual(judgment["status"], "accepted")
+        self.assertEqual(judgment["baseline_assumption"], "wrong")
+        self.assertEqual(calls[0][1]["json"]["model"], "gemma")
+        self.assertEqual(
+            calls[0][1]["json"]["response_format"],
+            {"type": "json_object"},
+        )
+
+    def test_evaluate_case_attaches_judgment_from_injected_function(self) -> None:
+        suite = mimic_ab_run.load_mimic_suite(
+            ROOT / "benchmark" / "mimic_ab_cases.json"
+        )
+        case = suite.cases[13]
+        schema = SchemaMetadata(database_path="mimic.duckdb")
+        query = FakeQueryService()
+        app = FakeApplication(
+            [
+                QueryWorkflowResult(
+                    state=ComponentState.ACCEPTED,
+                    message="done",
+                    complete=True,
+                    query_result=QueryResult(
+                        state=ComponentState.ACCEPTED,
+                        message="ok",
+                        sql="SELECT 1 AS n;",
+                        columns=("n",),
+                        rows=((1,),),
+                    ),
+                )
+            ]
+        )
+
+        def judge(case_arg, result_arg):
+            self.assertEqual(case_arg.id, case.id)
+            self.assertIn("baseline", result_arg)
+            return {"status": "accepted", "trust_note": "ok"}
+
+        result = mimic_ab_run.evaluate_case(
+            case,
+            schema,
+            query,  # type: ignore[arg-type]
+            app,  # type: ignore[arg-type]
+            "key",
+            "model",
+            qualitative_judge_fn=judge,
+        )
+
+        self.assertEqual(result["qualitative_judgment"]["status"], "accepted")
 
 
 if __name__ == "__main__":
