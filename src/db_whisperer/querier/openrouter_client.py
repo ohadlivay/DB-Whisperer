@@ -101,7 +101,7 @@ class OpenRouterClient:
         try:
             parsed = json.loads(content)
             sql = parsed["sql"]
-        except (json.JSONDecodeError, KeyError, TypeError) as error:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
             self.prompt_logger.log_event(
                 event="response_validation_failed",
                 component="querier",

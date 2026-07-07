@@ -61,6 +61,25 @@ class InvalidJsonSession(FakeSession):
         return InvalidJsonResponse()
 
 
+class OversizedNumberResponse(FakeResponse):
+    def json(self) -> dict:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"sql": ' + ("9" * 5000) + "}"
+                    }
+                }
+            ]
+        }
+
+
+class OversizedNumberSession(FakeSession):
+    def post(self, url: str, **kwargs: object) -> OversizedNumberResponse:
+        self.request = {"url": url, **kwargs}
+        return OversizedNumberResponse()
+
+
 class RecordingPromptLogger:
     def __init__(self) -> None:
         self.records = []
@@ -185,6 +204,27 @@ class OpenRouterClientTest(unittest.TestCase):
         error_event = prompt_logger.records[2]
         self.assertEqual("response_validation_failed", error_event[4])
         self.assertEqual("request-1", error_event[1])
+
+    def test_treats_unparseable_json_values_as_validation_failure(self) -> None:
+        prompt_logger = RecordingPromptLogger()
+        client = OpenRouterClient(
+            session=OversizedNumberSession(),
+            prompt_logger=prompt_logger,
+        )
+
+        with self.assertRaisesRegex(
+            OpenRouterError,
+            "did not contain JSON",
+        ):
+            client.generate_sql(
+                prompt="database prompt",
+                api_key="secret",
+                model="provider/model",
+            )
+
+        error_event = prompt_logger.records[2]
+        self.assertEqual("response_validation_failed", error_event[4])
+        self.assertIn("expected", error_event[5])
 
 
 if __name__ == "__main__":

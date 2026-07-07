@@ -127,6 +127,49 @@ reported as `self_judged: true`.
   - Framework implementation is complete. Remaining work is operational:
     implement or run a 10-run aggregation workflow, execute the benchmark, and
     render the real report.
+- Operational evaluation attempt on 2026-07-07:
+  - Added `--max-parallel-candidates` to `benchmark/mimic_ab_run.py` so the
+    full-pipeline arm can serialize candidate generation for rate-limited
+    models without changing the case-file default of 3 candidates.
+  - Added focused CLI parsing coverage in
+    `tests/benchmark/test_mimic_ab_run.py`.
+  - Smoke runs reached OpenRouter but did not produce useful SQL results:
+    the configured default `google/gemma-4-31b-it` returned `402 Payment
+    Required`, while `google/gemma-4-31b-it:free` returned `429 Too Many
+    Requests` even with `--max-parallel-candidates 1`.
+  - Full local verification passed after rerunning outside the filesystem
+    sandbox: `240 tests passed, 1 skipped`.
+  - Next operational step is to rerun the smoke/full evaluation with a
+    funded OpenRouter route or after free-route rate limits reset.
+- Full deterministic evaluation run on 2026-07-07:
+  - A funded OpenRouter key was provided and the paid
+    `google/gemma-4-31b-it` route produced accepted SQL responses.
+  - Patched `src/db_whisperer/querier/openrouter_client.py` to treat
+    pathological model JSON, including oversized numeric literals, as a
+    response-validation failure instead of crashing the benchmark.
+  - Full run completed with:
+    `benchmark/results/mimic_ab_20260707T105849Z.json`.
+  - Rendered the real report to `docs/evaluation_report.html` and
+    `docs/evaluation_report_cases.html`.
+  - Summary: baseline 6.25%, full pipeline 12.5%, full better on 1 case,
+    tied on 15, baseline better on 0. Ambiguous-case clarification rate was
+    1.0, but 12 of 16 cases were marked unreliable due to unexpected or
+    repeated clarifications, so this run should be treated as an operational
+    first run rather than a publishable aggregate.
+  - Full local verification passed: `241 tests passed, 1 skipped`.
+- 10-run aggregation step started on 2026-07-07:
+  - Added `benchmark/aggregate_mimic_reports.py`.
+  - Added `tests/benchmark/test_aggregate_mimic_reports.py`.
+  - Added `docs/evaluation_process.md` as the living explanation of the
+    evaluation process, including prior sessions, operational issues, and the
+    path to the final 10-run aggregate report.
+  - Focused tests passed for aggregation, the MIMIC harness, and OpenRouter
+    parser handling.
+  - Smoke-tested aggregation against
+    `benchmark/results/mimic_ab_20260707T105849Z.json`, producing
+    `benchmark/results/mimic_ab_aggregate_smoke.json`.
+  - Next step: update `benchmark/render_evaluation_report.py` so aggregate
+    reports render as aggregate summaries rather than single-run reports.
 
 ## Iteration Plan
 

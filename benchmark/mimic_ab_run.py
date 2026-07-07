@@ -977,6 +977,7 @@ def run_suite_raw(
     database_path: Path,
     prompt_log_path: Path,
     limit: int | None = None,
+    max_parallel_candidates: int | None = None,
     query_service: QueryService | None = None,
     application: ApplicationService | None = None,
     etl_service: ETLService | None = None,
@@ -993,6 +994,9 @@ def run_suite_raw(
     app = application or ApplicationService(
         etler=ETLService(database_path=database_path),
         candidates_per_iteration=suite.candidate_count,
+        max_parallel_candidates=max_parallel_candidates
+        if max_parallel_candidates is not None
+        else suite.candidate_count,
         enable_join_path_detection=True,
         enable_semantic_column_detection=True,
         event_logger=PromptLogger(prompt_log_path),
@@ -1131,6 +1135,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Optional number of cases to run; useful for smoke tests.",
     )
+    parser.add_argument(
+        "--max-parallel-candidates",
+        type=int,
+        default=None,
+        help=(
+            "Maximum full-pipeline candidate generations to run concurrently. "
+            "Use 1 for rate-limited models."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1146,6 +1159,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.limit is not None and args.limit < 1:
         print("--limit must be positive when provided.", file=sys.stderr)
+        return 2
+    if args.max_parallel_candidates is not None and args.max_parallel_candidates < 1:
+        print("--max-parallel-candidates must be positive when provided.", file=sys.stderr)
         return 2
     judge_model = args.judge_model.strip() or args.model.strip()
     judge_enabled = not args.skip_judge
@@ -1186,6 +1202,7 @@ def main(argv: list[str] | None = None) -> int:
             database_path=database_path,
             prompt_log_path=prompt_log_path,
             limit=args.limit,
+            max_parallel_candidates=args.max_parallel_candidates,
             qualitative_judge_fn=qualitative_judge_fn,
         )
     except RuntimeError as error:

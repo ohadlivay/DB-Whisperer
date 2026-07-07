@@ -301,6 +301,16 @@ class BuildReportTest(unittest.TestCase):
         self.assertEqual(report["summary"]["total_cases"], 1)
 
 
+class CliArgsTest(unittest.TestCase):
+    def test_parses_max_parallel_candidate_override(self) -> None:
+        args = mimic_ab_run._parse_args(
+            ["--limit", "1", "--max-parallel-candidates", "1"]
+        )
+
+        self.assertEqual(args.limit, 1)
+        self.assertEqual(args.max_parallel_candidates, 1)
+
+
 class DeterministicScoringTest(unittest.TestCase):
     def _case(self, expected_sql="SELECT 1;"):
         suite = mimic_ab_run.load_mimic_suite(
