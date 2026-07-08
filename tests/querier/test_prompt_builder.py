@@ -211,6 +211,38 @@ class PromptBuilderTest(unittest.TestCase):
             self.assertIn('"items_a"."item_id"', prompt)
             self.assertIn('"items_b"."item_id"', prompt)
 
+    def test_prompt_filters_allowed_tables(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            ingestion = ETLService(
+                Path(directory) / "test.duckdb"
+            ).ingest(
+                [
+                    CsvUpload("customers.csv", b"customer_id,name\n1,Ada\n2,Bo\n3,Cy\n"),
+                    CsvUpload("orders.csv", b"order_id,customer_id\n10,1\n11,2\n12,1\n13,3\n"),
+                    CsvUpload("reviews.csv", b"review_id,customer_id,rating\n100,1,5\n101,2,4\n102,3,5\n"),
+                ]
+            )
+
+            prompt = PromptBuilder().build(
+                "How many orders per customer?",
+                ingestion.schema,
+                allowed_tables={"customers", "orders"},
+            )
+
+            # Customers and Orders should be included
+            self.assertIn('CREATE TABLE "customers" (', prompt)
+            self.assertIn('CREATE TABLE "orders" (', prompt)
+            
+            # Reviews should be excluded
+            self.assertNotIn('CREATE TABLE "reviews" (', prompt)
+            
+            # Relationship reviews -> customers should be excluded
+            self.assertNotIn('"reviews"."customer_id"', prompt)
+            
+            # Relationship orders -> customers should be included
+            self.assertIn('"orders"."customer_id" -> "customers"."customer_id"', prompt)
+
+
 
 if __name__ == "__main__":
     unittest.main()

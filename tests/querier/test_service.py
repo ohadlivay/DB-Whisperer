@@ -184,6 +184,45 @@ class QueryServiceTest(unittest.TestCase):
         with self.assertRaises(SQLValidationError):
             validate_read_only_sql("SELECT * FROM read_csv_auto('secret.csv')")
 
+    def test_query_service_prunes_prompt_via_rag(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            ingestion = ETLService(
+                Path(directory) / "test.duckdb"
+            ).ingest(
+                [
+                    CsvUpload("customers.csv", b"customer_id,name\n1,Ada\n2,Bo\n3,Cy\n"),
+                    CsvUpload("orders.csv", b"order_id,customer_id\n10,1\n11,2\n12,1\n13,3\n"),
+                ]
+            )
+
+            # Use a mock linker that returns only customers
+            class StubSchemaLinker:
+                def link_schema(self, user_prompt, schema, api_key, model):
+                    return {"customers"}
+
+            client = FakeOpenRouterClient("SELECT 1")
+            service = QueryService(
+                client=client,
+                rag_threshold=1,
+                schema_linker=StubSchemaLinker(),
+            )
+
+            prompt = service.build_prompt(
+                QueryRequest(
+                    prompt="Show customers",
+                    schema=ingestion.schema,
+                    api_key="test-key",
+                    model="test/model",
+                )
+            )
+
+            # customers should be profiled
+            self.assertIn('CREATE TABLE "customers" (', prompt)
+            
+            # orders should be pruned
+            self.assertNotIn('CREATE TABLE "orders" (', prompt)
+
+
 
 if __name__ == "__main__":
     unittest.main()

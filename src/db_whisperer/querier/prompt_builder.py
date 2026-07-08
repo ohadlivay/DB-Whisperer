@@ -67,12 +67,13 @@ class PromptBuilder:
         user_prompt: str,
         schema: SchemaMetadata,
         clarifications: tuple[str, ...] = (),
+        allowed_tables: set[str] | None = None,
     ) -> str:
         """Build database context and append optional clarifications."""
         database_path = self._database_path(schema)
         connection = duckdb.connect(database_path, read_only=True)
         try:
-            sections = self._profile_database(connection)
+            sections = self._profile_database(connection, allowed_tables)
         finally:
             connection.close()
 
@@ -84,10 +85,16 @@ class PromptBuilder:
             "COLUMN STATISTICS\n" + sections["statistics"],
             "VALID IDENTIFIERS\n" + sections["identifiers"],
         ]
-        if schema.relationships:
+        relationships = schema.relationships
+        if allowed_tables is not None:
+            relationships = tuple(
+                r for r in relationships
+                if r.child_table in allowed_tables and r.parent_table in allowed_tables
+            )
+        if relationships:
             prompt_sections.append(
                 "RELATIONSHIPS (advisory; join keys discovered from data)\n"
-                + self._relationships_block(schema.relationships)
+                + self._relationships_block(relationships)
             )
         prompt_sections.append("USER REQUEST\n" + user_prompt.strip())
         normalized_clarifications = tuple(
@@ -156,10 +163,18 @@ class PromptBuilder:
     def _profile_database(
         self,
         connection: duckdb.DuckDBPyConnection,
+        allowed_tables: set[str] | None = None,
     ) -> dict[str, str]:
-        tables = tuple(row[0] for row in connection.execute("SHOW TABLES").fetchall())
-        if not tables:
+        all_tables = tuple(row[0] for row in connection.execute("SHOW TABLES").fetchall())
+        if not all_tables:
             raise ValueError("The DuckDB database contains no tables.")
+
+        tables = tuple(
+            t for t in all_tables
+            if allowed_tables is None or t in allowed_tables
+        )
+        if not tables:
+            tables = all_tables
 
         schema_blocks: list[str] = []
         sample_blocks: list[str] = []

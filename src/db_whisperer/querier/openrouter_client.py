@@ -126,3 +126,90 @@ class OpenRouterClient:
             )
             raise OpenRouterError("OpenRouter returned empty SQL.")
         return sql.strip()
+
+    def generate_json(
+        self,
+        prompt: str,
+        api_key: str,
+        model: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send the complete prompt and extract parsed JSON from the response."""
+        if not api_key.strip():
+            raise OpenRouterError("OpenRouter API key is required.")
+        if not model.strip():
+            raise OpenRouterError("OpenRouter model is required.")
+
+        request_id = self.prompt_logger.log_prompt(
+            component="querier",
+            model=model,
+            prompt=prompt,
+            metadata=metadata,
+        )
+        try:
+            http_client = self.session or requests
+            response = http_client.post(
+                self.ENDPOINT,
+                headers={
+                    "Authorization": f"Bearer {api_key.strip()}",
+                    "Content-Type": "application/json",
+                    "X-OpenRouter-Title": "DB Whisperer",
+                },
+                json={
+                    "model": model.strip(),
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0,
+                    "max_tokens": 1000,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            payload: dict[str, Any] = response.json()
+            content = payload["choices"][0]["message"]["content"]
+            self.prompt_logger.log_response(
+                request_id=request_id,
+                component="querier",
+                model=model,
+                response=content,
+            )
+        except (requests.RequestException, KeyError, IndexError, ValueError) as error:
+            self.prompt_logger.log_event(
+                event="request_failed",
+                component="querier",
+                request_id=request_id,
+                model=model,
+                details={"error": str(error)},
+            )
+            raise OpenRouterError(f"OpenRouter request failed: {error}") from error
+
+        if not isinstance(content, str):
+            self.prompt_logger.log_event(
+                event="response_validation_failed",
+                component="querier",
+                request_id=request_id,
+                model=model,
+                details={
+                    "error": "OpenRouter returned non-text content.",
+                    "response_type": type(content).__name__,
+                },
+            )
+            raise OpenRouterError("OpenRouter returned non-text content.")
+
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as error:
+            self.prompt_logger.log_event(
+                event="response_validation_failed",
+                component="querier",
+                request_id=request_id,
+                model=model,
+                details={
+                    "error": str(error),
+                    "expected": "JSON object",
+                },
+            )
+            raise OpenRouterError("OpenRouter response did not contain valid JSON.") from error
+
+        return parsed
+

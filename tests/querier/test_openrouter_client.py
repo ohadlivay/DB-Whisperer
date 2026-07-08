@@ -186,6 +186,51 @@ class OpenRouterClientTest(unittest.TestCase):
         self.assertEqual("response_validation_failed", error_event[4])
         self.assertEqual("request-1", error_event[1])
 
+    def test_generate_json_success(self) -> None:
+        session = FakeSession()
+        prompt_logger = RecordingPromptLogger()
+        client = OpenRouterClient(
+            session=session,
+            prompt_logger=prompt_logger,
+        )
+
+        result = client.generate_json(
+            prompt="JSON query prompt",
+            api_key="secret",
+            model="provider/model",
+        )
+
+        self.assertEqual({"sql": "SELECT 1"}, result)
+        self.assertIsNotNone(session.request)
+        payload = session.request["json"]
+        self.assertEqual("provider/model", payload["model"])
+        self.assertEqual(
+            [{"role": "user", "content": "JSON query prompt"}],
+            payload["messages"],
+        )
+        self.assertEqual(
+            {"type": "json_object"},
+            payload["response_format"],
+        )
+
+    def test_generate_json_invalid_json(self) -> None:
+        prompt_logger = RecordingPromptLogger()
+        client = OpenRouterClient(
+            session=InvalidJsonSession(),
+            prompt_logger=prompt_logger,
+        )
+
+        with self.assertRaisesRegex(
+            OpenRouterError,
+            "response did not contain valid JSON",
+        ):
+            client.generate_json(
+                prompt="JSON query prompt",
+                api_key="secret",
+                model="provider/model",
+            )
+
+
 
 if __name__ == "__main__":
     unittest.main()
