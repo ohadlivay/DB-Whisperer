@@ -182,8 +182,8 @@
       <section id="cases">
         <div class="container">
           <div class="section-title">
-            <h3>Per-Case Results</h3>
-            <p>Each row keeps the deterministic score separate from clarification behavior and qualitative notes.</p>
+            <h3>Per-Case Aggregate Results</h3>
+            <p>Each row summarizes the same case across all included evaluation runs.</p>
           </div>
           <div class="table-wrap">
             <table>
@@ -191,11 +191,11 @@
                 <tr>
                   <th>Case</th>
                   <th>Type</th>
-                  <th>Baseline</th>
-                  <th>Full Pipeline</th>
-                  <th>Comparison</th>
+                  <th>Baseline Avg</th>
+                  <th>Full Avg</th>
+                  <th>Win / Tie / Loss</th>
                   <th>Clarification</th>
-                  <th>Qualitative Notes</th>
+                  <th>Reliability</th>
                 </tr>
               </thead>
               <tbody>
@@ -203,179 +203,209 @@
                 <tr>
                   <td><strong>tc_01_count_admissions</strong><br><span class="muted">How many hospital admissions are in the database?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4</strong><br><span class="code">No accepted SQL</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT count(*) AS total_admissions FROM &quot;admissions&quot;;</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="muted">None</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 of 1 run(s)</span></td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_02_admissions_by_type</strong><br><span class="muted">How many admissions are there for each admission type?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;admission_type&quot;, COUNT(*) AS admission_count FROM &quot;admissions&quot; GROUP BY &quot;admission_type&quot;;</span></td>
-                  <td><strong>4/4</strong><br><span class="code">SELECT &quot;admission_type&quot;, COUNT(*) AS admission_count FROM &quot;admissions&quot; GROUP BY &quot;admission_type&quot;;</span></td>
-                  <td><span class="pill ok">full_better</span></td>
-                  <td><span class="muted">None</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 1, zero: 0</span></td>
+                  <td><span class="pill ok">full better</span> 1<br><span class="pill">tie</span> 0<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 of 1 run(s)</span></td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_03_icu_stays_by_first_careunit</strong><br><span class="muted">How many ICU stays started in each care unit?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;first_careunit&quot;, COUNT(*) AS stay_count FROM &quot;icustays&quot; GROUP BY &quot;first_careunit&quot; ORDER BY stay_count DESC;</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;first_careunit&quot; AS care_unit, COUNT(*) AS stay_count FROM &quot;icustays&quot; GROUP BY &quot;first_careunit&quot; ORDER BY stay_count DESC;</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">semantic-column</span><br><strong>Chosen:</strong> The first unit<br><span class="muted">1 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_04_patient_labs_subject_history</strong><br><span class="muted">Show me lab results for patient 10006.</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;le&quot;.&quot;charttime&quot;, &quot;dl&quot;.&quot;label&quot; AS lab_test_name, &quot;le&quot;.&quot;value&quot;, &quot;le&quot;.&quot;valuenum&quot; AS numeric_value, &quot;le&quot;.&quot;valueuom&quot; AS unit, &quot;le&quot;.&quot;flag&quot; FROM &quot;labevents&quot; AS &quot;le&quot; JOIN &quot;d_lab...</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;le&quot;.&quot;charttime&quot;, &quot;li&quot;.&quot;label&quot; AS lab_test_name, &quot;le&quot;.&quot;value&quot;, &quot;le&quot;.&quot;valuenum&quot;, &quot;le&quot;.&quot;valueuom&quot;, &quot;le&quot;.&quot;flag&quot; FROM &quot;labevents&quot; AS &quot;le&quot; JOIN &quot;d_labitems&quot; AS &quot;li&quot; ON &quot;le&quot;.&quot;i...</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">join-path</span><br><strong>Chosen:</strong> All lab results<br><span class="muted">1 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_05_patient_labs_admission_context</strong><br><span class="muted">Show me lab results for patient 10006.</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;le&quot;.&quot;itemid&quot;, &quot;dli&quot;.&quot;label&quot; AS lab_test_name, &quot;le&quot;.&quot;charttime&quot;, &quot;le&quot;.&quot;value&quot;, &quot;le&quot;.&quot;valuenum&quot;, &quot;le&quot;.&quot;valueuom&quot;, &quot;le&quot;.&quot;flag&quot; FROM &quot;labevents&quot; AS &quot;le&quot; JOIN &quot;d_labitems&quot; AS...</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;le&quot;.&quot;itemid&quot;, &quot;di&quot;.&quot;label&quot; AS lab_test_name, &quot;le&quot;.&quot;charttime&quot;, &quot;le&quot;.&quot;value&quot;, &quot;le&quot;.&quot;valuenum&quot;, &quot;le&quot;.&quot;valueuom&quot;, &quot;le&quot;.&quot;flag&quot; FROM &quot;labevents&quot; AS &quot;le&quot; JOIN &quot;d_labitems&quot; AS ...</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">join-path</span><br><strong>Chosen:</strong> All lab results<br><span class="muted">1 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_06_patient_chart_events_icu_context</strong><br><span class="muted">Show charted measurements for patient 10006 during ICU stays.</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;ce&quot;.&quot;charttime&quot;, &quot;di&quot;.&quot;label&quot; AS measurement_label, &quot;ce&quot;.&quot;value&quot;, &quot;ce&quot;.&quot;valuenum&quot;, &quot;ce&quot;.&quot;valueuom&quot;, &quot;is&quot;.&quot;icustay_id&quot; FROM &quot;chartevents&quot; AS &quot;ce&quot; JOIN &quot;d_items&quot; AS &quot;di&quot; O...</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;chartevents&quot;.* FROM &quot;chartevents&quot; JOIN &quot;icustays&quot; ON &quot;chartevents&quot;.&quot;icustay_id&quot; = &quot;icustays&quot;.&quot;icustay_id&quot; WHERE &quot;icustays&quot;.&quot;subject_id&quot; = 10006 LIMIT 1000;</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">join-path</span><br><strong>Chosen:</strong> Only ICU stay measurements<br><span class="muted">2 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_07_patient_medications_admission_context</strong><br><span class="muted">What medications are associated with patient 10006?</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;drug&quot;, &quot;drug_name_generic&quot;, &quot;dose_val_rx&quot;, &quot;dose_unit_rx&quot;, &quot;route&quot;, &quot;startdate&quot;, &quot;enddate&quot; FROM &quot;prescriptions&quot; WHERE &quot;subject_id&quot; = 10006 LIMIT 1000;</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT DISTINCT &quot;p&quot;.&quot;drug&quot; AS medication_brand_name FROM &quot;prescriptions&quot; AS &quot;p&quot; JOIN &quot;icustays&quot; AS &quot;i&quot; ON &quot;p&quot;.&quot;icustay_id&quot; = &quot;i&quot;.&quot;icustay_id&quot; JOIN &quot;patients&quot; AS &quot;pt&quot; ON &quot;i&quot;.&quot;sub...</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">join-path</span><br><strong>Chosen:</strong> Linked through icustays, transfers<br><span class="muted">2 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_08_patient_date_ambiguity</strong><br><span class="muted">Show the important dates for patient 10006.</span></td>
                   <td><span class="pill">semantic-column</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;admittime&quot;, &quot;dischtime&quot;, &quot;deathtime&quot;, &quot;edregtime&quot;, &quot;edouttime&quot; FROM &quot;admissions&quot; WHERE &quot;subject_id&quot; = 10006;</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;subject_id&quot;, &quot;hadm_id&quot;, &quot;admittime&quot;, &quot;dischtime&quot;, &quot;deathtime&quot; FROM &quot;admissions&quot; WHERE &quot;subject_id&quot; = 10006 LIMIT 1000;</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">semantic-column</span><br><strong>Chosen:</strong> When they were admitted<br><span class="muted">2 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_09_length_of_stay_ambiguity</strong><br><span class="muted">How long did patient 10006 stay?</span></td>
                   <td><span class="pill">semantic-column</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;subject_id&quot;, &quot;admittime&quot;, &quot;dischtime&quot;, (date_diff(&#x27;day&#x27;, &quot;admittime&quot;, &quot;dischtime&quot;)) AS length_of_stay_days FROM &quot;admissions&quot; WHERE &quot;subject_id&quot; = 10006 LIMIT 1000;</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;subject_id&quot;, &quot;admittime&quot;, &quot;dischtime&quot;, (CAST(&quot;dischtime&quot; AS TIMESTAMP) - CAST(&quot;admittime&quot; AS TIMESTAMP)) AS length_of_stay FROM &quot;admissions&quot; WHERE &quot;subject_id&quot; = 10006 L...</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">semantic-column</span><br><strong>Chosen:</strong> Arrival time<br><span class="muted">1 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_10_first_event_time_ambiguity</strong><br><span class="muted">What was the first event time for patient 10006?</span></td>
                   <td><span class="pill">semantic-column</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT MIN(&quot;admittime&quot;) AS first_event_time FROM &quot;admissions&quot; WHERE &quot;subject_id&quot; = 10006;</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;admittime&quot; AS first_event_time FROM &quot;admissions&quot; WHERE &quot;subject_id&quot; = 10006 ORDER BY &quot;admittime&quot; ASC LIMIT 1;</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">semantic-column</span><br><strong>Chosen:</strong> Admission time<br><span class="muted">2 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_11_most_common_diagnoses</strong><br><span class="muted">What are the 10 most common diagnosis codes with their descriptions?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;diagnoses_icd&quot;.&quot;icd9_code&quot;, &quot;d_icd_diagnoses&quot;.&quot;long_title&quot; AS diagnosis_description, COUNT(*) AS occurrence_count FROM &quot;diagnoses_icd&quot; JOIN &quot;d_icd_diagnoses&quot; ON &quot;diagnos...</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;d_icd_diagnoses&quot;.&quot;icd9_code&quot;, &quot;d_icd_diagnoses&quot;.&quot;long_title&quot;, COUNT(*) AS diagnosis_count FROM &quot;diagnoses_icd&quot; JOIN &quot;d_icd_diagnoses&quot; ON &quot;diagnoses_icd&quot;.&quot;icd9_code&quot; = &quot;d...</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">semantic-column</span><br><strong>Chosen:</strong> Full detailed descriptions<br><span class="muted">2 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_12_lab_frequency_by_item</strong><br><span class="muted">Which lab tests are recorded most often?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;d_labitems&quot;.&quot;label&quot; AS lab_test_name, COUNT(*) AS recording_count FROM &quot;labevents&quot; JOIN &quot;d_labitems&quot; ON &quot;labevents&quot;.&quot;itemid&quot; = &quot;d_labitems&quot;.&quot;itemid&quot; GROUP BY &quot;d_labitems...</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;t1&quot;.&quot;label&quot; AS lab_test_name, COUNT(&quot;t2&quot;.&quot;row_id&quot;) AS recording_count FROM &quot;d_labitems&quot; AS &quot;t1&quot; JOIN &quot;labevents&quot; AS &quot;t2&quot; ON &quot;t1&quot;.&quot;itemid&quot; = &quot;t2&quot;.&quot;itemid&quot; GROUP BY &quot;t1&quot;.&quot;...</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">semantic-column</span><br><strong>Chosen:</strong> Types of tests available<br><span class="muted">1 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_13_icu_mortality_by_first_careunit</strong><br><span class="muted">For each first ICU care unit, how many stays were for patients who died in the hospital?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;icustays&quot;.&quot;first_careunit&quot;, COUNT(*) AS hospital_death_count FROM &quot;icustays&quot; JOIN &quot;admissions&quot; ON &quot;icustays&quot;.&quot;hadm_id&quot; = &quot;admissions&quot;.&quot;hadm_id&quot; WHERE &quot;admissions&quot;.&quot;hospi...</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT &quot;icustays&quot;.&quot;first_careunit&quot;, COUNT(&quot;icustays&quot;.&quot;icustay_id&quot;) AS death_count FROM &quot;icustays&quot; JOIN &quot;admissions&quot; ON &quot;icustays&quot;.&quot;hadm_id&quot; = &quot;admissions&quot;.&quot;hadm_id&quot; WHERE &quot;admis...</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">join-path</span><br><strong>Chosen:</strong> The visit linked to the ICU stay<br><span class="muted">2 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_14_write_operation_request</strong><br><span class="muted">Delete all chart events for patient 10006.</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT * FROM &quot;chartevents&quot; WHERE &quot;subject_id&quot; = &#x27;10006&#x27;;</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT * FROM &quot;chartevents&quot; WHERE &quot;subject_id&quot; = &#x27;10006&#x27;;</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">join-path</span><br><strong>Chosen:</strong> All events for the patient<br><span class="muted">1 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_15_nonexistent_clinical_concept</strong><br><span class="muted">How many ventilator alarms are in the ventilator_alarms table?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>4/4</strong><br><span class="code">SELECT count(*) AS alarm_count FROM &quot;ventilator_alarms&quot;;</span></td>
-                  <td><strong>4/4</strong><br><span class="code">No accepted SQL</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="muted">None</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 1, zero: 0</span></td>
+                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 1, zero: 0</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 of 1 run(s)</span></td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_16_underspecified_aggregate</strong><br><span class="muted">Get me the average value.</span></td>
                   <td><span class="pill">underspecified</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT AVG(&quot;valuenum&quot;) AS average_valuenum FROM &quot;labevents&quot;;</span></td>
-                  <td><strong>0/4</strong><br><span class="code">SELECT AVG(&quot;valuenum&quot;) AS average_lab_value FROM &quot;labevents&quot;;</span></td>
-                  <td><span class="pill">tie</span></td>
-                  <td><span class="pill">semantic-column</span><br><strong>Chosen:</strong> Lab results<br><span class="muted">1 clarification(s)</span></td>
-                  <td><span class="muted">Not available</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
               </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    
+
+      <section id="runs">
+        <div class="container">
+          <div class="section-title">
+            <h3>Source Runs</h3>
+            <p>These are the individual benchmark artifacts included in the aggregate report.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Report Path</th>
+                  <th>Started</th>
+                  <th>Completed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>20260707T105849Z</td>
+                  <td class="code">C:\Users\talir\OneDrive\Desktop\GitHub\DB-Whisperer\benchmark\results\mimic_ab_20260707T105849Z.json</td>
+                  <td>2026-07-07T10:58:49.971977+00:00</td>
+                  <td>2026-07-07T11:34:58.827757+00:00</td>
+                </tr>
+        </tbody>
             </table>
           </div>
         </div>

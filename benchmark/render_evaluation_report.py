@@ -75,6 +75,7 @@ def render_case_details_report(report: dict[str, Any]) -> str:
     """Render a separate detailed case-results page."""
     title = "DB Whisperer Detailed Case Results"
     cases = report.get("cases", [])
+    aggregate = is_aggregate_report(report)
     return "\n".join(
         [
             "<!DOCTYPE html>",
@@ -100,7 +101,10 @@ def render_case_details_report(report: dict[str, Any]) -> str:
         </div>
       </section>
             """,
-            render_case_table(cases),
+            render_aggregate_case_table(cases)
+            if aggregate
+            else render_case_table(cases),
+            render_source_runs(report) if aggregate else "",
             "    </main>",
             render_footer(),
             "  </div>",
@@ -280,12 +284,28 @@ def render_header() -> str:
 def render_summary_header(report: dict[str, Any], summary: dict[str, Any]) -> str:
     total = value(summary, "total_cases", 0)
     model = text(report.get("tested_model", "unknown model"))
+    aggregate = is_aggregate_report(report)
+    run_count = value(report, "run_count", 1)
+    eyebrow = "Aggregate Evaluation Summary" if aggregate else "Evaluation Summary"
+    subtitle = (
+        "This page summarizes repeated simulated evaluation runs for DB Whisperer. "
+        "The headline metrics are aggregated across all included runs."
+        if aggregate
+        else "This page summarizes simulated evaluation results for DB Whisperer. "
+        "The system is compared with a simpler baseline that answers questions "
+        "without asking for clarification."
+    )
+    total_note = (
+        f"{run_count} run(s) across the evaluation cases"
+        if aggregate
+        else "Across the evaluation runs included in this report"
+    )
     return f"""
       <section class="report-header" id="top">
         <div class="container">
-          <p class="eyebrow">Evaluation Summary</p>
+          <p class="eyebrow">{eyebrow}</p>
           <h2>How Well DB Whisperer Handles Ambiguous Database Questions</h2>
-          <p class="subtitle">This page summarizes simulated evaluation results for DB Whisperer. The system is compared with a simpler baseline that answers questions without asking for clarification.</p>
+          <p class="subtitle">{text(subtitle)}</p>
           <div class="grid grid-2">
             <article class="card metric">
               <p class="metric-label">Model</p>
@@ -294,7 +314,7 @@ def render_summary_header(report: dict[str, Any], summary: dict[str, Any]) -> st
             <article class="card metric">
               <p class="metric-label">Total Case Results</p>
               <p class="metric-value">{total}</p>
-              <p class="metric-note">Across the evaluation runs included in this report</p>
+              <p class="metric-note">{text(total_note)}</p>
             </article>
           </div>
         </div>
@@ -307,8 +327,26 @@ def render_framework(
     schema: dict[str, Any],
     judge: dict[str, Any],
 ) -> str:
-    judge_text = "enabled" if judge.get("enabled") else "disabled"
-    self_judged = "yes" if judge.get("self_judged") else "no"
+    aggregate = is_aggregate_report(report)
+    if aggregate:
+        enabled_count = value(judge, "enabled_run_count", 0)
+        disabled_count = value(judge, "disabled_run_count", 0)
+        judge_text = f"{enabled_count} enabled / {disabled_count} disabled run(s)"
+        self_judged = "yes" if judge.get("all_self_judged") else "no"
+        judge_model = ", ".join(judge.get("models", [])) or "not used"
+        relationship_text = (
+            f"{value(schema, 'relationship_count_min', 'n/a')}-"
+            f"{value(schema, 'relationship_count_max', 'n/a')}"
+        )
+        discovery_text = (
+            f"{value(schema, 'discovery_complete_run_count', 0)} complete run(s)"
+        )
+    else:
+        judge_text = "enabled" if judge.get("enabled") else "disabled"
+        self_judged = "yes" if judge.get("self_judged") else "no"
+        judge_model = text(judge.get("model", "not set"))
+        relationship_text = text(value(schema, "relationship_count", 0))
+        discovery_text = text(schema.get("discovery_complete", "unknown"))
     return f"""
       <section id="framework">
         <div class="container">
@@ -333,14 +371,14 @@ def render_framework(
           <div class="grid grid-3" style="margin-top:22px">
             <article class="card">
               <h4>Schema</h4>
-              <p><strong>{value(schema, "table_count", 0)}</strong> tables, <strong>{value(schema, "relationship_count", 0)}</strong> discovered relationships.</p>
-              <p class="muted">Discovery complete: {text(schema.get("discovery_complete", "unknown"))}</p>
+              <p><strong>{value(schema, "table_count", 0)}</strong> tables, <strong>{relationship_text}</strong> discovered relationships.</p>
+              <p class="muted">Discovery complete: {discovery_text}</p>
             </article>
             <article class="card">
               <h4>Judge</h4>
               <p>Qualitative notes: <strong>{judge_text}</strong></p>
               <p>Same model judged itself: <strong>{self_judged}</strong></p>
-              <p class="code">{text(judge.get("model", "not set"))}</p>
+              <p class="code">{judge_model}</p>
             </article>
             <article class="card">
               <h4>Dataset</h4>
@@ -387,6 +425,19 @@ def render_metrics(summary: dict[str, Any]) -> str:
               <p><span class="pill">Tie</span> {value(comparison, "tie", 0)}</p>
               <p><span class="pill bad">Baseline better</span> {value(comparison, "baseline_better", 0)}</p>
               <p><span class="pill warn">Unscored</span> {value(comparison, "unscored", 0)}</p>
+            </article>
+          </div>
+          <div class="grid grid-2" style="margin-top:24px">
+            <article class="card">
+              <h4>Score Stability</h4>
+              <p>Baseline score spread: <strong>{score_spread(baseline)}</strong></p>
+              <p>Full pipeline score spread: <strong>{score_spread(full)}</strong></p>
+              <p class="muted">For aggregate reports, spread is the population standard deviation across all case results. For single-run reports it may be unavailable.</p>
+            </article>
+            <article class="card">
+              <h4>Reliability</h4>
+              <p>Cases with unreliable clarification simulation: <strong>{len(summary.get("unreliable_cases", []))}</strong></p>
+              <p class="muted">Unreliable means the simulated user had to answer an unexpected clarification, repeated clarification, or unmatched option.</p>
             </article>
           </div>
         </div>
@@ -447,13 +498,25 @@ def render_factor_overview() -> str:
 
 def render_case_details_link(report: dict[str, Any], href: str) -> str:
     total = len(report.get("cases", []))
+    if is_aggregate_report(report):
+        run_count = value(report, "run_count", 0)
+        note = (
+            f"This aggregate report contains {total} case summaries across "
+            f"{run_count} run(s). The detail page shows per-case averages, "
+            "clarification rates, reliability rates, and per-run scores."
+        )
+    else:
+        note = (
+            f"This report currently contains {total} case-level rows. A full "
+            "10-run evaluation can contain more than 100 rows."
+        )
     return f"""
       <section id="case-details">
         <div class="container">
           <div class="card">
             <h3 style="margin-top:0">Detailed Case Results</h3>
             <p>The main report keeps the overview readable. Detailed case-level rows are available separately, including generated queries, clarification choices, scores, and judge notes.</p>
-            <p class="muted">This report currently contains {total} case-level rows. A full 10-run evaluation can contain more than 100 rows.</p>
+            <p class="muted">{text(note)}</p>
             <a class="button" href="{text(href)}">View Detailed Case Results</a>
           </div>
         </div>
@@ -490,6 +553,56 @@ def render_case_table(cases: list[dict[str, Any]]) -> str:
           </div>
         </div>
       </section>
+    """
+
+
+def render_aggregate_case_table(cases: list[dict[str, Any]]) -> str:
+    """Render per-case aggregate rows."""
+    rows = "\n".join(render_aggregate_case_row(case) for case in cases)
+    return f"""
+      <section id="cases">
+        <div class="container">
+          <div class="section-title">
+            <h3>Per-Case Aggregate Results</h3>
+            <p>Each row summarizes the same case across all included evaluation runs.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Case</th>
+                  <th>Type</th>
+                  <th>Baseline Avg</th>
+                  <th>Full Avg</th>
+                  <th>Win / Tie / Loss</th>
+                  <th>Clarification</th>
+                  <th>Reliability</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    """
+
+
+def render_aggregate_case_row(case: dict[str, Any]) -> str:
+    comparison = case.get("comparison", {})
+    baseline = case.get("baseline", {})
+    full = case.get("full", {})
+    return f"""
+                <tr>
+                  <td><strong>{text(case.get("id", ""))}</strong><br><span class="muted">{text(case.get("question", ""))}</span></td>
+                  <td>{pill(text(case.get("ambiguity_type", "none")))}</td>
+                  <td><strong>{aggregate_score_text(baseline)}</strong><br><span class="muted">exact: {value(baseline, "exact_score_count", 0)}, zero: {value(baseline, "zero_score_count", 0)}</span></td>
+                  <td><strong>{aggregate_score_text(full)}</strong><br><span class="muted">exact: {value(full, "exact_score_count", 0)}, zero: {value(full, "zero_score_count", 0)}</span></td>
+                  <td>{comparison_counts_text(comparison)}</td>
+                  <td><strong>{percent(case.get("clarification_rate"))}</strong><br><span class="muted">{value(case, "clarification_asked_count", 0)} of {value(case, "run_count", 0)} run(s)</span></td>
+                  <td><strong>{percent(case.get("unreliable_rate"))}</strong><br><span class="muted">{value(case, "unreliable_count", 0)} unreliable run(s)</span></td>
+                </tr>
     """
 
 
@@ -545,7 +658,10 @@ def render_qualitative(judgment: dict[str, Any]) -> str:
 
 def render_discussion(report: dict[str, Any], summary: dict[str, Any]) -> str:
     judge = report.get("judge", {})
-    self_judged = bool(judge.get("self_judged"))
+    aggregate = is_aggregate_report(report)
+    self_judged = bool(
+        judge.get("all_self_judged") if aggregate else judge.get("self_judged")
+    )
     limitation = (
         "The qualitative judge used the same model as the system, so those "
         "notes are non-independent and should be treated as supporting context."
@@ -558,6 +674,13 @@ def render_discussion(report: dict[str, Any], summary: dict[str, Any]) -> str:
         if unreliable
         else "None"
     )
+    aggregate_note = (
+        f"This report aggregates {value(report, 'run_count', 1)} separate "
+        "evaluation run(s), so the headline metrics should be read as repeated-run "
+        "averages rather than a single sample."
+        if aggregate
+        else "This report represents one evaluation run."
+    )
     return f"""
       <section id="discussion">
         <div class="container">
@@ -569,6 +692,7 @@ def render_discussion(report: dict[str, Any], summary: dict[str, Any]) -> str:
             <article class="card">
               <h4>Interpretation</h4>
               <p>The central comparison is whether explicit ambiguity detection improves results on ambiguous MIMIC questions without adding unnecessary clarifications to control cases.</p>
+              <p>{text(aggregate_note)}</p>
               <p>A reference answer query is a query written in advance by the evaluator. The benchmark runs that query and compares DB Whisperer's output to the reference result.</p>
               <p>Unreliable cases: <span class="code">{unreliable_text}</span></p>
             </article>
@@ -605,6 +729,31 @@ def bar(label: str, percentage: Any) -> str:
                 <div class="bar-track"><div class="bar-fill" style="width:{pct}%"></div></div>
               </div>
     """
+
+
+def score_spread(summary: dict[str, Any]) -> str:
+    """Format population standard deviation when available."""
+    spread = summary.get("population_stdev")
+    if spread is None:
+        return "n/a"
+    return f"{number(spread)} points"
+
+
+def aggregate_score_text(summary: dict[str, Any]) -> str:
+    """Format aggregate score distribution."""
+    mean = summary.get("mean")
+    if mean is None:
+        return "unscored"
+    return f"{number(mean)}/4 avg"
+
+
+def comparison_counts_text(comparison: dict[str, Any]) -> str:
+    """Format aggregate win/tie/loss counts."""
+    return (
+        f"{pill('full better', 'ok')} {value(comparison, 'full_better', 0)}<br>"
+        f"{pill('tie')} {value(comparison, 'tie', 0)}<br>"
+        f"{pill('baseline better', 'bad')} {value(comparison, 'baseline_better', 0)}"
+    )
 
 
 def pill(label: str, class_name: str = "") -> str:
@@ -674,6 +823,52 @@ def safe_percentage(value_item: Any) -> float:
 
 def text(value_item: Any) -> str:
     return html.escape(str(value_item), quote=True)
+
+
+def is_aggregate_report(report: dict[str, Any]) -> bool:
+    """True when a report is a repeated-run aggregate artifact."""
+    return report.get("report_type") == "mimic_ab_aggregate"
+
+
+def render_source_runs(report: dict[str, Any]) -> str:
+    """Render the list of source reports included in an aggregate."""
+    runs = report.get("source_reports", [])
+    if not isinstance(runs, list) or not runs:
+        return ""
+    rows = "\n".join(
+        f"""
+                <tr>
+                  <td>{text(run.get("run_id", ""))}</td>
+                  <td class="code">{text(run.get("path", ""))}</td>
+                  <td>{text(run.get("started_at", ""))}</td>
+                  <td>{text(run.get("completed_at", ""))}</td>
+                </tr>
+        """
+        for run in runs
+    )
+    return f"""
+      <section id="runs">
+        <div class="container">
+          <div class="section-title">
+            <h3>Source Runs</h3>
+            <p>These are the individual benchmark artifacts included in the aggregate report.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Report Path</th>
+                  <th>Started</th>
+                  <th>Completed</th>
+                </tr>
+              </thead>
+              <tbody>{rows}</tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    """
 
 
 def write_report(report_path: Path, output_path: Path) -> Path:

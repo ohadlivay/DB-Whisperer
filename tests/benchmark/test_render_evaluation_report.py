@@ -104,6 +104,96 @@ def fixture_report() -> dict:
     }
 
 
+def aggregate_fixture_report() -> dict:
+    return {
+        "report_type": "mimic_ab_aggregate",
+        "suite": "mimic_iii_clinical_ambiguity",
+        "dataset": "data/mimic",
+        "tested_model": "google/gemma-4-31b-it",
+        "run_count": 2,
+        "judge": {
+            "enabled_run_count": 0,
+            "disabled_run_count": 2,
+            "models": [],
+            "all_self_judged": False,
+        },
+        "schema": {
+            "table_count": 26,
+            "relationship_count_min": 60,
+            "relationship_count_max": 60,
+            "discovery_complete_run_count": 0,
+        },
+        "summary": {
+            "total_cases": 32,
+            "baseline": {
+                "mean": 0.25,
+                "normalized_percentage": 6.25,
+                "population_stdev": 0.9,
+            },
+            "full": {
+                "mean": 0.5,
+                "normalized_percentage": 12.5,
+                "population_stdev": 1.2,
+            },
+            "overall_comparison": {
+                "full_better": 2,
+                "tie": 30,
+                "baseline_better": 0,
+                "unscored": 0,
+            },
+            "ambiguous": {
+                "expected_clarification_rate": 1.0,
+            },
+            "control": {
+                "spurious_clarification_rate": 0.625,
+            },
+            "unreliable_cases": ["tc_03"],
+        },
+        "source_reports": [
+            {
+                "run_id": "run-1",
+                "path": "benchmark/results/run-1.json",
+                "started_at": "2026-07-07T00:00:00+00:00",
+                "completed_at": "2026-07-07T00:10:00+00:00",
+            },
+            {
+                "run_id": "run-2",
+                "path": "benchmark/results/run-2.json",
+                "started_at": "2026-07-07T01:00:00+00:00",
+                "completed_at": "2026-07-07T01:10:00+00:00",
+            },
+        ],
+        "cases": [
+            {
+                "id": "tc_03",
+                "question": "How many ICU stays by care unit?",
+                "ambiguity_type": "none",
+                "baseline": {
+                    "mean": 0.0,
+                    "exact_score_count": 0,
+                    "zero_score_count": 2,
+                },
+                "full": {
+                    "mean": 2.0,
+                    "exact_score_count": 1,
+                    "zero_score_count": 1,
+                },
+                "comparison": {
+                    "full_better": 1,
+                    "tie": 1,
+                    "baseline_better": 0,
+                    "unscored": 0,
+                },
+                "clarification_asked_count": 1,
+                "clarification_rate": 0.5,
+                "unreliable_count": 1,
+                "unreliable_rate": 0.5,
+                "run_count": 2,
+            }
+        ],
+    }
+
+
 class RenderReportTest(unittest.TestCase):
     def test_render_contains_main_sections_and_metrics(self) -> None:
         html = renderer.render_report(fixture_report())
@@ -120,6 +210,26 @@ class RenderReportTest(unittest.TestCase):
         self.assertIn("100.0%", html)
         self.assertIn("View Detailed Case Results", html)
         self.assertNotIn("tc_04_patient_labs_subject_history", html)
+
+    def test_render_aggregate_report_contains_aggregate_metrics(self) -> None:
+        html = renderer.render_report(aggregate_fixture_report())
+
+        self.assertIn("Aggregate Evaluation Summary", html)
+        self.assertIn("32", html)
+        self.assertIn("2 run(s)", html)
+        self.assertIn("12.5%", html)
+        self.assertIn("Score Stability", html)
+        self.assertIn("1.2 points", html)
+
+    def test_render_aggregate_case_details(self) -> None:
+        html = renderer.render_case_details_report(aggregate_fixture_report())
+
+        self.assertIn("Per-Case Aggregate Results", html)
+        self.assertIn("tc_03", html)
+        self.assertIn("2/4 avg", html)
+        self.assertIn("50.0%", html)
+        self.assertIn("Source Runs", html)
+        self.assertIn("run-1", html)
 
     def test_render_escapes_untrusted_values(self) -> None:
         report = fixture_report()
@@ -151,6 +261,27 @@ class RenderReportTest(unittest.TestCase):
             )
             self.assertIn(
                 "tc_04_patient_labs_subject_history",
+                (tmp / "evaluation_report_cases.html").read_text(encoding="utf-8"),
+            )
+
+    def test_write_aggregate_report_creates_aggregate_details(self) -> None:
+        with TemporaryDirectory() as name:
+            tmp = Path(name)
+            report_path = tmp / "aggregate.json"
+            output_path = tmp / "evaluation_report.html"
+            report_path.write_text(
+                __import__("json").dumps(aggregate_fixture_report()),
+                encoding="utf-8",
+            )
+
+            renderer.write_report(report_path, output_path)
+
+            self.assertIn(
+                "Aggregate Evaluation Summary",
+                output_path.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "Per-Case Aggregate Results",
                 (tmp / "evaluation_report_cases.html").read_text(encoding="utf-8"),
             )
 

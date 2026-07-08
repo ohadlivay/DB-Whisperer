@@ -172,9 +172,9 @@
 
       <section class="report-header" id="top">
         <div class="container">
-          <p class="eyebrow">Evaluation Summary</p>
+          <p class="eyebrow">Aggregate Evaluation Summary</p>
           <h2>How Well DB Whisperer Handles Ambiguous Database Questions</h2>
-          <p class="subtitle">This page summarizes simulated evaluation results for DB Whisperer. The system is compared with a simpler baseline that answers questions without asking for clarification.</p>
+          <p class="subtitle">This page summarizes repeated simulated evaluation runs for DB Whisperer. The headline metrics are aggregated across all included runs.</p>
           <div class="grid grid-2">
             <article class="card metric">
               <p class="metric-label">Model</p>
@@ -183,7 +183,7 @@
             <article class="card metric">
               <p class="metric-label">Total Case Results</p>
               <p class="metric-value">16</p>
-              <p class="metric-note">Across the evaluation runs included in this report</p>
+              <p class="metric-note">1 run(s) across the evaluation cases</p>
             </article>
           </div>
         </div>
@@ -213,14 +213,14 @@
           <div class="grid grid-3" style="margin-top:22px">
             <article class="card">
               <h4>Schema</h4>
-              <p><strong>26</strong> tables, <strong>60</strong> discovered relationships.</p>
-              <p class="muted">Discovery complete: False</p>
+              <p><strong>26</strong> tables, <strong>60-60</strong> discovered relationships.</p>
+              <p class="muted">Discovery complete: 0 complete run(s)</p>
             </article>
             <article class="card">
               <h4>Judge</h4>
-              <p>Qualitative notes: <strong>disabled</strong></p>
+              <p>Qualitative notes: <strong>0 enabled / 1 disabled run(s)</strong></p>
               <p>Same model judged itself: <strong>no</strong></p>
-              <p class="code">None</p>
+              <p class="code">not used</p>
             </article>
             <article class="card">
               <h4>Dataset</h4>
@@ -291,6 +291,19 @@
               <p><span class="pill warn">Unscored</span> 0</p>
             </article>
           </div>
+          <div class="grid grid-2" style="margin-top:24px">
+            <article class="card">
+              <h4>Score Stability</h4>
+              <p>Baseline score spread: <strong>0.97 points</strong></p>
+              <p>Full pipeline score spread: <strong>1.32 points</strong></p>
+              <p class="muted">For aggregate reports, spread is the population standard deviation across all case results. For single-run reports it may be unavailable.</p>
+            </article>
+            <article class="card">
+              <h4>Reliability</h4>
+              <p>Cases with unreliable clarification simulation: <strong>12</strong></p>
+              <p class="muted">Unreliable means the simulated user had to answer an unexpected clarification, repeated clarification, or unmatched option.</p>
+            </article>
+          </div>
         </div>
       </section>
     
@@ -348,7 +361,7 @@
           <div class="card">
             <h3 style="margin-top:0">Detailed Case Results</h3>
             <p>The main report keeps the overview readable. Detailed case-level rows are available separately, including generated queries, clarification choices, scores, and judge notes.</p>
-            <p class="muted">This report currently contains 16 case-level rows. A full 10-run evaluation can contain more than 100 rows.</p>
+            <p class="muted">This aggregate report contains 16 case summaries across 1 run(s). The detail page shows per-case averages, clarification rates, reliability rates, and per-run scores.</p>
             <a class="button" href="evaluation_report_cases.html">View Detailed Case Results</a>
           </div>
         </div>
@@ -365,6 +378,7 @@
             <article class="card">
               <h4>Interpretation</h4>
               <p>The central comparison is whether explicit ambiguity detection improves results on ambiguous MIMIC questions without adding unnecessary clarifications to control cases.</p>
+              <p>This report aggregates 1 separate evaluation run(s), so the headline metrics should be read as repeated-run averages rather than a single sample.</p>
               <p>A reference answer query is a query written in advance by the evaluator. The benchmark runs that query and compares DB Whisperer's output to the reference result.</p>
               <p>Unreliable cases: <span class="code">tc_03_icu_stays_by_first_careunit, tc_05_patient_labs_admission_context, tc_06_patient_chart_events_icu_context, tc_07_patient_medications_admission_context, tc_08_patient_date_ambiguity, tc_09_length_of_stay_ambiguity, tc_10_first_event_time_ambiguity, tc_11_most_common_diagnoses, tc_12_lab_frequency_by_item, tc_13_icu_mortality_by_first_careunit, tc_14_write_operation_request, tc_16_underspecified_aggregate</span></p>
             </article>

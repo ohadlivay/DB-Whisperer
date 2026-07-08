@@ -139,14 +139,39 @@ Validation completed:
 - The aggregate preserved the first-run headline metrics: baseline 6.25%, full
   pipeline 12.5%, 1 full-pipeline win, 15 ties, and 12 unreliable cases.
 
-The next implementation step is to update the HTML renderer so it can present
-aggregate reports cleanly.
+The HTML renderer has now been updated so it can present aggregate reports
+cleanly. `benchmark/render_evaluation_report.py` detects
+`report_type: mimic_ab_aggregate` and renders:
+
+- aggregate run counts and total case-result counts,
+- aggregate score percentages and score stability,
+- aggregate win/tie/loss totals,
+- aggregate clarification and spurious-clarification rates,
+- per-case average baseline/full scores,
+- per-case clarification and unreliable-run rates,
+- source report metadata for the runs included in the aggregate.
+
+The existing single-run report rendering path remains supported.
+
+Validation completed:
+
+- Focused renderer and aggregator tests passed.
+- The one-run smoke aggregate
+  `benchmark/results/mimic_ab_aggregate_smoke.json` was rendered to:
+  `docs/evaluation_report.html` and `docs/evaluation_report_cases.html`.
+- The rendered pages now show aggregate-specific sections such as "Aggregate
+  Evaluation Summary", "Score Stability", "Per-Case Aggregate Results", and
+  "Source Runs".
+
+The next operational step is to collect the remaining full-run reports until
+there are 10 successful deterministic runs, aggregate those 10 reports, and
+render the final aggregate HTML report.
 
 ## Planned Remaining Sequence
 
 1. Finish and verify the aggregation script.
 2. Update the HTML renderer so it can render aggregate reports, not only
-   single-run reports.
+   single-run reports. Status: complete.
 3. Use the existing completed run plus additional full runs to collect 10
    successful deterministic reports.
 4. Aggregate the 10 reports into one JSON artifact.

@@ -168,8 +168,17 @@ reported as `self_judged: true`.
   - Smoke-tested aggregation against
     `benchmark/results/mimic_ab_20260707T105849Z.json`, producing
     `benchmark/results/mimic_ab_aggregate_smoke.json`.
-  - Next step: update `benchmark/render_evaluation_report.py` so aggregate
-    reports render as aggregate summaries rather than single-run reports.
+  - Updated `benchmark/render_evaluation_report.py` so aggregate reports render
+    as aggregate summaries rather than single-run reports.
+  - Added aggregate renderer tests to
+    `tests/benchmark/test_render_evaluation_report.py`.
+  - Rendered `benchmark/results/mimic_ab_aggregate_smoke.json` to
+    `docs/evaluation_report.html` and `docs/evaluation_report_cases.html`,
+    verifying aggregate sections for run count, score stability, per-case
+    aggregate results, and source runs.
+  - Next step: collect the remaining full-run reports until 10 successful
+    deterministic runs exist, aggregate those reports, and render the final
+    aggregate HTML report.
 
 ## Iteration Plan
 
