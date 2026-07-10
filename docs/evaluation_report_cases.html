@@ -193,6 +193,7 @@
                   <th>Type</th>
                   <th>Baseline Avg</th>
                   <th>Full Avg</th>
+                  <th>Reliable-Only</th>
                   <th>Win / Tie / Loss</th>
                   <th>Clarification</th>
                   <th>Reliability</th>
@@ -203,10 +204,11 @@
                 <tr>
                   <td><strong>tc_01_count_admissions</strong><br><span class="muted">How many hospital admissions are in the database?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>0.0%</strong><br><span class="muted">0 of 1 run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B 0/4 avg</strong><br><strong>F 0/4 avg</strong><br><span class="muted">3 kept, 0 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 of 3 run(s)</span></td>
                   <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
@@ -214,10 +216,11 @@
                 <tr>
                   <td><strong>tc_02_admissions_by_type</strong><br><span class="muted">How many admissions are there for each admission type?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 1, zero: 0</span></td>
-                  <td><span class="pill ok">full better</span> 1<br><span class="pill">tie</span> 0<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>0.0%</strong><br><span class="muted">0 of 1 run(s)</span></td>
+                  <td><strong>1.33/4 avg</strong><br><span class="muted">exact: 1, zero: 2</span></td>
+                  <td><strong>1.33/4 avg</strong><br><span class="muted">exact: 1, zero: 2</span></td>
+                  <td><strong>B 1.33/4 avg</strong><br><strong>F 1.33/4 avg</strong><br><span class="muted">3 kept, 0 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 1<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 1</td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 of 3 run(s)</span></td>
                   <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
@@ -225,21 +228,23 @@
                 <tr>
                   <td><strong>tc_03_icu_stays_by_first_careunit</strong><br><span class="muted">How many ICU stays started in each care unit?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B 0/4 avg</strong><br><strong>F 0/4 avg</strong><br><span class="muted">1 kept, 2 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>66.7%</strong><br><span class="muted">2 of 3 run(s)</span></td>
+                  <td><strong>66.7%</strong><br><span class="muted">2 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_04_patient_labs_subject_history</strong><br><span class="muted">Show me lab results for patient 10006.</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B 0/4 avg</strong><br><strong>F 0/4 avg</strong><br><span class="muted">3 kept, 0 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
                   <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
@@ -247,120 +252,131 @@
                 <tr>
                   <td><strong>tc_05_patient_labs_admission_context</strong><br><span class="muted">Show me lab results for patient 10006.</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_06_patient_chart_events_icu_context</strong><br><span class="muted">Show charted measurements for patient 10006 during ICU stays.</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_07_patient_medications_admission_context</strong><br><span class="muted">What medications are associated with patient 10006?</span></td>
                   <td><span class="pill">join-path</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_08_patient_date_ambiguity</strong><br><span class="muted">Show the important dates for patient 10006.</span></td>
                   <td><span class="pill">semantic-column</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_09_length_of_stay_ambiguity</strong><br><span class="muted">How long did patient 10006 stay?</span></td>
                   <td><span class="pill">semantic-column</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_10_first_event_time_ambiguity</strong><br><span class="muted">What was the first event time for patient 10006?</span></td>
                   <td><span class="pill">semantic-column</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B 0/4 avg</strong><br><strong>F 0/4 avg</strong><br><span class="muted">2 kept, 1 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>33.3%</strong><br><span class="muted">1 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_11_most_common_diagnoses</strong><br><span class="muted">What are the 10 most common diagnosis codes with their descriptions?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_12_lab_frequency_by_item</strong><br><span class="muted">Which lab tests are recorded most often?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_13_icu_mortality_by_first_careunit</strong><br><span class="muted">For each first ICU care unit, how many stays were for patients who died in the hospital?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_14_write_operation_request</strong><br><span class="muted">Delete all chart events for patient 10006.</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
 
                 <tr>
                   <td><strong>tc_15_nonexistent_clinical_concept</strong><br><span class="muted">How many ventilator alarms are in the ventilator_alarms table?</span></td>
                   <td><span class="pill">none</span></td>
-                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 1, zero: 0</span></td>
-                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 1, zero: 0</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>0.0%</strong><br><span class="muted">0 of 1 run(s)</span></td>
+                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 3, zero: 0</span></td>
+                  <td><strong>4/4 avg</strong><br><span class="muted">exact: 3, zero: 0</span></td>
+                  <td><strong>B 4/4 avg</strong><br><strong>F 4/4 avg</strong><br><span class="muted">3 kept, 0 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 3<br><span class="pill bad">baseline better</span> 0</td>
+                  <td><strong>0.0%</strong><br><span class="muted">0 of 3 run(s)</span></td>
                   <td><strong>0.0%</strong><br><span class="muted">0 unreliable run(s)</span></td>
                 </tr>
     
@@ -368,11 +384,12 @@
                 <tr>
                   <td><strong>tc_16_underspecified_aggregate</strong><br><span class="muted">Get me the average value.</span></td>
                   <td><span class="pill">underspecified</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 1</span></td>
-                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 0</td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 of 1 run(s)</span></td>
-                  <td><strong>100.0%</strong><br><span class="muted">1 unreliable run(s)</span></td>
+                  <td><strong>2.67/4 avg</strong><br><span class="muted">exact: 2, zero: 1</span></td>
+                  <td><strong>0/4 avg</strong><br><span class="muted">exact: 0, zero: 3</span></td>
+                  <td><strong>B unscored</strong><br><strong>F unscored</strong><br><span class="muted">0 kept, 3 excluded</span></td>
+                  <td><span class="pill ok">full better</span> 0<br><span class="pill">tie</span> 1<br><span class="pill bad">baseline better</span> 2</td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 of 3 run(s)</span></td>
+                  <td><strong>100.0%</strong><br><span class="muted">3 unreliable run(s)</span></td>
                 </tr>
     
               </tbody>
@@ -404,6 +421,22 @@
                   <td class="code">C:\Users\talir\OneDrive\Desktop\GitHub\DB-Whisperer\benchmark\results\mimic_ab_20260707T105849Z.json</td>
                   <td>2026-07-07T10:58:49.971977+00:00</td>
                   <td>2026-07-07T11:34:58.827757+00:00</td>
+                </tr>
+        
+
+                <tr>
+                  <td>20260708T170911Z</td>
+                  <td class="code">C:\Users\talir\OneDrive\Desktop\GitHub\DB-Whisperer\benchmark\results\mimic_ab_20260708T170911Z.json</td>
+                  <td>2026-07-08T17:09:11.164717+00:00</td>
+                  <td>2026-07-08T17:38:48.762801+00:00</td>
+                </tr>
+        
+
+                <tr>
+                  <td>20260708T174012Z</td>
+                  <td class="code">C:\Users\talir\OneDrive\Desktop\GitHub\DB-Whisperer\benchmark\results\mimic_ab_20260708T174012Z.json</td>
+                  <td>2026-07-08T17:40:12.096361+00:00</td>
+                  <td>2026-07-08T18:11:01.160977+00:00</td>
                 </tr>
         </tbody>
             </table>

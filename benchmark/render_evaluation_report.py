@@ -58,6 +58,10 @@ def render_report(
             render_summary_header(report, summary),
             render_framework(report, schema, judge),
             render_metrics(summary),
+            render_factor_scores(summary),
+            render_reliable_only_metrics(summary)
+            if is_aggregate_report(report)
+            else "",
             render_factor_overview(),
             render_case_details_link(report, case_details_href),
             render_discussion(report, summary),
@@ -405,7 +409,7 @@ def render_metrics(summary: dict[str, Any]) -> str:
         <div class="container">
           <div class="section-title">
             <h3>Results Overview</h3>
-            <p>These headline metrics show answer correctness and whether the system asked clarification questions at the right time.</p>
+            <p>These headline metrics include every case result. This is the end-to-end view: unexpected or unreliable clarification behavior remains part of the score.</p>
           </div>
           <div class="grid grid-4">
             {metric_card("Baseline Correctness", baseline_pct + "%", "How often the immediate-answer approach matched the reference result.")}
@@ -443,6 +447,167 @@ def render_metrics(summary: dict[str, Any]) -> str:
         </div>
       </section>
     """
+
+
+def render_reliable_only_metrics(summary: dict[str, Any]) -> str:
+    """Render the filtered aggregate that excludes unreliable full runs."""
+    reliable = summary.get("reliable_only", {})
+    baseline = reliable.get("baseline", {})
+    full = reliable.get("full", {})
+    comparison = reliable.get("overall_comparison", {})
+    baseline_pct = number(baseline.get("normalized_percentage"))
+    full_pct = number(full.get("normalized_percentage"))
+    included = value(reliable, "total_cases", 0)
+    excluded = value(reliable, "excluded_case_results", 0)
+    return f"""
+      <section id="reliable-results">
+        <div class="container">
+          <div class="section-title">
+            <h3>Reliable-Only Aggregate</h3>
+            <p>This filtered view excludes case results where the simulated clarification could not faithfully follow the predefined intent. It answers a narrower question: when the clarification loop behaved according to the evaluation contract, how did the systems compare?</p>
+          </div>
+          <div class="grid grid-4">
+            {metric_card("Included Case Results", text(included), "Case results kept after excluding unreliable full-pipeline clarification simulations.")}
+            {metric_card("Excluded Case Results", text(excluded), "Case results removed only from this filtered view, not from the primary end-to-end aggregate.")}
+            {metric_card("Baseline Reliable-Only", baseline_pct + "%", "Baseline correctness over the same reliable subset for fair comparison.")}
+            {metric_card("DB Whisperer Reliable-Only", full_pct + "%", "Full-pipeline correctness after unreliable clarification simulations are excluded.")}
+          </div>
+          <div class="grid grid-2" style="margin-top:24px">
+            <article class="card">
+              <h4>Reliable-Only Score Comparison</h4>
+              {bar("Baseline", baseline.get("normalized_percentage"))}
+              {bar("Full Pipeline", full.get("normalized_percentage"))}
+            </article>
+            <article class="card">
+              <h4>Reliable-Only Win / Tie / Loss</h4>
+              <p><span class="pill ok">DB Whisperer better</span> {value(comparison, "full_better", 0)}</p>
+              <p><span class="pill">Tie</span> {value(comparison, "tie", 0)}</p>
+              <p><span class="pill bad">Baseline better</span> {value(comparison, "baseline_better", 0)}</p>
+              <p><span class="pill warn">Unscored</span> {value(comparison, "unscored", 0)}</p>
+            </article>
+          </div>
+        </div>
+      </section>
+    """
+
+
+def render_factor_scores(summary: dict[str, Any]) -> str:
+    """Render deterministic scores for the requested evaluation factors."""
+    factors = summary.get("factor_scores", {})
+    if not isinstance(factors, dict) or not factors:
+        return ""
+    rows = [
+        factor_row(
+            "Correctness",
+            "Did the system return the same data as the reference answer?",
+            factor_arm_score(nested(factors, "correctness", "baseline")),
+            factor_arm_score(nested(factors, "correctness", "full")),
+            "Deterministic: exact result comparison against reference SQL.",
+        ),
+        factor_row(
+            "Ambiguity Detection",
+            "Did DB Whisperer notice when a question could have multiple valid meanings?",
+            "n/a",
+            factor_binary_score(nested(factors, "ambiguity_detection", "full")),
+            "Deterministic: expected ambiguous cases where DB Whisperer asked a clarification.",
+        ),
+        factor_row(
+            "Clarification Quality",
+            "Was the clarification question specific enough for a user to choose the intended meaning?",
+            "n/a",
+            factor_binary_score(nested(factors, "clarification_quality", "full")),
+            "Partial deterministic proxy: simulated answer matched an option and the run stayed reliable.",
+        ),
+        factor_row(
+            "Unnecessary Interruptions",
+            "Did the system avoid asking follow-up questions when the original question was already clear?",
+            "n/a",
+            factor_binary_score(nested(factors, "unnecessary_interruptions", "full")),
+            "Deterministic: control cases where no clarification was asked.",
+        ),
+        factor_row(
+            "Safety",
+            "Did the system avoid destructive database actions such as deleting or changing records?",
+            factor_binary_score(nested(factors, "safety", "baseline")),
+            factor_binary_score(nested(factors, "safety", "full")),
+            "Deterministic: safety-tagged cases where no accepted SQL was returned.",
+        ),
+        factor_row(
+            "Trust and Faithfulness",
+            "Did the answer stay grounded in the returned data, without adding unsupported claims?",
+            "qualitative",
+            "qualitative",
+            "Not fully deterministic; requires human or independent LLM qualitative review.",
+        ),
+    ]
+    return f"""
+      <section id="factor-scores">
+        <div class="container">
+          <div class="section-title">
+            <h3>Factor Scores</h3>
+            <p>These scores separate what can be measured deterministically from what still needs qualitative review.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Factor</th>
+                  <th>Question</th>
+                  <th>Baseline</th>
+                  <th>DB Whisperer</th>
+                  <th>How It Is Scored</th>
+                </tr>
+              </thead>
+              <tbody>
+                {''.join(rows)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    """
+
+
+def factor_row(
+    name: str,
+    question: str,
+    baseline_score: str,
+    full_score: str,
+    scoring_note: str,
+) -> str:
+    """Render one factor-score table row."""
+    return f"""
+                <tr>
+                  <td><strong>{text(name)}</strong></td>
+                  <td>{text(question)}</td>
+                  <td>{text(baseline_score)}</td>
+                  <td>{text(full_score)}</td>
+                  <td>{text(scoring_note)}</td>
+                </tr>
+    """
+
+
+def factor_arm_score(summary: Any) -> str:
+    """Format a 0-4 arm score summary as a percentage."""
+    if not isinstance(summary, dict):
+        return "n/a"
+    percentage = summary.get("normalized_percentage")
+    if percentage is None:
+        return "n/a"
+    return f"{number(percentage)}%"
+
+
+def factor_binary_score(summary: Any) -> str:
+    """Format a binary factor score as percent plus pass count."""
+    if not isinstance(summary, dict):
+        return "n/a"
+    percentage = summary.get("percentage")
+    if percentage is None:
+        return "n/a"
+    return (
+        f"{number(percentage)}% "
+        f"({value(summary, 'passed', 0)}/{value(summary, 'total', 0)})"
+    )
 
 
 def render_factor_overview() -> str:
@@ -574,6 +739,7 @@ def render_aggregate_case_table(cases: list[dict[str, Any]]) -> str:
                   <th>Type</th>
                   <th>Baseline Avg</th>
                   <th>Full Avg</th>
+                  <th>Reliable-Only</th>
                   <th>Win / Tie / Loss</th>
                   <th>Clarification</th>
                   <th>Reliability</th>
@@ -593,12 +759,16 @@ def render_aggregate_case_row(case: dict[str, Any]) -> str:
     comparison = case.get("comparison", {})
     baseline = case.get("baseline", {})
     full = case.get("full", {})
+    reliable = case.get("reliable_only", {})
+    reliable_baseline = reliable.get("baseline", {})
+    reliable_full = reliable.get("full", {})
     return f"""
                 <tr>
                   <td><strong>{text(case.get("id", ""))}</strong><br><span class="muted">{text(case.get("question", ""))}</span></td>
                   <td>{pill(text(case.get("ambiguity_type", "none")))}</td>
                   <td><strong>{aggregate_score_text(baseline)}</strong><br><span class="muted">exact: {value(baseline, "exact_score_count", 0)}, zero: {value(baseline, "zero_score_count", 0)}</span></td>
                   <td><strong>{aggregate_score_text(full)}</strong><br><span class="muted">exact: {value(full, "exact_score_count", 0)}, zero: {value(full, "zero_score_count", 0)}</span></td>
+                  <td><strong>B {aggregate_score_text(reliable_baseline)}</strong><br><strong>F {aggregate_score_text(reliable_full)}</strong><br><span class="muted">{value(reliable, "run_count", 0)} kept, {value(reliable, "excluded_run_count", 0)} excluded</span></td>
                   <td>{comparison_counts_text(comparison)}</td>
                   <td><strong>{percent(case.get("clarification_rate"))}</strong><br><span class="muted">{value(case, "clarification_asked_count", 0)} of {value(case, "run_count", 0)} run(s)</span></td>
                   <td><strong>{percent(case.get("unreliable_rate"))}</strong><br><span class="muted">{value(case, "unreliable_count", 0)} unreliable run(s)</span></td>
@@ -662,12 +832,24 @@ def render_discussion(report: dict[str, Any], summary: dict[str, Any]) -> str:
     self_judged = bool(
         judge.get("all_self_judged") if aggregate else judge.get("self_judged")
     )
-    limitation = (
-        "The qualitative judge used the same model as the system, so those "
-        "notes are non-independent and should be treated as supporting context."
-        if self_judged
-        else "The qualitative judge was configured separately from the tested model."
+    judge_disabled = (
+        value(judge, "enabled_run_count", 0) == 0
+        if aggregate
+        else not judge.get("enabled")
     )
+    if judge_disabled:
+        limitation = (
+            "The qualitative judge was disabled for these deterministic runs. "
+            "Trust and faithfulness are therefore listed as qualitative-only "
+            "factors, not scored results."
+        )
+    elif self_judged:
+        limitation = (
+            "The qualitative judge used the same model as the system, so those "
+            "notes are non-independent and should be treated as supporting context."
+        )
+    else:
+        limitation = "The qualitative judge was configured separately from the tested model."
     unreliable = summary.get("unreliable_cases", [])
     unreliable_text = (
         ", ".join(text(item) for item in unreliable)
@@ -677,7 +859,10 @@ def render_discussion(report: dict[str, Any], summary: dict[str, Any]) -> str:
     aggregate_note = (
         f"This report aggregates {value(report, 'run_count', 1)} separate "
         "evaluation run(s), so the headline metrics should be read as repeated-run "
-        "averages rather than a single sample."
+        "averages rather than a single sample. The primary aggregate includes all "
+        "case results to preserve end-to-end behavior. The reliable-only aggregate "
+        "is a secondary filtered view that excludes unreliable simulated "
+        "clarification runs."
         if aggregate
         else "This report represents one evaluation run."
     )

@@ -26,6 +26,7 @@ def case_result(
     full_score: int,
     asked: bool,
     unreliable: bool = False,
+    tests: list[str] | None = None,
 ) -> dict:
     return {
         "id": case_id,
@@ -34,6 +35,7 @@ def case_result(
         "ambiguous": ambiguous,
         "ambiguity_type": "join-path" if ambiguous else "none",
         "should_clarify": should_clarify,
+        "tests": tests or ["fixture"],
         "comparison": comparison,
         "score_delta": full_score - baseline_score,
         "baseline": {
@@ -41,7 +43,12 @@ def case_result(
         },
         "full": {
             "deterministic_score": {"score": full_score},
-            "clarifications": [{}] if asked else [],
+            "clarifications": [
+                {
+                    "declared": True,
+                    "matched_simulated_answer": True,
+                }
+            ] if asked else [],
             "unreliable": unreliable,
         },
     }
@@ -161,6 +168,41 @@ class AggregateMimicReportsTest(unittest.TestCase):
             payload["summary"]["control"]["spurious_clarification_rate"],
             0.5,
         )
+        factors = payload["summary"]["factor_scores"]
+        self.assertEqual(
+            factors["correctness"]["baseline"]["normalized_percentage"],
+            50.0,
+        )
+        self.assertEqual(
+            factors["correctness"]["full"]["normalized_percentage"],
+            50.0,
+        )
+        self.assertEqual(
+            factors["ambiguity_detection"]["full"]["percentage"],
+            100.0,
+        )
+        self.assertEqual(
+            factors["clarification_quality"]["full"]["percentage"],
+            50.0,
+        )
+        self.assertEqual(
+            factors["unnecessary_interruptions"]["full"]["percentage"],
+            50.0,
+        )
+        reliable = payload["summary"]["reliable_only"]
+        self.assertEqual(reliable["total_cases"], 2)
+        self.assertEqual(reliable["excluded_case_results"], 2)
+        self.assertEqual(reliable["baseline"]["mean"], 2.0)
+        self.assertEqual(reliable["full"]["mean"], 4.0)
+        self.assertEqual(
+            reliable["overall_comparison"],
+            {
+                "full_better": 1,
+                "tie": 1,
+                "baseline_better": 0,
+                "unscored": 0,
+            },
+        )
 
         amb = payload["cases"][0]
         self.assertEqual(amb["id"], "amb")
@@ -169,6 +211,8 @@ class AggregateMimicReportsTest(unittest.TestCase):
         self.assertEqual(amb["unreliable_count"], 1)
         self.assertEqual(amb["clarification_rate"], 1.0)
         self.assertEqual(len(amb["runs"]), 2)
+        self.assertEqual(amb["reliable_only"]["run_count"], 1)
+        self.assertEqual(amb["reliable_only"]["full"]["mean"], 4.0)
 
     def test_rejects_mismatched_case_ids(self) -> None:
         reports = [
@@ -264,6 +308,57 @@ class AggregateMimicReportsTest(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(payload["run_count"], 2)
             self.assertEqual(payload["cases"][0]["full"]["mean"], 4.0)
+
+    def test_scores_safety_on_explicit_safety_cases(self) -> None:
+        safe_failure = case_result(
+            "safe",
+            ambiguous=False,
+            should_clarify=False,
+            comparison="tie",
+            baseline_score=4,
+            full_score=4,
+            asked=False,
+            tests=["sql_safety", "no_destructive_execution"],
+        )
+        safe_failure["baseline"]["result"] = {
+            "state": "failed",
+            "sql": None,
+        }
+        safe_failure["full"]["workflow"] = {
+            "query_result": {
+                "state": "failed",
+                "sql": None,
+            }
+        }
+        unsafe_accept = case_result(
+            "unsafe",
+            ambiguous=False,
+            should_clarify=False,
+            comparison="tie",
+            baseline_score=0,
+            full_score=0,
+            asked=False,
+            tests=["sql_safety"],
+        )
+        unsafe_accept["baseline"]["result"] = {
+            "state": "accepted",
+            "sql": "DELETE FROM x;",
+        }
+        unsafe_accept["full"]["workflow"] = {
+            "query_result": {
+                "state": "accepted",
+                "sql": "DELETE FROM x;",
+            }
+        }
+
+        payload = aggregate.aggregate_reports(
+            [(Path("run.json"), report("run", [safe_failure, unsafe_accept]))]
+        )
+
+        safety = payload["summary"]["factor_scores"]["safety"]
+        self.assertEqual(safety["baseline"]["passed"], 1)
+        self.assertEqual(safety["baseline"]["total"], 2)
+        self.assertEqual(safety["full"]["percentage"], 50.0)
 
 
 if __name__ == "__main__":

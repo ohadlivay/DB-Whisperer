@@ -167,6 +167,116 @@ The next operational step is to collect the remaining full-run reports until
 there are 10 successful deterministic runs, aggregate those 10 reports, and
 render the final aggregate HTML report.
 
+## Current Aggregate Progress
+
+The deterministic-only repeated-run phase has started. The LLM judge remains
+disabled with `--skip-judge`, so these results are based only on exact
+execution-result comparison against the reference SQL.
+
+Completed full deterministic runs:
+
+1. `benchmark/results/mimic_ab_20260707T105849Z.json`
+2. `benchmark/results/mimic_ab_20260708T170911Z.json`
+3. `benchmark/results/mimic_ab_20260708T174012Z.json`
+
+Current aggregate artifact:
+
+- `benchmark/results/mimic_ab_aggregate_current.json`
+
+Current aggregate HTML pages:
+
+- `docs/evaluation_report.html`
+- `docs/evaluation_report_cases.html`
+
+Current aggregate summary after 3 of 10 planned runs:
+
+- Total case results: 48.
+- Baseline correctness: 12.5%.
+- Full-pipeline correctness: 8.33%.
+- Full pipeline better: 1 case result.
+- Tie: 44 case results.
+- Baseline better: 3 case results.
+- Ambiguous expected clarification rate: 1.0.
+- Control-case spurious clarification rate: 0.5833.
+- Cases with at least one unreliable run: 12.
+
+The report now shows two aggregate calculations:
+
+- Primary end-to-end aggregate: includes all case results, including cases
+  where DB Whisperer asked unexpected, repeated, or unmatched clarifications.
+  This measures the system as it actually behaved.
+- Reliable-only aggregate: excludes case results where the simulated
+  clarification could not faithfully follow the predefined intent. This answers
+  the narrower question of how the systems compare when the clarification loop
+  follows the evaluation contract.
+
+Current reliable-only aggregate after 3 runs:
+
+- Included reliable case results: 15.
+- Excluded unreliable case results: 33.
+- Baseline reliable-only correctness: 26.67%.
+- Full-pipeline reliable-only correctness: 26.67%.
+- Reliable-only full pipeline better: 1 case result.
+- Reliable-only tie: 13 case results.
+- Reliable-only baseline better: 1 case result.
+
+Remaining before the final report: 7 additional successful full deterministic
+runs.
+
+Comparison checkpoint to revisit after 10 runs: at 3 runs, the baseline is
+ahead on deterministic correctness, while DB Whisperer is consistently asking
+clarifications for ambiguous cases but is also over-asking on control cases.
+The final 10-run report should explicitly compare whether these interim trends
+hold, improve, or reverse.
+
+Conclusion checkpoint to revisit after 10 runs: if the unreliable-case rate
+remains high, this should be treated as a central evaluation finding, not a
+minor limitation. The conclusion should state that the current ambiguity layer
+often leaves the expected clarification path, which limits the system's ability
+to demonstrate reliable improvement over the baseline.
+
+Requested evaluation factors:
+
+- Correctness: did the system return the same data as the reference answer?
+- Ambiguity Detection: did DB Whisperer notice when a question could have
+  multiple valid meanings?
+- Clarification Quality: was the clarification question specific enough for a
+  user to choose the intended meaning?
+- Unnecessary Interruptions: did the system avoid asking follow-up questions
+  when the original question was already clear?
+- Safety: did the system avoid destructive database actions such as deleting or
+  changing records?
+- Trust and Faithfulness: did the answer stay grounded in the returned data,
+  without adding unsupported claims?
+
+Deterministic factor scoring status:
+
+- Correctness is scored deterministically for both baseline and full pipeline
+  using exact result comparison against the reference SQL result.
+- Ambiguity Detection is scored deterministically for the full pipeline as the
+  percentage of expected-ambiguous cases where DB Whisperer asked a
+  clarification.
+- Clarification Quality is scored with a partial deterministic proxy: the first
+  clarification must match the simulated user answer and the run must not be
+  marked unreliable. Human or independent-LLM review may still be useful for
+  wording quality.
+- Unnecessary Interruption avoidance is scored deterministically as the
+  percentage of control cases where DB Whisperer did not ask a clarification.
+- Safety is scored deterministically on cases explicitly tagged as SQL
+  safety/destructive-operation tests, by checking whether the arm avoided
+  accepted SQL.
+- Trust and Faithfulness are not fully deterministic and should be treated as
+  qualitative-only unless a human or independent LLM judge is added later.
+
+Current deterministic factor scores after 3 runs:
+
+- Correctness: baseline 12.5%, full pipeline 8.33%.
+- Ambiguity Detection: full pipeline 100.0%.
+- Clarification Quality deterministic proxy: full pipeline 20.83%.
+- Unnecessary Interruption avoidance: full pipeline 41.67%.
+- Safety: baseline 0.0%, full pipeline 0.0%.
+- Trust and Faithfulness: qualitative-only, not scored in deterministic runs.
+
 ## Planned Remaining Sequence
 
 1. Finish and verify the aggregation script.

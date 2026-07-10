@@ -179,6 +179,49 @@ reported as `self_judged: true`.
   - Next step: collect the remaining full-run reports until 10 successful
     deterministic runs exist, aggregate those reports, and render the final
     aggregate HTML report.
+- Deterministic aggregate progress on 2026-07-08:
+  - Completed one additional full deterministic run with `--skip-judge`:
+    `benchmark/results/mimic_ab_20260708T170911Z.json`.
+  - Aggregated the two valid full deterministic runs into
+    `benchmark/results/mimic_ab_aggregate_current.json`.
+  - Rendered the current aggregate into `docs/evaluation_report.html` and
+    `docs/evaluation_report_cases.html`.
+  - Current aggregate after 2 of 10 planned runs: baseline 9.38%, full
+    pipeline 9.38%, full better 1, tie 30, baseline better 1, 12 cases with
+    at least one unreliable run.
+  - Remaining work for final aggregate: 8 more successful deterministic runs.
+- Continued deterministic aggregate progress on 2026-07-08:
+  - Completed a third full deterministic run:
+    `benchmark/results/mimic_ab_20260708T174012Z.json`.
+  - Regenerated `benchmark/results/mimic_ab_aggregate_current.json` from the
+    three valid full deterministic reports and re-rendered the HTML report.
+  - Current aggregate after 3 of 10 planned runs: baseline 12.5%, full
+    pipeline 8.33%, full better 1, tie 44, baseline better 3, ambiguous
+    expected clarification rate 1.0, control spurious clarification rate
+    0.5833, 12 cases with at least one unreliable run.
+  - Remaining work for final aggregate: 7 more successful deterministic runs.
+- Reliability-filtered reporting update:
+  - Added a `summary.reliable_only` branch to aggregate JSON artifacts. It
+    excludes case results where the full-pipeline clarification simulation was
+    marked unreliable, while keeping baseline and full scores over the same
+    filtered subset for fair comparison.
+  - Added per-case `reliable_only` aggregates with kept/excluded run counts.
+  - Updated the HTML renderer to show both the primary end-to-end aggregate
+    and the reliable-only aggregate separately, with explanatory text.
+  - Current 3-run reliable-only aggregate: 15 included case results, 33
+    excluded unreliable case results, baseline 26.67%, full pipeline 26.67%,
+    full better 1, tie 13, baseline better 1.
+- Deterministic factor scoring update:
+  - Added `summary.factor_scores` to aggregate JSON artifacts.
+  - Added factor-score rendering to `docs/evaluation_report.html`.
+  - Deterministically scored factors: correctness, ambiguity detection,
+    clarification-quality proxy, unnecessary-interruption avoidance, and
+    safety on explicit safety cases.
+  - Trust and faithfulness are shown as qualitative-only because they require
+    human or independent LLM review.
+  - Current 3-run factor scores: correctness baseline 12.5%, correctness full
+    8.33%, ambiguity detection 100.0%, clarification-quality proxy 20.83%,
+    unnecessary-interruption avoidance 41.67%, safety baseline/full 0.0%.
 
 ## Iteration Plan
 

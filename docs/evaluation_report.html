@@ -182,8 +182,8 @@
             </article>
             <article class="card metric">
               <p class="metric-label">Total Case Results</p>
-              <p class="metric-value">16</p>
-              <p class="metric-note">1 run(s) across the evaluation cases</p>
+              <p class="metric-value">48</p>
+              <p class="metric-note">3 run(s) across the evaluation cases</p>
             </article>
           </div>
         </div>
@@ -218,7 +218,7 @@
             </article>
             <article class="card">
               <h4>Judge</h4>
-              <p>Qualitative notes: <strong>0 enabled / 1 disabled run(s)</strong></p>
+              <p>Qualitative notes: <strong>0 enabled / 3 disabled run(s)</strong></p>
               <p>Same model judged itself: <strong>no</strong></p>
               <p class="code">not used</p>
             </article>
@@ -235,20 +235,20 @@
         <div class="container">
           <div class="section-title">
             <h3>Results Overview</h3>
-            <p>These headline metrics show answer correctness and whether the system asked clarification questions at the right time.</p>
+            <p>These headline metrics include every case result. This is the end-to-end view: unexpected or unreliable clarification behavior remains part of the score.</p>
           </div>
           <div class="grid grid-4">
             
             <article class="card metric">
               <p class="metric-label">Baseline Correctness</p>
-              <p class="metric-value">6.25%</p>
+              <p class="metric-value">12.5%</p>
               <p class="metric-note">How often the immediate-answer approach matched the reference result.</p>
             </article>
     
             
             <article class="card metric">
               <p class="metric-label">DB Whisperer Correctness</p>
-              <p class="metric-value">12.5%</p>
+              <p class="metric-value">8.33%</p>
               <p class="metric-note">How often the clarification-aware system matched the reference result.</p>
             </article>
     
@@ -262,7 +262,7 @@
             
             <article class="card metric">
               <p class="metric-label">Unneeded Clarifications</p>
-              <p class="metric-value">62.5%</p>
+              <p class="metric-value">58.3%</p>
               <p class="metric-note">How often DB Whisperer asked when the question was already clear.</p>
             </article>
     
@@ -272,36 +272,174 @@
               <h4>Score Comparison</h4>
               
               <div class="bar-row">
-                <div class="bar-label"><span>Baseline</span><span>6.25%</span></div>
-                <div class="bar-track"><div class="bar-fill" style="width:6.25%"></div></div>
+                <div class="bar-label"><span>Baseline</span><span>12.5%</span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:12.5%"></div></div>
               </div>
     
               
               <div class="bar-row">
-                <div class="bar-label"><span>Full Pipeline</span><span>12.5%</span></div>
-                <div class="bar-track"><div class="bar-fill" style="width:12.5%"></div></div>
+                <div class="bar-label"><span>Full Pipeline</span><span>8.33%</span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:8.33%"></div></div>
               </div>
     
             </article>
             <article class="card">
               <h4>Win / Tie / Loss</h4>
               <p><span class="pill ok">DB Whisperer better</span> 1</p>
-              <p><span class="pill">Tie</span> 15</p>
-              <p><span class="pill bad">Baseline better</span> 0</p>
+              <p><span class="pill">Tie</span> 44</p>
+              <p><span class="pill bad">Baseline better</span> 3</p>
               <p><span class="pill warn">Unscored</span> 0</p>
             </article>
           </div>
           <div class="grid grid-2" style="margin-top:24px">
             <article class="card">
               <h4>Score Stability</h4>
-              <p>Baseline score spread: <strong>0.97 points</strong></p>
-              <p>Full pipeline score spread: <strong>1.32 points</strong></p>
+              <p>Baseline score spread: <strong>1.32 points</strong></p>
+              <p>Full pipeline score spread: <strong>1.11 points</strong></p>
               <p class="muted">For aggregate reports, spread is the population standard deviation across all case results. For single-run reports it may be unavailable.</p>
             </article>
             <article class="card">
               <h4>Reliability</h4>
               <p>Cases with unreliable clarification simulation: <strong>12</strong></p>
               <p class="muted">Unreliable means the simulated user had to answer an unexpected clarification, repeated clarification, or unmatched option.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+    
+
+      <section id="factor-scores">
+        <div class="container">
+          <div class="section-title">
+            <h3>Factor Scores</h3>
+            <p>These scores separate what can be measured deterministically from what still needs qualitative review.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Factor</th>
+                  <th>Question</th>
+                  <th>Baseline</th>
+                  <th>DB Whisperer</th>
+                  <th>How It Is Scored</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+                <tr>
+                  <td><strong>Correctness</strong></td>
+                  <td>Did the system return the same data as the reference answer?</td>
+                  <td>12.5%</td>
+                  <td>8.33%</td>
+                  <td>Deterministic: exact result comparison against reference SQL.</td>
+                </tr>
+    
+                <tr>
+                  <td><strong>Ambiguity Detection</strong></td>
+                  <td>Did DB Whisperer notice when a question could have multiple valid meanings?</td>
+                  <td>n/a</td>
+                  <td>100% (24/24)</td>
+                  <td>Deterministic: expected ambiguous cases where DB Whisperer asked a clarification.</td>
+                </tr>
+    
+                <tr>
+                  <td><strong>Clarification Quality</strong></td>
+                  <td>Was the clarification question specific enough for a user to choose the intended meaning?</td>
+                  <td>n/a</td>
+                  <td>20.83% (5/24)</td>
+                  <td>Partial deterministic proxy: simulated answer matched an option and the run stayed reliable.</td>
+                </tr>
+    
+                <tr>
+                  <td><strong>Unnecessary Interruptions</strong></td>
+                  <td>Did the system avoid asking follow-up questions when the original question was already clear?</td>
+                  <td>n/a</td>
+                  <td>41.67% (10/24)</td>
+                  <td>Deterministic: control cases where no clarification was asked.</td>
+                </tr>
+    
+                <tr>
+                  <td><strong>Safety</strong></td>
+                  <td>Did the system avoid destructive database actions such as deleting or changing records?</td>
+                  <td>0% (0/3)</td>
+                  <td>0% (0/3)</td>
+                  <td>Deterministic: safety-tagged cases where no accepted SQL was returned.</td>
+                </tr>
+    
+                <tr>
+                  <td><strong>Trust and Faithfulness</strong></td>
+                  <td>Did the answer stay grounded in the returned data, without adding unsupported claims?</td>
+                  <td>qualitative</td>
+                  <td>qualitative</td>
+                  <td>Not fully deterministic; requires human or independent LLM qualitative review.</td>
+                </tr>
+    
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    
+
+      <section id="reliable-results">
+        <div class="container">
+          <div class="section-title">
+            <h3>Reliable-Only Aggregate</h3>
+            <p>This filtered view excludes case results where the simulated clarification could not faithfully follow the predefined intent. It answers a narrower question: when the clarification loop behaved according to the evaluation contract, how did the systems compare?</p>
+          </div>
+          <div class="grid grid-4">
+            
+            <article class="card metric">
+              <p class="metric-label">Included Case Results</p>
+              <p class="metric-value">15</p>
+              <p class="metric-note">Case results kept after excluding unreliable full-pipeline clarification simulations.</p>
+            </article>
+    
+            
+            <article class="card metric">
+              <p class="metric-label">Excluded Case Results</p>
+              <p class="metric-value">33</p>
+              <p class="metric-note">Case results removed only from this filtered view, not from the primary end-to-end aggregate.</p>
+            </article>
+    
+            
+            <article class="card metric">
+              <p class="metric-label">Baseline Reliable-Only</p>
+              <p class="metric-value">26.67%</p>
+              <p class="metric-note">Baseline correctness over the same reliable subset for fair comparison.</p>
+            </article>
+    
+            
+            <article class="card metric">
+              <p class="metric-label">DB Whisperer Reliable-Only</p>
+              <p class="metric-value">26.67%</p>
+              <p class="metric-note">Full-pipeline correctness after unreliable clarification simulations are excluded.</p>
+            </article>
+    
+          </div>
+          <div class="grid grid-2" style="margin-top:24px">
+            <article class="card">
+              <h4>Reliable-Only Score Comparison</h4>
+              
+              <div class="bar-row">
+                <div class="bar-label"><span>Baseline</span><span>26.67%</span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:26.67%"></div></div>
+              </div>
+    
+              
+              <div class="bar-row">
+                <div class="bar-label"><span>Full Pipeline</span><span>26.67%</span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:26.67%"></div></div>
+              </div>
+    
+            </article>
+            <article class="card">
+              <h4>Reliable-Only Win / Tie / Loss</h4>
+              <p><span class="pill ok">DB Whisperer better</span> 1</p>
+              <p><span class="pill">Tie</span> 13</p>
+              <p><span class="pill bad">Baseline better</span> 1</p>
+              <p><span class="pill warn">Unscored</span> 0</p>
             </article>
           </div>
         </div>
@@ -361,7 +499,7 @@
           <div class="card">
             <h3 style="margin-top:0">Detailed Case Results</h3>
             <p>The main report keeps the overview readable. Detailed case-level rows are available separately, including generated queries, clarification choices, scores, and judge notes.</p>
-            <p class="muted">This aggregate report contains 16 case summaries across 1 run(s). The detail page shows per-case averages, clarification rates, reliability rates, and per-run scores.</p>
+            <p class="muted">This aggregate report contains 16 case summaries across 3 run(s). The detail page shows per-case averages, clarification rates, reliability rates, and per-run scores.</p>
             <a class="button" href="evaluation_report_cases.html">View Detailed Case Results</a>
           </div>
         </div>
@@ -378,13 +516,13 @@
             <article class="card">
               <h4>Interpretation</h4>
               <p>The central comparison is whether explicit ambiguity detection improves results on ambiguous MIMIC questions without adding unnecessary clarifications to control cases.</p>
-              <p>This report aggregates 1 separate evaluation run(s), so the headline metrics should be read as repeated-run averages rather than a single sample.</p>
+              <p>This report aggregates 3 separate evaluation run(s), so the headline metrics should be read as repeated-run averages rather than a single sample. The primary aggregate includes all case results to preserve end-to-end behavior. The reliable-only aggregate is a secondary filtered view that excludes unreliable simulated clarification runs.</p>
               <p>A reference answer query is a query written in advance by the evaluator. The benchmark runs that query and compares DB Whisperer's output to the reference result.</p>
               <p>Unreliable cases: <span class="code">tc_03_icu_stays_by_first_careunit, tc_05_patient_labs_admission_context, tc_06_patient_chart_events_icu_context, tc_07_patient_medications_admission_context, tc_08_patient_date_ambiguity, tc_09_length_of_stay_ambiguity, tc_10_first_event_time_ambiguity, tc_11_most_common_diagnoses, tc_12_lab_frequency_by_item, tc_13_icu_mortality_by_first_careunit, tc_14_write_operation_request, tc_16_underspecified_aggregate</span></p>
             </article>
             <article class="card">
               <h4>Limitations</h4>
-              <p>The qualitative judge was configured separately from the tested model.</p>
+              <p>The qualitative judge was disabled for these deterministic runs. Trust and faithfulness are therefore listed as qualitative-only factors, not scored results.</p>
               <p>The automatic comparison is strict. If two answers are logically similar but formatted differently, the page may show that as a mismatch until a more flexible comparison layer is added.</p>
             </article>
           </div>

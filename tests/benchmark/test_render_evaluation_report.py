@@ -148,6 +148,44 @@ def aggregate_fixture_report() -> dict:
                 "spurious_clarification_rate": 0.625,
             },
             "unreliable_cases": ["tc_03"],
+            "factor_scores": {
+                "correctness": {
+                    "baseline": {"normalized_percentage": 6.25},
+                    "full": {"normalized_percentage": 12.5},
+                },
+                "ambiguity_detection": {
+                    "full": {"percentage": 100.0, "passed": 8, "total": 8},
+                },
+                "clarification_quality": {
+                    "full": {"percentage": 50.0, "passed": 4, "total": 8},
+                },
+                "unnecessary_interruptions": {
+                    "full": {"percentage": 37.5, "passed": 3, "total": 8},
+                },
+                "safety": {
+                    "baseline": {"percentage": 100.0, "passed": 1, "total": 1},
+                    "full": {"percentage": 100.0, "passed": 1, "total": 1},
+                },
+                "trust_and_faithfulness": {
+                    "deterministic": False,
+                },
+            },
+            "reliable_only": {
+                "total_cases": 16,
+                "excluded_case_results": 16,
+                "baseline": {
+                    "normalized_percentage": 12.5,
+                },
+                "full": {
+                    "normalized_percentage": 25.0,
+                },
+                "overall_comparison": {
+                    "full_better": 2,
+                    "tie": 14,
+                    "baseline_better": 0,
+                    "unscored": 0,
+                },
+            },
         },
         "source_reports": [
             {
@@ -189,6 +227,26 @@ def aggregate_fixture_report() -> dict:
                 "unreliable_count": 1,
                 "unreliable_rate": 0.5,
                 "run_count": 2,
+                "reliable_only": {
+                    "run_count": 1,
+                    "excluded_run_count": 1,
+                    "baseline": {
+                        "mean": 0.0,
+                        "exact_score_count": 0,
+                        "zero_score_count": 1,
+                    },
+                    "full": {
+                        "mean": 4.0,
+                        "exact_score_count": 1,
+                        "zero_score_count": 0,
+                    },
+                    "comparison": {
+                        "full_better": 1,
+                        "tie": 0,
+                        "baseline_better": 0,
+                        "unscored": 0,
+                    },
+                },
             }
         ],
     }
@@ -220,6 +278,14 @@ class RenderReportTest(unittest.TestCase):
         self.assertIn("12.5%", html)
         self.assertIn("Score Stability", html)
         self.assertIn("1.2 points", html)
+        self.assertIn("Reliable-Only Aggregate", html)
+        self.assertIn("Excluded Case Results", html)
+        self.assertIn("25.0%", html)
+        self.assertIn("Factor Scores", html)
+        self.assertIn("Ambiguity Detection", html)
+        self.assertIn("100% (8/8)", html)
+        self.assertIn("Trust and Faithfulness", html)
+        self.assertIn("qualitative", html)
 
     def test_render_aggregate_case_details(self) -> None:
         html = renderer.render_case_details_report(aggregate_fixture_report())
@@ -227,6 +293,8 @@ class RenderReportTest(unittest.TestCase):
         self.assertIn("Per-Case Aggregate Results", html)
         self.assertIn("tc_03", html)
         self.assertIn("2/4 avg", html)
+        self.assertIn("F 4/4 avg", html)
+        self.assertIn("1 kept, 1 excluded", html)
         self.assertIn("50.0%", html)
         self.assertIn("Source Runs", html)
         self.assertIn("run-1", html)
