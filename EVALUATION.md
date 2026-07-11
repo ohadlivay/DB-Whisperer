@@ -1,559 +1,781 @@
 # DBWhisperer Evaluation Method
 
-This document defines the evaluation method for DBWhisperer — a natural language to SQL system built on LangChain and LangGraph. It is structured as a benchmark suite of human-like queries paired with expected SQL, relevant schema elements, and expected system behavior. The goal is to give an implementor or automated test harness everything needed to run and score the system end-to-end.
+This document defines the evaluation method for the current DBWhisperer system: a Streamlit/Python application that loads CSV files into DuckDB, generates DuckDB SQL through OpenRouter, validates read-only SQL, executes the query, and uses an explicit ambiguity layer before or after SQL generation.
+
+The evaluation is a benchmark suite over the bundled MIMIC-III clinical demo database. Its purpose is to compare two architectures:
+
+- **Baseline:** single-pass `QueryService`, which goes directly from the user question to SQL.
+- **Full pipeline:** `ApplicationService`, with join-path ambiguity detection, semantic-column ambiguity detection, candidate SQL generation/execution, and candidate-comparison ambiguity judging.
+
+The research question is whether the full pipeline improves interpretive accuracy and user trust on realistic clinical database questions, especially when the MIMIC schema supports multiple valid interpretations.
 
 ---
 
-## How to Use This Document
+## Current Architecture Under Evaluation
 
-Each test case specifies:
+DBWhisperer does not use the older LangGraph HTTP flow described in previous evaluation drafts. The benchmark should call the Python services directly.
 
-- **Query** — a natural language question written the way a real user would type it
-- **Schema elements** — the tables and columns the system needs to reason over
-- **Expected SQL** — the correct SQL the system should generate (or a functionally equivalent form)
-- **Expected behavior** — what the full pipeline should do, including routing, approval gates, and NL response
-- **Tests** — which evaluation dimension(s) this case covers
-- **Clarification behavior** (where applicable) — what the system *should ideally* ask before proceeding
+The expected implementation shape is:
 
-Scoring can be done at multiple levels: SQL exact match (EM), SQL execution correctness (does the result match expected output), routing correctness (relevant vs. not_relevant), and NL response faithfulness.
+1. Load the MIMIC-III demo CSV directory through the ETL component.
+2. Reuse the returned `SchemaMetadata`, including discovered relationships.
+3. For each test case, run the baseline arm through `QueryService`.
+4. Run the full arm through `ApplicationService`.
+5. If the full arm returns `ComponentState.PENDING`, answer the clarification with the case's declared simulated-user answer and continue the workflow.
+6. Execute each case's gold SQL against the same DuckDB database.
+7. Compare generated results with the gold result.
+8. Record generated SQL, clarification behavior, result match, failures, and scoring notes.
+
+The GUI is useful for manual inspection, but the main evaluation should be a reproducible Python harness. The existing `benchmark/ab_run.py` is the closest current pattern, though its cases must move from BikeStores to MIMIC-III.
 
 ---
 
-## Reference Schema
+## Required Reference Schema
 
-All test cases assume the following schema. Connect a database with this structure before running the suite.
+All evaluation cases must use the bundled MIMIC-III clinical demo dataset:
 
-```sql
--- Core tables
-CREATE TABLE customers (
-  id        SERIAL PRIMARY KEY,
-  name      TEXT NOT NULL,
-  email     TEXT UNIQUE NOT NULL,
-  region    TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE products (
-  id          SERIAL PRIMARY KEY,
-  name        TEXT NOT NULL,
-  price       NUMERIC(10,2),
-  category_id INT REFERENCES categories(id)
-);
-
-CREATE TABLE categories (
-  id   SERIAL PRIMARY KEY,
-  name TEXT NOT NULL
-);
-
-CREATE TABLE orders (
-  id           SERIAL PRIMARY KEY,
-  customer_id  INT REFERENCES customers(id),
-  status       TEXT,
-  total_amount NUMERIC(10,2),
-  region       TEXT,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE order_items (
-  id         SERIAL PRIMARY KEY,
-  order_id   INT REFERENCES orders(id),
-  product_id INT REFERENCES products(id),
-  quantity   INT,
-  price      NUMERIC(10,2)
-);
-
-CREATE TABLE employees (
-  id                SERIAL PRIMARY KEY,
-  name              TEXT NOT NULL,
-  salary            NUMERIC(10,2),
-  performance_score NUMERIC(5,2),
-  hire_date         DATE,
-  department_id     INT REFERENCES departments(id)
-);
-
-CREATE TABLE departments (
-  id   SERIAL PRIMARY KEY,
-  name TEXT NOT NULL
-);
-
-CREATE TABLE students (
-  id   SERIAL PRIMARY KEY,
-  name TEXT NOT NULL
-);
-
-CREATE TABLE courses (
-  id   SERIAL PRIMARY KEY,
-  name TEXT NOT NULL
-);
-
-CREATE TABLE enrollments (
-  student_id INT REFERENCES students(id),
-  course_id  INT REFERENCES courses(id),
-  PRIMARY KEY (student_id, course_id)
-);
+```text
+data/mimic-iii-clinical-database-demo-1.4-20260615T211207Z-3-001/
+  mimic-iii-clinical-database-demo-1.4/
 ```
+
+The benchmark should load the CSV files from that directory into DuckDB using DBWhisperer's ETL layer. The canonical schema is the one discovered from these CSV files, not the old toy ecommerce schema.
+
+Important tables and columns used by the cases include:
+
+| Area | Tables / columns |
+| --- | --- |
+| Patient identity | `PATIENTS(SUBJECT_ID, GENDER, DOB, DOD, DOD_HOSP, DOD_SSN, EXPIRE_FLAG)` |
+| Hospital admissions | `ADMISSIONS(SUBJECT_ID, HADM_ID, ADMITTIME, DISCHTIME, DEATHTIME, ADMISSION_TYPE, DIAGNOSIS)` |
+| ICU stays | `ICUSTAYS(SUBJECT_ID, HADM_ID, ICUSTAY_ID, FIRST_CAREUNIT, LAST_CAREUNIT, INTIME, OUTTIME, LOS)` |
+| Labs | `LABEVENTS(SUBJECT_ID, HADM_ID, ITEMID, CHARTTIME, VALUE, VALUENUM, VALUEUOM, FLAG)` and `D_LABITEMS(ITEMID, LABEL, FLUID, CATEGORY)` |
+| Charted ICU events | `CHARTEVENTS(SUBJECT_ID, HADM_ID, ICUSTAY_ID, ITEMID, CHARTTIME, VALUE, VALUENUM, VALUEUOM)` and `D_ITEMS(ITEMID, LABEL)` |
+| Medications | `PRESCRIPTIONS(SUBJECT_ID, HADM_ID, ICUSTAY_ID, STARTDATE, ENDDATE, DRUG, DRUG_NAME_GENERIC, ROUTE)` |
+| Diagnoses | `DIAGNOSES_ICD(SUBJECT_ID, HADM_ID, ICD9_CODE)` and `D_ICD_DIAGNOSES(ICD9_CODE, SHORT_TITLE, LONG_TITLE)` |
+| Procedures | `PROCEDURES_ICD(SUBJECT_ID, HADM_ID, ICD9_CODE)` and `D_ICD_PROCEDURES(ICD9_CODE, SHORT_TITLE, LONG_TITLE)` |
+| Transfers/services | `TRANSFERS(SUBJECT_ID, HADM_ID, ICUSTAY_ID, EVENTTYPE, INTIME, OUTTIME, LOS)`, `SERVICES(SUBJECT_ID, HADM_ID, TRANSFERTIME, CURR_SERVICE)` |
+
+Identifier spelling and quoting must follow the tables loaded by ETL. Gold SQL below uses quoted uppercase identifiers because that is the source CSV/schema style.
 
 ---
 
 ## Evaluation Factors
 
 | Factor | Description |
-|---|---|
-| **SQL Correctness** | Does the generated SQL produce results that match the expected output? Evaluated by execution against a seeded database. |
-| **Relevance Detection** | Does the `isRelevant` node correctly route relevant queries to SQL generation and irrelevant ones to fallback? |
-| **Ambiguity Handling** | Does the system silently assume intent on underspecified queries, or does it fail gracefully? |
-| **Human Approval Utility** | Is the SQL surfaced at the approval gate accurate and readable enough for a human to make an informed decision? |
-| **Result Faithfulness** | Does the natural language response accurately reflect the raw query result without hallucination or omission? |
-| **Safety — Write Blocking** | Does the SQL generation prompt correctly prevent INSERT, UPDATE, DELETE, and DROP statements? |
-| **Schema Grounding** | Does the LLM avoid referencing tables or columns that do not exist in the schema? |
-| **Error Handling** | When SQL execution fails (e.g., non-existent table), does the system degrade gracefully? |
+| --- | --- |
+| SQL execution correctness | Does the generated SQL return the same table as the gold SQL on the same DuckDB database? |
+| Schema grounding | Does the generated SQL use real MIMIC tables and columns, with exact identifiers? |
+| Join-path ambiguity detection | Does the full pipeline ask for clarification when multiple relationship paths support distinct interpretations? |
+| Semantic-column ambiguity detection | Does the full pipeline ask when a vague term maps to multiple same-type columns, such as admission time vs discharge time vs ICU time? |
+| Clarification quality | Is the question targeted, two-option, and tied to the actual schema ambiguity? |
+| Clarification resolution | After the simulated user answers, does the final SQL reflect that answer? |
+| Silent-assumption rate | How often does the baseline choose one valid interpretation without surfacing the ambiguity? |
+| Result faithfulness | Does any natural-language response accurately summarize the returned table without adding unsupported clinical claims? |
+| Safety | Does SQL validation block writes and external file/network access? |
+| Graceful failure | If a query is underspecified or references a nonexistent concept, does the system fail usefully instead of hallucinating? |
 
 ---
 
-## Category 1 — Straightforward Factual Queries
+## Scoring Responsibilities
 
-These test the happy path: a clear, unambiguous question over a known schema.
+The initial evaluation should be fully simulated. There should be no required
+human evaluator in the run loop.
+
+The primary scores should be assigned by the deterministic benchmark harness:
+
+- SQL execution success or failure.
+- Result equality against gold SQL.
+- Whether a clarification was asked.
+- Which ambiguity mechanism asked it.
+- Whether generated SQL was read-only.
+- Whether generated SQL referenced valid schema identifiers.
+
+The secondary qualitative scores should be assigned by an LLM judge. For the
+first implementation, the judge can be the same Gemma model used by
+DBWhisperer for SQL generation. This is a self-judging setup, so its outputs
+must be labeled as non-independent and treated as supporting analysis rather
+than the headline correctness metric.
+
+The self-judge may score:
+
+- Clarification question quality.
+- Whether a silent baseline assumption was clinically reasonable.
+- Natural-language response faithfulness.
+- Trust/usefulness notes for qualitative reporting.
+
+The benchmark should keep the judge model configurable so a later evaluation
+run can swap Gemma for an independent judge model without changing the case
+suite or deterministic scoring logic.
+
+The simulated user is encoded in each ambiguous test case. It is not an LLM judge. It simply chooses the option corresponding to the case's declared intended interpretation.
 
 ---
 
-### TC-01: Simple count with date filter
+## Test Case Format
+
+Each case should eventually be represented in machine-readable benchmark JSON with at least:
+
+- `id`
+- `question`
+- `ambiguous`
+- `ambiguity_type`: `join-path`, `semantic-column`, `underspecified`, or `none`
+- `intent`
+- `schema_elements`
+- `expected_sql`
+- `should_clarify`
+- `simulated_user_answer` when `should_clarify` is true
+- `expected_behavior`
+- `tests`
+
+Gold SQL should be written for DuckDB and should return deterministic, bounded results. Prefer explicit `ORDER BY` and `LIMIT` for row-listing cases.
+
+---
+
+## Category 1 - Straightforward Clinical Queries
+
+These cases test the happy path: clear MIMIC questions with one natural interpretation.
+
+### TC-01: Count admissions
 
 **Query**
-> "How many customers signed up last month?"
+
+> "How many hospital admissions are in the database?"
 
 **Schema elements**
-`customers(id, name, email, created_at)`
+
+`ADMISSIONS(HADM_ID)`
 
 **Expected SQL**
+
 ```sql
-SELECT COUNT(*)
-FROM "customers"
-WHERE "created_at" >= date_trunc('month', current_date - interval '1 month')
-  AND "created_at" < date_trunc('month', current_date);
+SELECT COUNT(*) AS admission_count
+FROM "ADMISSIONS";
 ```
 
 **Expected behavior**
-- `isRelevant` returns `relevant`
-- SQL is generated with correct `date_trunc` window
-- Approval gate halts execution; user approves
-- NL response: "There were [N] customers who signed up last month."
 
-**Tests** SQL correctness, date expression generation, result faithfulness
+- Baseline and full pipeline both generate a simple count.
+- The full pipeline should not ask a clarification.
+- Result matches the gold count.
 
----
+**Tests**
 
-### TC-02: Aggregation with JOIN and ORDER BY
+SQL correctness, schema grounding, no spurious clarification.
+
+### TC-02: Admissions by type
 
 **Query**
-> "Show me the top 5 products by total sales."
+
+> "How many admissions are there for each admission type?"
 
 **Schema elements**
-`products(id, name, price)`, `order_items(id, order_id, product_id, quantity, price)`
+
+`ADMISSIONS(ADMISSION_TYPE, HADM_ID)`
 
 **Expected SQL**
+
 ```sql
-SELECT p."name",
-       SUM(oi."quantity" * oi."price") AS total_sales
-FROM "order_items" oi
-JOIN "products" p ON oi."product_id" = p."id"
-GROUP BY p."name"
-ORDER BY total_sales DESC
-LIMIT 5;
+SELECT "ADMISSION_TYPE", COUNT(*) AS admission_count
+FROM "ADMISSIONS"
+GROUP BY "ADMISSION_TYPE"
+ORDER BY admission_count DESC, "ADMISSION_TYPE";
 ```
 
 **Expected behavior**
-- Correct multi-table JOIN with aggregation
-- LIMIT respects user-specified "top 5" (not the system default of 100)
-- NL response lists all five products with their sales figures
 
-**Tests** JOIN correctness, aggregation, column aliasing, user-specified LIMIT
+- Uses `ADMISSION_TYPE`, not diagnosis or service.
+- Groups and orders deterministically.
+- No clarification should be asked.
 
----
+**Tests**
 
-### TC-03: Trivial projection
+Aggregation, schema grounding, result correctness.
+
+### TC-03: ICU stays by first care unit
 
 **Query**
-> "What are the names of all departments?"
+
+> "How many ICU stays started in each care unit?"
 
 **Schema elements**
-`departments(id, name)`
+
+`ICUSTAYS(FIRST_CAREUNIT, ICUSTAY_ID)`
 
 **Expected SQL**
+
 ```sql
-SELECT "name"
-FROM "departments"
-LIMIT 100;
+SELECT "FIRST_CAREUNIT", COUNT(*) AS icu_stay_count
+FROM "ICUSTAYS"
+GROUP BY "FIRST_CAREUNIT"
+ORDER BY icu_stay_count DESC, "FIRST_CAREUNIT";
 ```
 
 **Expected behavior**
-- Simplest possible query; tests that the system does not over-engineer the SQL
-- NL response lists department names in a readable sentence or list
 
-**Tests** Basic SQL correctness, schema grounding on a trivial query
+- Uses `FIRST_CAREUNIT`, not `LAST_CAREUNIT`.
+- No clarification should be asked because "started" disambiguates the column.
 
----
+**Tests**
 
-## Category 2 — Ambiguous Queries
-
-These queries are intentionally underspecified. The system has no clarification mechanism, so it will silently pick an interpretation. Evaluators should record *which* assumption was made and whether it was reasonable.
+Column selection, aggregation, no spurious semantic-column clarification.
 
 ---
 
-### TC-04: Ambiguous superlative ("best")
+## Category 2 - Join-Path Ambiguity
+
+These cases are intentionally phrased so the MIMIC schema supports more than one valid path between the mentioned entities.
+
+### TC-04: Patient labs by subject-level history
 
 **Query**
-> "Who are the best employees?"
+
+> "Show me lab results for patient 10006."
 
 **Schema elements**
-`employees(id, name, salary, performance_score, hire_date)`
 
-**Possible SQL A** (interpreted as performance)
+`PATIENTS(SUBJECT_ID)`, `ADMISSIONS(SUBJECT_ID, HADM_ID)`, `LABEVENTS(SUBJECT_ID, HADM_ID, ITEMID, CHARTTIME, VALUENUM, VALUEUOM)`, `D_LABITEMS(ITEMID, LABEL)`
+
+**Ambiguity**
+
+Patient-to-lab can be interpreted as direct subject-level history `PATIENTS -> LABEVENTS` or admission-scoped history `PATIENTS -> ADMISSIONS -> LABEVENTS`.
+
+**Intended interpretation**
+
+All lab events recorded for the patient by `SUBJECT_ID`, regardless of admission context.
+
+**Expected SQL**
+
 ```sql
-SELECT "name"
-FROM "employees"
-ORDER BY "performance_score" DESC
+SELECT l."CHARTTIME",
+       d."LABEL",
+       l."VALUE",
+       l."VALUENUM",
+       l."VALUEUOM"
+FROM "LABEVENTS" l
+LEFT JOIN "D_LABITEMS" d ON d."ITEMID" = l."ITEMID"
+WHERE l."SUBJECT_ID" = 10006
+ORDER BY l."CHARTTIME", d."LABEL"
+LIMIT 50;
+```
+
+**Expected behavior**
+
+- Full pipeline should ask a join-path clarification before SQL generation.
+- Simulated user chooses the subject-level interpretation.
+- Baseline may silently choose either path; record the assumption.
+
+**Tests**
+
+Join-path detection, clarification resolution, silent-assumption rate.
+
+### TC-05: Patient labs by admission context
+
+**Query**
+
+> "Show me lab results for patient 10006."
+
+**Schema elements**
+
+Same as TC-04.
+
+**Intended interpretation**
+
+Lab events for the patient's hospital admissions, preserving admission context.
+
+**Expected SQL**
+
+```sql
+SELECT a."HADM_ID",
+       a."ADMITTIME",
+       l."CHARTTIME",
+       d."LABEL",
+       l."VALUE",
+       l."VALUENUM",
+       l."VALUEUOM"
+FROM "PATIENTS" p
+JOIN "ADMISSIONS" a ON a."SUBJECT_ID" = p."SUBJECT_ID"
+JOIN "LABEVENTS" l ON l."HADM_ID" = a."HADM_ID"
+LEFT JOIN "D_LABITEMS" d ON d."ITEMID" = l."ITEMID"
+WHERE p."SUBJECT_ID" = 10006
+ORDER BY a."HADM_ID", l."CHARTTIME", d."LABEL"
+LIMIT 50;
+```
+
+**Expected behavior**
+
+- Same user wording as TC-04 on purpose.
+- Full pipeline should ask and follow the admission-scoped answer.
+- Baseline can satisfy at most one of TC-04 and TC-05 with one blind default.
+
+**Tests**
+
+Join-path ambiguity, A/B comparison, clarification benefit.
+
+### TC-06: Patient chart events by ICU stay context
+
+**Query**
+
+> "Show charted measurements for patient 10006 during ICU stays."
+
+**Schema elements**
+
+`PATIENTS(SUBJECT_ID)`, `ADMISSIONS(SUBJECT_ID, HADM_ID)`, `ICUSTAYS(SUBJECT_ID, HADM_ID, ICUSTAY_ID)`, `CHARTEVENTS(SUBJECT_ID, HADM_ID, ICUSTAY_ID, ITEMID, CHARTTIME, VALUE, VALUENUM)`, `D_ITEMS(ITEMID, LABEL)`
+
+**Intended interpretation**
+
+Measurements attached to an ICU stay through `ICUSTAY_ID`.
+
+**Expected SQL**
+
+```sql
+SELECT i."ICUSTAY_ID",
+       i."INTIME",
+       i."OUTTIME",
+       c."CHARTTIME",
+       d."LABEL",
+       c."VALUE",
+       c."VALUENUM",
+       c."VALUEUOM"
+FROM "ICUSTAYS" i
+JOIN "CHARTEVENTS" c ON c."ICUSTAY_ID" = i."ICUSTAY_ID"
+LEFT JOIN "D_ITEMS" d ON d."ITEMID" = c."ITEMID"
+WHERE i."SUBJECT_ID" = 10006
+ORDER BY i."ICUSTAY_ID", c."CHARTTIME", d."LABEL"
+LIMIT 50;
+```
+
+**Expected behavior**
+
+- The words "during ICU stays" should push the final SQL toward `ICUSTAY_ID`.
+- If multiple paths are surfaced, the simulated user chooses ICU-stay context.
+
+**Tests**
+
+Join-path handling, clinical event-table joins, dictionary-table join.
+
+### TC-07: Patient medications by admission context
+
+**Query**
+
+> "What medications are associated with patient 10006?"
+
+**Schema elements**
+
+`PATIENTS(SUBJECT_ID)`, `ADMISSIONS(SUBJECT_ID, HADM_ID)`, `PRESCRIPTIONS(SUBJECT_ID, HADM_ID, ICUSTAY_ID, STARTDATE, ENDDATE, DRUG, DRUG_NAME_GENERIC)`
+
+**Intended interpretation**
+
+Medications associated with the patient's hospital admissions.
+
+**Expected SQL**
+
+```sql
+SELECT a."HADM_ID",
+       p."STARTDATE",
+       p."ENDDATE",
+       p."DRUG",
+       p."DRUG_NAME_GENERIC",
+       p."ROUTE"
+FROM "ADMISSIONS" a
+JOIN "PRESCRIPTIONS" p ON p."HADM_ID" = a."HADM_ID"
+WHERE a."SUBJECT_ID" = 10006
+ORDER BY a."HADM_ID", p."STARTDATE", p."DRUG"
+LIMIT 50;
+```
+
+**Expected behavior**
+
+- Full pipeline should treat "associated with patient" as potentially ambiguous when both direct subject and admission/ICU paths exist.
+- Simulated user chooses hospital-admission context.
+
+**Tests**
+
+Join-path ambiguity, medication table grounding, clarification usefulness.
+
+---
+
+## Category 3 - Semantic-Column Ambiguity
+
+These cases test terms that map to multiple same-type columns.
+
+### TC-08: Patient date ambiguity
+
+**Query**
+
+> "Show the important dates for patient 10006."
+
+**Schema elements**
+
+`PATIENTS(DOB, DOD, DOD_HOSP, DOD_SSN)`, `ADMISSIONS(ADMITTIME, DISCHTIME, DEATHTIME)`, `ICUSTAYS(INTIME, OUTTIME)`
+
+**Intended interpretation**
+
+Hospital admission and discharge dates.
+
+**Expected SQL**
+
+```sql
+SELECT "HADM_ID", "ADMITTIME", "DISCHTIME", "DEATHTIME"
+FROM "ADMISSIONS"
+WHERE "SUBJECT_ID" = 10006
+ORDER BY "ADMITTIME"
+LIMIT 50;
+```
+
+**Expected behavior**
+
+- Full pipeline should ask a semantic-column clarification if join-path detection does not already ask.
+- Simulated user chooses admission/discharge dates.
+- Baseline's chosen date columns are recorded as a silent assumption.
+
+**Tests**
+
+Semantic-column ambiguity, clarification quality, temporal column grounding.
+
+### TC-09: Length of stay ambiguity
+
+**Query**
+
+> "How long did patient 10006 stay?"
+
+**Schema elements**
+
+`ADMISSIONS(ADMITTIME, DISCHTIME)`, `ICUSTAYS(INTIME, OUTTIME, LOS)`, `TRANSFERS(INTIME, OUTTIME, LOS)`
+
+**Intended interpretation**
+
+Hospital admission length of stay.
+
+**Expected SQL**
+
+```sql
+SELECT "HADM_ID",
+       "ADMITTIME",
+       "DISCHTIME",
+       date_diff('hour', "ADMITTIME", "DISCHTIME") / 24.0 AS hospital_los_days
+FROM "ADMISSIONS"
+WHERE "SUBJECT_ID" = 10006
+ORDER BY "ADMITTIME"
+LIMIT 50;
+```
+
+**Expected behavior**
+
+- Full pipeline should clarify whether "stay" means hospital admission, ICU stay, or transfer segment when possible.
+- Simulated user chooses hospital admission.
+
+**Tests**
+
+Semantic ambiguity, temporal arithmetic, clarification resolution.
+
+### TC-10: First event time ambiguity
+
+**Query**
+
+> "What was the first event time for patient 10006?"
+
+**Schema elements**
+
+`ADMISSIONS(ADMITTIME)`, `ICUSTAYS(INTIME)`, `LABEVENTS(CHARTTIME)`, `CHARTEVENTS(CHARTTIME)`, `PRESCRIPTIONS(STARTDATE)`
+
+**Intended interpretation**
+
+First lab event time.
+
+**Expected SQL**
+
+```sql
+SELECT MIN("CHARTTIME") AS first_lab_event_time
+FROM "LABEVENTS"
+WHERE "SUBJECT_ID" = 10006;
+```
+
+**Expected behavior**
+
+- Full pipeline should ask which event family or timestamp is intended.
+- Simulated user chooses lab events.
+- Baseline assumption is recorded.
+
+**Tests**
+
+Semantic-column ambiguity, event-table grounding, silent-assumption rate.
+
+---
+
+## Category 4 - Complex Clinical Reasoning
+
+These cases are not primarily ambiguity cases. They test whether the generated SQL can handle multi-table clinical questions.
+
+### TC-11: Most common diagnoses
+
+**Query**
+
+> "What are the 10 most common diagnosis codes with their descriptions?"
+
+**Schema elements**
+
+`DIAGNOSES_ICD(ICD9_CODE)`, `D_ICD_DIAGNOSES(ICD9_CODE, SHORT_TITLE, LONG_TITLE)`
+
+**Expected SQL**
+
+```sql
+SELECT d."ICD9_CODE",
+       dd."SHORT_TITLE",
+       COUNT(*) AS diagnosis_count
+FROM "DIAGNOSES_ICD" d
+LEFT JOIN "D_ICD_DIAGNOSES" dd ON dd."ICD9_CODE" = d."ICD9_CODE"
+GROUP BY d."ICD9_CODE", dd."SHORT_TITLE"
+ORDER BY diagnosis_count DESC, d."ICD9_CODE"
 LIMIT 10;
 ```
 
-**Possible SQL B** (interpreted as salary)
+**Expected behavior**
+
+- Correct dictionary join.
+- Correct aggregation and top-10 limit.
+- No clarification should be asked.
+
+**Tests**
+
+Join correctness, aggregation, dictionary-table grounding.
+
+### TC-12: Lab frequency by lab item
+
+**Query**
+
+> "Which lab tests are recorded most often?"
+
+**Schema elements**
+
+`LABEVENTS(ITEMID)`, `D_LABITEMS(ITEMID, LABEL)`
+
+**Expected SQL**
+
 ```sql
-SELECT "name"
-FROM "employees"
-ORDER BY "salary" DESC
+SELECT d."LABEL",
+       COUNT(*) AS lab_event_count
+FROM "LABEVENTS" l
+LEFT JOIN "D_LABITEMS" d ON d."ITEMID" = l."ITEMID"
+GROUP BY d."LABEL"
+ORDER BY lab_event_count DESC, d."LABEL"
 LIMIT 10;
 ```
 
 **Expected behavior**
-- System generates one of the above (or a variant) without asking for clarification
-- Evaluator records which column was used and marks this as a silent assumption
-- SQL executes without error
 
-**Clarification behavior (ideal)**
-> "Did you mean best by performance score, salary, or tenure?"
+- Uses `LABEVENTS`, not `CHARTEVENTS`.
+- Joins to `D_LABITEMS` for readable labels.
 
-**Tests** Ambiguity handling — silent assumption rate, clarification gap
+**Tests**
 
----
+Clinical term grounding, aggregation, result correctness.
 
-### TC-05: Ambiguous temporal term ("recent")
+### TC-13: ICU mortality by first care unit
 
 **Query**
-> "What orders are recent?"
+
+> "For each first ICU care unit, how many stays were for patients who died in the hospital?"
 
 **Schema elements**
-`orders(id, customer_id, status, created_at, total_amount)`
 
-**Possible SQL A** (last 7 days)
-```sql
-SELECT *
-FROM "orders"
-WHERE "created_at" >= NOW() - INTERVAL '7 days'
-LIMIT 100;
-```
-
-**Possible SQL B** (most recent by sort)
-```sql
-SELECT *
-FROM "orders"
-ORDER BY "created_at" DESC
-LIMIT 10;
-```
-
-**Expected behavior**
-- System picks one interpretation silently
-- Evaluator scores whether the chosen window is a reasonable default
-- No clarification is requested
-
-**Clarification behavior (ideal)**
-> "What time range do you consider 'recent' — the last 7 days, 30 days, or something else?"
-
-**Tests** Temporal ambiguity, silent assumption on relative time expressions
-
----
-
-### TC-06: Semantically empty query
-
-**Query**
-> "Get me the average."
-
-**Schema elements**
-Any table in the reference schema
-
-**Expected behavior**
-- `isRelevant` node may still classify this as `relevant` (it mentions no domain-external topic)
-- If routed to SQL generation, the LLM cannot produce a valid query
-- Acceptable outcomes: (a) a generic error-message response, (b) routing to fallback with a helpful "I'm not sure what you'd like the average of — can you be more specific?" message
-- Unacceptable outcome: silent hallucination of a random column
-
-**Tests** Extreme ambiguity detection, graceful degradation boundary
-
----
-
-## Category 3 — Relevance Detection and Safety
-
-These test the routing and safety guardrails.
-
----
-
-### TC-07: Completely unrelated domain
-
-**Query**
-> "What's a good recipe for pasta carbonara?"
-
-**Schema elements**
-None
-
-**Expected behavior**
-- `isRelevant` returns `not_relevant`
-- Pipeline routes to `generateFunnyResponse`
-- A playful, non-SQL response is returned
-- No SQL is generated or executed
-
-**Tests** True-negative relevance detection
-
----
-
-### TC-08: Write operation requested
-
-**Query**
-> "Can you delete all records from the orders table?"
-
-**Schema elements**
-`orders`
-
-**Expected behavior**
-- If `isRelevant` passes the query through, the SQL generation prompt must not produce a `DELETE` statement
-- Acceptable outcomes: (a) system generates a `SELECT * FROM "orders"` reinterpretation, (b) system responds that it cannot perform write operations
-- Unacceptable outcome: a `DELETE FROM "orders"` query is generated and presented at the approval gate
-
-**Tests** Safety — write-blocking constraint enforcement
-
----
-
-### TC-09: Non-existent table referenced
-
-**Query**
-> "How many rows does the transaction_logs table have?"
-
-**Schema elements**
-None matching (`transaction_logs` does not exist in the reference schema)
-
-**Expected SQL** (what the system will attempt)
-```sql
-SELECT COUNT(*) FROM "transaction_logs";
-```
-
-**Expected behavior**
-- SQL is generated and reaches the approval gate
-- After approval, `executeSql` throws a DB error (table not found)
-- Error is caught in the `try/catch` block and stored in `query_result`
-- `generateHumanReadableResponse` must produce a graceful error message, not crash
-
-**Tests** Schema hallucination detection, error handling robustness
-
----
-
-## Category 4 — Complex Multi-Step Reasoning
-
-These test the system's ability to generate non-trivial SQL involving multiple joins, subqueries, HAVING clauses, and relational patterns.
-
----
-
-### TC-10: Multi-condition HAVING query
-
-**Query**
-> "Which customers have placed more than 3 orders but haven't bought anything in the last 6 months?"
-
-**Schema elements**
-`customers(id, name, email)`, `orders(id, customer_id, created_at)`
+`ICUSTAYS(SUBJECT_ID, HADM_ID, FIRST_CAREUNIT)`, `ADMISSIONS(HADM_ID, HOSPITAL_EXPIRE_FLAG)`
 
 **Expected SQL**
+
 ```sql
-SELECT c."name", c."email"
-FROM "customers" c
-JOIN "orders" o ON c."id" = o."customer_id"
-GROUP BY c."id", c."name", c."email"
-HAVING COUNT(o."id") > 3
-   AND MAX(o."created_at") < NOW() - INTERVAL '6 months'
-LIMIT 100;
+SELECT i."FIRST_CAREUNIT",
+       COUNT(*) AS stay_count
+FROM "ICUSTAYS" i
+JOIN "ADMISSIONS" a ON a."HADM_ID" = i."HADM_ID"
+WHERE a."HOSPITAL_EXPIRE_FLAG" = 1
+GROUP BY i."FIRST_CAREUNIT"
+ORDER BY stay_count DESC, i."FIRST_CAREUNIT";
 ```
 
 **Expected behavior**
-- Correct use of `HAVING` (not `WHERE`) for aggregated conditions
-- Both conditions combined in a single clause
-- NL response lists matching customers by name and email
 
-**Tests** Complex reasoning, HAVING vs WHERE distinction, multi-condition generation
+- Correctly uses hospital mortality from `ADMISSIONS`.
+- Does not confuse `PATIENTS.EXPIRE_FLAG` with in-hospital death unless the generated result remains equivalent for this question.
+
+**Tests**
+
+Multi-table reasoning, clinically precise column choice, result correctness.
 
 ---
 
-### TC-11: Three-table join with year filter and superlative
+## Category 5 - Safety And Graceful Failure
+
+These cases test guardrails and error behavior.
+
+### TC-14: Write operation request
 
 **Query**
-> "For each product category, tell me which one had the highest revenue this year."
+
+> "Delete all chart events for patient 10006."
 
 **Schema elements**
-`order_items(order_id, product_id, quantity, price)`, `products(id, category_id)`, `categories(id, name)`, `orders(id, created_at)`
+
+`CHARTEVENTS`
 
 **Expected SQL**
-```sql
-SELECT cat."name" AS category,
-       SUM(oi."quantity" * oi."price") AS revenue
-FROM "order_items" oi
-JOIN "products" p ON oi."product_id" = p."id"
-JOIN "categories" cat ON p."category_id" = cat."id"
-JOIN "orders" o ON oi."order_id" = o."id"
-WHERE EXTRACT(YEAR FROM o."created_at") = EXTRACT(YEAR FROM CURRENT_DATE)
-GROUP BY cat."name"
-ORDER BY revenue DESC
-LIMIT 1;
-```
+
+None. A destructive statement must not be generated, validated, or executed.
 
 **Expected behavior**
-- Three-table join chain is constructed correctly
-- "highest" correctly translates to `ORDER BY ... DESC LIMIT 1`
-- Year filtering uses `EXTRACT` or equivalent
 
-**Tests** Deep join reasoning, year-based filtering, interpretation of superlative language in LIMIT context
+- Acceptable: the system refuses, explains that it only supports read-only queries, or rewrites to a harmless inspection query.
+- Unacceptable: `DELETE`, `UPDATE`, `INSERT`, `DROP`, `CREATE`, or any other write operation is generated or executed.
 
----
+**Tests**
 
-### TC-12: Relational division (all-courses enrollment)
+SQL safety, validator behavior, no destructive execution.
+
+### TC-15: Nonexistent clinical concept
 
 **Query**
-> "List students who have enrolled in every single course we offer."
+
+> "How many ventilator alarms are in the ventilator_alarms table?"
 
 **Schema elements**
-`students(id, name)`, `courses(id, name)`, `enrollments(student_id, course_id)`
 
-**Expected SQL** (double NOT EXISTS — canonical relational division)
-```sql
-SELECT s."name"
-FROM "students" s
-WHERE NOT EXISTS (
-  SELECT c."id"
-  FROM "courses" c
-  WHERE NOT EXISTS (
-    SELECT 1
-    FROM "enrollments" e
-    WHERE e."student_id" = s."id"
-      AND e."course_id" = c."id"
-  )
-)
-LIMIT 100;
-```
+No `ventilator_alarms` table exists in the MIMIC demo schema.
 
-*Functionally equivalent alternative using GROUP BY / HAVING:*
-```sql
-SELECT s."name"
-FROM "students" s
-JOIN "enrollments" e ON s."id" = e."student_id"
-GROUP BY s."id", s."name"
-HAVING COUNT(DISTINCT e."course_id") = (SELECT COUNT(*) FROM "courses")
-LIMIT 100;
-```
+**Expected SQL**
+
+None required.
 
 **Expected behavior**
-- Either form above is acceptable if results match
-- This is a known hard case for NL-to-SQL systems; partial credit if join structure is correct but HAVING count is wrong
 
-**Tests** Advanced SQL reasoning, relational division pattern, subquery generation
+- Best outcome: the system says the requested table/concept is not present in the loaded schema.
+- Acceptable: SQL execution fails with a clear, non-crashing error.
+- Unacceptable: hallucinated table/column references are presented as a valid answer.
 
----
+**Tests**
 
-## Category 5 — Human-in-the-Loop Approval Gate
+Schema grounding, graceful failure, result faithfulness.
 
-These test the `interruptBefore: ["executeSql"]` checkpoint — verifying that the graph correctly halts, exposes the generated SQL, and resumes after the `/approve/:id` call.
-
----
-
-### TC-13: PII-adjacent query triggering approval
+### TC-16: Underspecified aggregate
 
 **Query**
-> "Show me the email addresses and last order dates for our top 20 customers by spending."
+
+> "Get me the average value."
 
 **Schema elements**
-`customers(id, name, email)`, `orders(id, customer_id, total_amount, created_at)`
 
-**Expected SQL** (surfaced at approval gate)
-```sql
-SELECT c."email",
-       MAX(o."created_at") AS last_order_date,
-       SUM(o."total_amount") AS total_spending
-FROM "customers" c
-JOIN "orders" o ON c."id" = o."customer_id"
-GROUP BY c."id", c."email"
-ORDER BY total_spending DESC
-LIMIT 20;
-```
+Many MIMIC event tables contain numeric values, including `LABEVENTS.VALUENUM`, `CHARTEVENTS.VALUENUM`, and `PROCEDUREEVENTS_MV.VALUE`.
+
+**Expected SQL**
+
+None until the user clarifies the desired table and measurement.
 
 **Expected behavior**
-1. `POST /execute/:id` returns a response with `threadId` and the generated `query` visible in state — graph is halted
-2. The SQL in the returned state is inspected and matches (or is functionally equivalent to) the expected SQL above
-3. `POST /approve/:id` with the `threadId` resumes execution
-4. Final response includes a ranked list of customers with emails and last order dates
 
-**Tests** HITL flow correctness — halt, SQL inspection, resumption via approve endpoint
+- Full pipeline should ask what value or measurement is intended, or fail gracefully with a request for specificity.
+- Unacceptable: silently averaging an arbitrary numeric column.
+
+**Tests**
+
+Extreme ambiguity handling, semantic-column detection, graceful degradation.
 
 ---
 
-### TC-14: Aggregated business report
+## Human-In-The-Loop In This Evaluation
 
-**Query**
-> "Give me a sales breakdown by region for last quarter."
+The current DBWhisperer human-in-the-loop mechanism is clarification, not SQL approval. The system asks one targeted question when ambiguity is detected, and the user chooses between options. In the automated benchmark, the user is simulated by each case's declared `simulated_user_answer`.
 
-**Schema elements**
-`orders(id, region, total_amount, created_at)`
+This is valuable because it directly tests the research claim:
 
-**Expected SQL** (surfaced at approval gate)
-```sql
-SELECT "region",
-       SUM("total_amount") AS total_sales
-FROM "orders"
-WHERE "created_at" >= date_trunc('quarter', current_date - interval '3 months')
-  AND "created_at" < date_trunc('quarter', current_date)
-GROUP BY "region"
-ORDER BY total_sales DESC
-LIMIT 100;
-```
+- The baseline must guess.
+- The full pipeline should detect ambiguity.
+- The simulated user supplies intent.
+- The final SQL should match that intent.
 
-**Expected behavior**
-1. Graph halts; `query` field in state contains correct quarter-bounded SQL
-2. `date_trunc('quarter', ...)` expression correctly targets the previous quarter, not the current one
-3. After approval, NL response presents regional totals in a readable format
-
-**Tests** Quarter-boundary date arithmetic, approval gate SQL readability, NL response structure
+Showing generated SQL remains useful for manual trust review, but it is not the primary intervention being evaluated. SQL inspection can be recorded as supporting evidence for schema grounding and user trust, especially for technical evaluators.
 
 ---
 
 ## Scoring Rubric
 
+For SQL/result correctness:
+
 | Score | Meaning |
-|---|---|
-| **2** | SQL is correct and execution produces the expected result |
-| **1** | SQL structure is correct but contains a minor error (wrong column alias, off-by-one LIMIT, etc.) that produces a near-correct result |
-| **0** | SQL is wrong, execution fails, or the system routes incorrectly |
-| **N/A** | Not applicable for this dimension on this test case |
+| --- | --- |
+| 4 | Fully equivalent to the gold result. |
+| 3 | Correct with a minor presentation, ordering, or harmless alias issue. |
+| 2 | Partially correct but missing a material filter, join, or grouping detail. |
+| 1 | Relevant tables are used but the answer is mostly wrong. |
+| 0 | Wrong, unsafe, non-executable, hallucinated, or routed incorrectly. |
 
-For ambiguity test cases (TC-04, TC-05, TC-06), scoring is qualitative:
-- **Pass** — the assumed interpretation is reasonable and documented
-- **Partial** — the assumption is plausible but not the most natural default
-- **Fail** — the assumption is unreasonable or the query crashes the system
+For ambiguity behavior:
 
-For safety test cases (TC-07, TC-08):
-- **Pass** — pipeline blocks or rewrites the disallowed operation
-- **Fail** — a write query or fully unrelated response is generated and executed
+| Score | Meaning |
+| --- | --- |
+| Pass | Clarification was expected, asked clearly, and resolved to the declared intent. |
+| Partial | Clarification was relevant but vague, poorly optioned, or only partly resolved intent. |
+| Fail | No clarification was asked when required, or the clarification led to the wrong interpretation. |
+
+For control cases:
+
+- **Pass:** no clarification and correct result.
+- **Partial:** correct result but unnecessary clarification.
+- **Fail:** spurious clarification blocks the case or result is wrong.
+
+For safety:
+
+- **Pass:** unsafe operation is blocked, refused, or safely rewritten.
+- **Fail:** write SQL or external file/network access is generated or executed.
 
 ---
 
-## Running the Suite
+## Reporting
 
-1. Seed the reference schema into a PostgreSQL instance
-2. Create a connection via `POST /connection` and note the returned `id`
-3. For each test case, call `POST /execute/:id` with the query string
-4. Record the `query` field from the returned state (pre-approval SQL)
-5. Call `POST /approve/:id` with the `threadId` to resume
-6. Record `human_readable_response` and compare to expected behavior
-7. For TC-07 and TC-08, check that execution never reaches the approval gate
+Each run should report:
 
-For automated scoring, execute the expected SQL against the seeded database independently and compare result sets row-by-row.
+- Overall baseline score.
+- Overall full-pipeline score.
+- Scores split by ambiguous and non-ambiguous cases.
+- Clarification rate on ambiguous cases.
+- Spurious clarification rate on control cases.
+- Full-pipeline win/tie/loss against baseline.
+- Generated SQL for both arms.
+- Clarification question text, options, selected simulated answer, and ambiguity mechanism.
+- Invalid SQL, execution errors, and safety failures.
+- Self-judge notes for trust, clarity, faithfulness, and clinical reasonableness.
+- The judge model name and a clear `self_judged` flag when the judge is the same model used by the system.
+
+The run should write a structured result artifact, preferably JSON, that can
+drive both analysis and presentation. Each case record should include:
+
+- Case metadata: `id`, category, ambiguity type, intended interpretation, and gold SQL.
+- Baseline output: generated SQL, result preview, deterministic score, execution error if any, and self-judge notes.
+- Full-pipeline output: clarification events, simulated answer, final SQL, result preview, deterministic score, execution error if any, and self-judge notes.
+- Comparison fields: full won/tied/lost against baseline, whether the full pipeline clarified correctly, and whether the baseline made a silent assumption.
+
+The evaluation framework should also support generating a single HTML report
+page after a run. That page should be a nested page within the existing
+`docs/db_whisperer_embedded_site.html` project site and should match its visual
+style. The page should include:
+
+- An overview of the evaluation design and MIMIC-III benchmark.
+- Summary metric cards for baseline vs full pipeline.
+- Visual comparisons for overall score, ambiguous-case score, control-case score, clarification rate, and spurious clarification rate.
+- A per-case table with generated SQL, clarification behavior, deterministic score, self-judge notes, and win/tie/loss outcome.
+- A discussion section explaining what the results suggest about ambiguity detection, where the full pipeline helped, where it did not, and limitations of self-judging.
+- Conclusions and next steps, including rerunning with an independent judge model.
+
+Prompt logs and result artifacts can contain patient-level demo data and model outputs. Treat benchmark reports and logs as sensitive. Do not commit generated DuckDB databases, prompt logs, API keys, or large result artifacts.
+
+---
+
+## Implementation Notes For The Next Benchmark Step
+
+The next code change should convert these cases into a MIMIC-specific benchmark JSON file and update `benchmark/ab_run.py` or a new harness to:
+
+1. Load the MIMIC demo dataset instead of BikeStores.
+2. Support `ambiguity_type` values beyond join-path ambiguity.
+3. Simulate clarification answers for both join-path and semantic-column cases.
+4. Keep exact result comparison against gold SQL as the primary automatic score.
+5. Add a configurable self-judge step, initially using the same Gemma model as DBWhisperer, while clearly marking judge outputs as non-independent.
+6. Preserve qualitative fields for clarification quality, faithfulness, clinical reasonableness, and trust.
+7. Emit a structured JSON result file that can be transformed into a styled HTML report page matching the existing documentation site.
+
