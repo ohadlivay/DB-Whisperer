@@ -1,4 +1,5 @@
 duckdb>=1.4
 pytz>=2025.2
 requests>=2.32
+sqlglot>=27.0
 streamlit>=1.51
