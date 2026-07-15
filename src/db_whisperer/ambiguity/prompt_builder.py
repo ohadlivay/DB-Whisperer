@@ -8,8 +8,8 @@ from typing import Any
 from db_whisperer.contracts import AmbiguityRequest, ExecutedQueryPair
 
 
-STATIC_INSTRUCTIONS = """You are an ambiguity evaluator for natural-language database queries.
-You receive the user's original request and a numbered set of alternatives.
+STATIC_INSTRUCTIONS = """You are an ambiguity evaluator component in a NL-to-SQL system.
+You receive the user's original request and a numbered set of alternatives generated to answer his request.
 Each alternative contains generated SQL and a structured summary of the table
 produced after executing that SQL.
 
@@ -21,6 +21,21 @@ ambiguities include different filters, joins, entity scopes, time ranges,
 aggregation choices, result grain, ordering semantics, or null handling.
 Ignore SQL formatting, aliases, equivalent expressions, and row-order
 differences when ordering was not requested.
+
+It is important to distinguish between material and immaterial ambiguities. 
+Immaterial ambiguities include differences in column names, formatting, or other
+cosmetic differences that do not change the meaning of the query. If the alternatives are materially equivalent, return pass.
+
+For example: 
+User asked "who is the oldest person?" and the SQL alternatives are:
+- a table with an age column
+- a table with a date of birth column. 
+This is not a material difference.
+
+User asked "Which country has the best economy?" and the SQL alternatives are:
+- a table with a GDP column
+- a table with a GDP per capita column.
+This is a material difference because the two alternatives represent different interpretations of the user's request.
 
 When the alternatives differ, determine whether the user's request already
 makes one interpretation clearly correct. If it does, return pass. If it does
