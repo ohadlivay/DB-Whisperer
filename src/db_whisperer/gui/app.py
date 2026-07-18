@@ -11,6 +11,7 @@ from html import escape
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from typing import Any
 from uuid import uuid4
@@ -691,6 +692,15 @@ def _format_clarification(question: str, answer: str) -> str:
     )
 
 
+def _display_clarification_question(question: str) -> str:
+    """Remove semantic-column bookkeeping from a user-facing question."""
+    return re.sub(
+        r'\s*\(clarifying which column: "[^"]+" or "[^"]+"\)\s*$',
+        "",
+        question,
+    ).strip()
+
+
 def _queue_query(
     prompt: str,
     candidate_count: int,
@@ -887,11 +897,12 @@ def _render_workflow_response(
         return
 
     if not workflow.complete:
-        question = (
+        internal_question = (
             workflow.ambiguity.question
             if workflow.ambiguity is not None
             else workflow.message
         )
+        question = _display_clarification_question(internal_question or "")
         _render_message(question or "Please clarify your request.", "assistant")
         options = (
             workflow.ambiguity.options
@@ -918,7 +929,7 @@ def _render_workflow_response(
 
         if selected_answer is not None:
             clarification = _format_clarification(
-                question or "",
+                internal_question or "",
                 selected_answer,
             )
             st.session_state.clarifications = (

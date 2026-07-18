@@ -34,6 +34,7 @@ from db_whisperer.gui.app import (
     _chat_window_height,
     _configured_model_option,
     _default_openrouter_api_key,
+    _display_clarification_question,
     _example_dataset_upload,
     _format_session_usage_delta,
     _format_clarification,
@@ -136,6 +137,43 @@ class GuiWorkflowTest(unittest.TestCase):
             "Selected answer: Use all records",
             clarification,
         )
+
+    def test_hides_semantic_column_bookkeeping_from_question(self) -> None:
+        internal_question = (
+            "Which date do you mean? (clarifying which column: "
+            '"orders.order_date" or "orders.required_date")'
+        )
+
+        self.assertEqual(
+            "Which date do you mean?",
+            _display_clarification_question(internal_question),
+        )
+
+    def test_pending_workflow_hides_semantic_column_bookkeeping(self) -> None:
+        app = self._app()
+        internal_question = (
+            "Which date do you mean? (clarifying which column: "
+            '"orders.order_date" or "orders.required_date")'
+        )
+        app.session_state["workflow_result"] = QueryWorkflowResult(
+            state=ComponentState.PENDING,
+            message=internal_question,
+            iteration=1,
+            complete=False,
+            ambiguity=AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=False,
+                question=internal_question,
+                options=("Order date", "Required date"),
+            ),
+        )
+
+        app.run(timeout=20)
+
+        self.assertFalse(app.exception)
+        markdown = "\n".join(item.value for item in app.markdown)
+        self.assertIn("Which date do you mean?", markdown)
+        self.assertNotIn("clarifying which column", markdown)
 
     def test_complete_workflow_displays_latest_result(self) -> None:
         app = self._app()
