@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 
 from db_whisperer.contracts import (
     AmbiguityDecision,
@@ -12,22 +13,33 @@ from db_whisperer.contracts import (
     CsvUpload,
     ExecutedQueryPair,
     IngestionResult,
-    JoinPathRequest,
     QueryCandidate,
     QueryRequest,
     QueryResult,
     QueryWorkflowResult,
     SchemaMetadata,
+    SemanticColumnAnalysis,
     SemanticColumnRequest,
 )
 from db_whisperer.ambiguity import (
     AmbiguityService,
-    JoinPathAmbiguityService,
     SemanticColumnAmbiguityService,
+)
+from db_whisperer.ambiguity.candidate_alternatives import (
+    cluster_executed_pairs,
 )
 from db_whisperer.etler import ETLService
 from db_whisperer.prompt_logging import PromptLogger, PromptLogSink
 from db_whisperer.querier import QueryService
+
+
+@dataclass(frozen=True)
+class _CandidateBatch:
+    candidates: tuple[QueryCandidate, ...]
+    results: tuple[tuple[str, QueryResult], ...]
+    pairs: tuple[ExecutedQueryPair, ...]
+    generation_failures: tuple[tuple[int, str], ...]
+    execution_failures: tuple[tuple[int, str], ...]
 
 
 class ApplicationService:
@@ -42,13 +54,11 @@ class ApplicationService:
         etler: ETLService | None = None,
         querier: QueryService | None = None,
         ambiguity: AmbiguityService | None = None,
-        join_path: JoinPathAmbiguityService | None = None,
         semantic_column: SemanticColumnAmbiguityService | None = None,
         event_logger: PromptLogSink | None = None,
         candidates_per_iteration: int = DEFAULT_CANDIDATES_PER_ITERATION,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         max_parallel_candidates: int = DEFAULT_MAX_PARALLEL_CANDIDATES,
-        enable_join_path_detection: bool = True,
         enable_semantic_column_detection: bool = True,
     ) -> None:
         if candidates_per_iteration < 2:
@@ -61,7 +71,6 @@ class ApplicationService:
         self.etler = etler or ETLService()
         self.querier = querier or QueryService()
         self.ambiguity = ambiguity or AmbiguityService()
-        self.join_path = join_path or JoinPathAmbiguityService()
         self.semantic_column = (
             semantic_column or SemanticColumnAmbiguityService()
         )
@@ -69,7 +78,6 @@ class ApplicationService:
         self.candidates_per_iteration = candidates_per_iteration
         self.max_iterations = max_iterations
         self.max_parallel_candidates = max_parallel_candidates
-        self.enable_join_path_detection = enable_join_path_detection
         self.enable_semantic_column_detection = (
             enable_semantic_column_detection
         )
@@ -153,13 +161,11 @@ class ApplicationService:
                 iteration,
             )
 
-        # Primary ambiguity mechanism: before generating any SQL, ask the
-        # schema graph whether the mentioned entities are connected by more
-        # than one join path. This runs on every non-terminal round of a
-        # multi-table question (the detector skips pairs already settled by a
-        # prior answer) and only when there is a graph to traverse, so
-        # single-table datasets keep their previous behaviour.
-        join_path_clarification = self._detect_join_path_ambiguity(
+        # Analyze semantic-column ambiguity before SQL, but defer question
+        # selection until executed alternatives are available. This prevents a
+        # schema-only finding from pre-empting a more important candidate
+        # difference while keeping semantic ambiguity independently actionable.
+        semantic_analysis = self._analyze_semantic_columns(
             prompt=prompt,
             schema=schema,
             api_key=api_key,
@@ -167,33 +173,222 @@ class ApplicationService:
             iteration=iteration,
             clarifications=clarifications,
         )
-        if join_path_clarification is not None:
-            return join_path_clarification
 
-        # Secondary ambiguity mechanism: after join-path multiplicity is ruled
-        # out, ask whether a vague term in the question maps to more than one
-        # column of the same semantic type (the PDF's "dates" -> admission vs
-        # discharge vs date of birth). This runs for single-table datasets too,
-        # which have no join graph to traverse.
-        semantic_column_clarification = (
-            self._detect_semantic_column_ambiguity(
+        batch = self._run_candidate_batch(
+            prompt=prompt,
+            schema=schema,
+            api_key=api_key,
+            model=model,
+            clarifications=clarifications,
+            iteration=iteration,
+            candidates_per_iteration=candidates_per_iteration,
+            compliance_retry=False,
+        )
+        all_candidates = list(batch.candidates)
+        if not batch.results:
+            return self._failure(
+                self._candidate_failure_message(
+                    candidates_per_iteration,
+                    0,
+                    batch.generation_failures,
+                    batch.execution_failures,
+                ),
+                iteration,
+                tuple(all_candidates),
+            )
+
+        last_result = batch.results[-1][1]
+        if iteration == self.max_iterations and not clarifications:
+            return QueryWorkflowResult(
+                state=ComponentState.ACCEPTED,
+                message=last_result.message,
+                iteration=iteration,
+                complete=True,
+                query_result=last_result,
+                candidates=tuple(all_candidates),
+            )
+
+        if len(batch.pairs) < 2 and not clarifications:
+            return self._failure(
+                self._candidate_failure_message(
+                    candidates_per_iteration,
+                    len(batch.pairs),
+                    batch.generation_failures,
+                    batch.execution_failures,
+                ),
+                iteration,
+                tuple(all_candidates),
+            )
+
+        ambiguity = self._evaluate_ambiguity(
+            prompt=prompt,
+            schema=schema,
+            api_key=api_key,
+            model=model,
+            clarifications=clarifications,
+            iteration=iteration,
+            semantic_analysis=semantic_analysis,
+            pairs=batch.pairs,
+            compliance_retry=False,
+        )
+
+        if clarifications and ambiguity.compliance_passed is False:
+            self.event_logger.log_event(
+                event="clarification_compliance_retry_started",
+                component="application",
+                model=model,
+                details={"iteration": iteration, "reason": ambiguity.reason},
+            )
+            retry_batch = self._run_candidate_batch(
                 prompt=prompt,
                 schema=schema,
                 api_key=api_key,
                 model=model,
-                iteration=iteration,
                 clarifications=clarifications,
+                iteration=iteration,
+                candidates_per_iteration=candidates_per_iteration,
+                compliance_retry=True,
             )
-        )
-        if semantic_column_clarification is not None:
-            return semantic_column_clarification
+            all_candidates.extend(retry_batch.candidates)
+            if not retry_batch.results:
+                return self._compliance_failure(
+                    iteration,
+                    tuple(all_candidates),
+                    ambiguity,
+                    self._candidate_failure_message(
+                        candidates_per_iteration,
+                        0,
+                        retry_batch.generation_failures,
+                        retry_batch.execution_failures,
+                    ),
+                    model,
+                )
+            batch = retry_batch
+            ambiguity = self._evaluate_ambiguity(
+                prompt=prompt,
+                schema=schema,
+                api_key=api_key,
+                model=model,
+                clarifications=clarifications,
+                iteration=iteration,
+                semantic_analysis=semantic_analysis,
+                pairs=batch.pairs,
+                compliance_retry=True,
+            )
 
+        if clarifications:
+            if (
+                ambiguity.state != ComponentState.ACCEPTED
+                or ambiguity.compliance_passed is not True
+            ):
+                return self._compliance_failure(
+                    iteration,
+                    tuple(all_candidates),
+                    ambiguity,
+                    ambiguity.reason,
+                    model,
+                )
+            selected = self._select_compliant_result(batch, ambiguity)
+            if selected is None:
+                return self._compliance_failure(
+                    iteration,
+                    tuple(all_candidates),
+                    ambiguity,
+                    "No validated compliant alternative could be selected.",
+                    model,
+                )
+            selected_alternative, last_result = selected
+            self.event_logger.log_event(
+                event="clarification_compliant_result_selected",
+                component="application",
+                model=model,
+                details={
+                    "iteration": iteration,
+                    "alternative_id": selected_alternative,
+                    "support": dict(ambiguity.candidate_support).get(
+                        selected_alternative, 0
+                    ),
+                    "sql": last_result.sql,
+                },
+            )
+
+        valid_clarification = (
+            ambiguity.state == ComponentState.ACCEPTED
+            and ambiguity.passed is False
+            and bool(ambiguity.question)
+            and len(ambiguity.options) == 2
+        )
+        if clarifications and iteration == self.max_iterations:
+            if valid_clarification:
+                self.event_logger.log_event(
+                    event="clarification_suppressed_at_iteration_limit",
+                    component="application",
+                    model=model,
+                    details={
+                        "iteration": iteration,
+                        "question": ambiguity.question,
+                    },
+                )
+            return QueryWorkflowResult(
+                state=ComponentState.ACCEPTED,
+                message=last_result.message,
+                iteration=iteration,
+                complete=True,
+                query_result=last_result,
+                candidates=tuple(all_candidates),
+                ambiguity=ambiguity,
+            )
+        if (
+            ambiguity.state != ComponentState.ACCEPTED
+            or (
+                ambiguity.passed is not True
+                and not valid_clarification
+            )
+        ):
+            return QueryWorkflowResult(
+                state=ComponentState.ACCEPTED,
+                message=last_result.message,
+                iteration=iteration,
+                complete=True,
+                query_result=last_result,
+                candidates=tuple(all_candidates),
+                ambiguity=ambiguity,
+            )
+        if ambiguity.passed:
+            return QueryWorkflowResult(
+                state=ComponentState.ACCEPTED,
+                message=last_result.message,
+                iteration=iteration,
+                complete=True,
+                query_result=last_result,
+                candidates=tuple(all_candidates),
+                ambiguity=ambiguity,
+            )
+        return QueryWorkflowResult(
+            state=ComponentState.PENDING,
+            message=ambiguity.question or "Please clarify your request.",
+            iteration=iteration,
+            query_result=last_result,
+            candidates=tuple(all_candidates),
+            ambiguity=ambiguity,
+        )
+
+    def _run_candidate_batch(
+        self,
+        prompt: str,
+        schema: SchemaMetadata,
+        api_key: str,
+        model: str,
+        clarifications: tuple[str, ...],
+        iteration: int,
+        candidates_per_iteration: int,
+        compliance_retry: bool,
+    ) -> _CandidateBatch:
         candidates: list[QueryCandidate] = []
-        successful_results: list[QueryResult] = []
+        results: list[tuple[str, QueryResult]] = []
         pairs: list[ExecutedQueryPair] = []
         generation_failures: list[tuple[int, str]] = []
         execution_failures: list[tuple[int, str]] = []
-
         worker_count = min(
             candidates_per_iteration,
             self.max_parallel_candidates,
@@ -210,13 +405,16 @@ class ApplicationService:
                         api_key=api_key,
                         model=model,
                         clarifications=clarifications,
+                        compliance_retry=compliance_retry,
                     ),
                     range(1, candidates_per_iteration + 1),
                 )
             )
 
+        batch_label = "compliance-retry-" if compliance_retry else ""
         for candidate_index, candidate, query_result in outcomes:
             candidates.append(candidate)
+            event_details = {"compliance_retry": compliance_retry}
             if candidate.state != ComponentState.ACCEPTED:
                 generation_failures.append(
                     (candidate_index, candidate.message)
@@ -228,6 +426,7 @@ class ApplicationService:
                     candidate_index=candidate_index,
                     candidate=candidate,
                     error=candidate.message,
+                    extra_details=event_details,
                 )
                 continue
             self._log_candidate_event(
@@ -236,8 +435,8 @@ class ApplicationService:
                 iteration=iteration,
                 candidate_index=candidate_index,
                 candidate=candidate,
+                extra_details=event_details,
             )
-
             if (
                 query_result is None
                 or query_result.state != ComponentState.ACCEPTED
@@ -257,6 +456,7 @@ class ApplicationService:
                     candidate_index=candidate_index,
                     candidate=candidate,
                     error=execution_message,
+                    extra_details=event_details,
                 )
                 continue
             self._log_candidate_event(
@@ -267,61 +467,49 @@ class ApplicationService:
                 candidate=candidate,
                 row_count=len(query_result.rows),
                 truncated=query_result.truncated,
+                extra_details=event_details,
             )
-
-            successful_results.append(query_result)
+            candidate_id = (
+                f"iteration-{iteration}-{batch_label}candidate-"
+                f"{candidate_index}"
+            )
+            results.append((candidate_id, query_result))
             pairs.append(
                 ExecutedQueryPair.from_query_result(
-                    candidate_id=(
-                        f"iteration-{iteration}-candidate-{candidate_index}"
-                    ),
+                    candidate_id=candidate_id,
                     result=query_result,
                 )
             )
+        return _CandidateBatch(
+            candidates=tuple(candidates),
+            results=tuple(results),
+            pairs=tuple(pairs),
+            generation_failures=tuple(generation_failures),
+            execution_failures=tuple(execution_failures),
+        )
 
-        if not successful_results:
-            return self._failure(
-                self._candidate_failure_message(
-                    candidates_per_iteration,
-                    0,
-                    generation_failures,
-                    execution_failures,
-                ),
-                iteration,
-                tuple(candidates),
-            )
-
-        last_result = successful_results[-1]
-        if iteration == self.max_iterations:
-            return QueryWorkflowResult(
-                state=ComponentState.ACCEPTED,
-                message=last_result.message,
-                iteration=iteration,
-                complete=True,
-                query_result=last_result,
-                candidates=tuple(candidates),
-            )
-
-        if len(pairs) < 2:
-            return self._failure(
-                self._candidate_failure_message(
-                    candidates_per_iteration,
-                    len(pairs),
-                    generation_failures,
-                    execution_failures,
-                ),
-                iteration,
-                tuple(candidates),
-            )
-
+    def _evaluate_ambiguity(
+        self,
+        prompt: str,
+        schema: SchemaMetadata,
+        api_key: str,
+        model: str,
+        clarifications: tuple[str, ...],
+        iteration: int,
+        semantic_analysis: SemanticColumnAnalysis | None,
+        pairs: tuple[ExecutedQueryPair, ...],
+        compliance_retry: bool,
+    ) -> AmbiguityDecision:
         try:
             ambiguity = self.ambiguity.evaluate(
                 AmbiguityRequest(
                     user_query=prompt.strip(),
-                    pairs=tuple(pairs),
+                    pairs=pairs,
                     api_key=api_key,
                     model=model,
                     clarifications=clarifications,
+                    schema=schema,
+                    semantic_analysis=semantic_analysis,
                 )
             )
             if not isinstance(ambiguity, AmbiguityDecision):
@@ -334,128 +522,117 @@ class ApplicationService:
                 reason=f"Ambiguity judgment failed: {error}",
             )
 
-        valid_clarification = (
-            ambiguity.state == ComponentState.ACCEPTED
-            and ambiguity.passed is False
-            and bool(ambiguity.question)
-            and len(ambiguity.options) == 2
-        )
+        fallback_used = False
+        fallback_trigger_reason = ""
         if (
-            ambiguity.state != ComponentState.ACCEPTED
-            or (
-                ambiguity.passed is not True
-                and not valid_clarification
-            )
+            not clarifications
+            and ambiguity.state != ComponentState.ACCEPTED
+            and semantic_analysis is not None
+            and semantic_analysis.ambiguous
         ):
-            return QueryWorkflowResult(
-                state=ComponentState.ACCEPTED,
-                message=last_result.message,
-                iteration=iteration,
-                complete=True,
-                query_result=last_result,
-                candidates=tuple(candidates),
-                ambiguity=ambiguity,
+            fallback_trigger_reason = ambiguity.reason
+            ambiguity = self.semantic_column.fallback_decision(
+                semantic_analysis,
+                pairs=pairs,
             )
-        if ambiguity.passed:
-            return QueryWorkflowResult(
-                state=ComponentState.ACCEPTED,
-                message=last_result.message,
-                iteration=iteration,
-                complete=True,
-                query_result=last_result,
-                candidates=tuple(candidates),
-                ambiguity=ambiguity,
+            fallback_used = True
+        if not ambiguity.candidate_support:
+            ambiguity = replace(
+                ambiguity,
+                candidate_support=tuple(
+                    (cluster.alternative_id, cluster.support_count)
+                    for cluster in cluster_executed_pairs(pairs)
+                ),
             )
-        return QueryWorkflowResult(
-            state=ComponentState.PENDING,
-            message=ambiguity.question or "Please clarify your request.",
-            iteration=iteration,
-            query_result=last_result,
-            candidates=tuple(candidates),
-            ambiguity=ambiguity,
-        )
-
-    def _detect_join_path_ambiguity(
-        self,
-        prompt: str,
-        schema: SchemaMetadata,
-        api_key: str,
-        model: str,
-        iteration: int,
-        clarifications: tuple[str, ...],
-    ) -> QueryWorkflowResult | None:
-        """Run the schema-graph join-path gate, returning a pending result.
-
-        Returns a ``PENDING`` workflow result when a join-path clarification is
-        needed, or ``None`` when the gate is not applicable, passes, or fails
-        (in which case the caller continues to normal candidate generation).
-        """
-        if (
-            not self.enable_join_path_detection
-            # A clarification consumes an iteration, so never gate on the final
-            # allowed round -- it must return a result the user can act on. The
-            # gate may still run on earlier clarification rounds so that a
-            # multi-entity question can resolve each ambiguous join pair in
-            # turn; the detector excludes pairs already settled by an answer.
-            or iteration >= self.max_iterations
-            or len(schema.table_names) < 2
-            or not schema.relationships
-        ):
-            return None
-
-        try:
-            decision = self.join_path.detect(
-                JoinPathRequest(
-                    user_query=prompt.strip(),
-                    schema=schema,
-                    api_key=api_key,
-                    model=model,
-                    clarifications=clarifications,
-                )
-            )
-            if not isinstance(decision, AmbiguityDecision):
-                raise TypeError(
-                    "Join-path detector returned an invalid decision."
-                )
-        except Exception as error:  # noqa: BLE001 - degrade gracefully.
-            decision = AmbiguityDecision(
-                state=ComponentState.FAILED,
-                reason=f"Join-path detection failed: {error}",
-                mechanism="join-path",
-            )
-
         self.event_logger.log_event(
-            event="join_path_detection",
+            event="ambiguity_decision",
             component="application",
             model=model,
             details={
                 "iteration": iteration,
-                "state": decision.state,
-                "passed": decision.passed,
-                "reason": decision.reason,
+                "compliance_retry": compliance_retry,
+                "state": ambiguity.state,
+                "passed": ambiguity.passed,
+                "mechanism": ambiguity.mechanism,
+                "question": ambiguity.question,
+                "options": list(ambiguity.options),
+                "evidence_columns": list(ambiguity.evidence_columns),
+                "evidence_alternatives": list(
+                    ambiguity.evidence_alternatives
+                ),
+                "candidate_support": [
+                    {"alternative_id": alternative_id, "support": support}
+                    for alternative_id, support in ambiguity.candidate_support
+                ],
+                "candidate_rejection_reason": (
+                    ambiguity.candidate_rejection_reason
+                ),
+                "compliance_passed": ambiguity.compliance_passed,
+                "compliant_alternatives": list(
+                    ambiguity.compliant_alternatives
+                ),
+                "rejected_alternatives": [
+                    {"alternative_id": alternative_id, "reason": reason}
+                    for alternative_id, reason
+                    in ambiguity.rejected_alternatives
+                ],
+                "reason": ambiguity.reason,
+                "fallback_used": fallback_used,
+                "fallback_trigger_reason": fallback_trigger_reason,
             },
         )
+        return ambiguity
 
-        is_clarification = (
-            decision.state == ComponentState.ACCEPTED
-            and decision.passed is False
-            and bool(decision.question)
-            and len(decision.options) == 2
-        )
-        if not is_clarification:
+    @staticmethod
+    def _select_compliant_result(
+        batch: _CandidateBatch,
+        ambiguity: AmbiguityDecision,
+    ) -> tuple[str, QueryResult] | None:
+        compliant = set(ambiguity.compliant_alternatives)
+        eligible = [
+            cluster
+            for cluster in cluster_executed_pairs(batch.pairs)
+            if cluster.alternative_id in compliant
+        ]
+        if not eligible:
             return None
+        selected = max(eligible, key=lambda cluster: cluster.support_count)
+        results_by_id = dict(batch.results)
+        result = results_by_id.get(selected.representative.candidate_id)
+        if result is None:
+            return None
+        return selected.alternative_id, result
 
+    def _compliance_failure(
+        self,
+        iteration: int,
+        candidates: tuple[QueryCandidate, ...],
+        ambiguity: AmbiguityDecision,
+        reason: str,
+        model: str,
+    ) -> QueryWorkflowResult:
+        message = (
+            "No SQL result was returned because DB Whisperer could not "
+            "verify that the selected clarification was applied. "
+            + (reason.strip() or "Clarification compliance was unavailable.")
+        )
+        self.event_logger.log_event(
+            event="clarification_compliance_failed",
+            component="application",
+            model=model,
+            details={"iteration": iteration, "reason": reason},
+        )
         return QueryWorkflowResult(
-            state=ComponentState.PENDING,
-            message=decision.question or "Please clarify your request.",
+            state=ComponentState.FAILED,
+            message=message,
             iteration=iteration,
-            complete=False,
+            complete=True,
             query_result=None,
-            candidates=(),
-            ambiguity=decision,
+            candidates=candidates,
+            ambiguity=ambiguity,
         )
 
-    def _detect_semantic_column_ambiguity(
+    def _analyze_semantic_columns(
         self,
         prompt: str,
         schema: SchemaMetadata,
@@ -463,13 +640,8 @@ class ApplicationService:
         model: str,
         iteration: int,
         clarifications: tuple[str, ...],
-    ) -> QueryWorkflowResult | None:
-        """Run the semantic-column gate, returning a pending result.
-
-        Returns a ``PENDING`` workflow result when a column clarification is
-        needed, or ``None`` when the gate is not applicable, passes, or fails
-        (in which case the caller continues to normal candidate generation).
-        """
+    ) -> SemanticColumnAnalysis | None:
+        """Collect pre-SQL semantic evidence without interrupting execution."""
         # The detector reads columns from schema.tables when the flat column
         # list is empty, so the guard must count them the same way or it would
         # skip detection on a tables-only schema the detector could analyze.
@@ -487,7 +659,7 @@ class ApplicationService:
             return None
 
         try:
-            decision = self.semantic_column.detect(
+            analysis = self.semantic_column.analyze(
                 SemanticColumnRequest(
                     user_query=prompt.strip(),
                     schema=schema,
@@ -496,15 +668,14 @@ class ApplicationService:
                     clarifications=clarifications,
                 )
             )
-            if not isinstance(decision, AmbiguityDecision):
+            if not isinstance(analysis, SemanticColumnAnalysis):
                 raise TypeError(
-                    "Semantic-column detector returned an invalid decision."
+                    "Semantic-column analyzer returned an invalid result."
                 )
         except Exception as error:  # noqa: BLE001 - degrade gracefully.
-            decision = AmbiguityDecision(
+            analysis = SemanticColumnAnalysis(
                 state=ComponentState.FAILED,
                 reason=f"Semantic-column detection failed: {error}",
-                mechanism="semantic-column",
             )
 
         self.event_logger.log_event(
@@ -513,30 +684,12 @@ class ApplicationService:
             model=model,
             details={
                 "iteration": iteration,
-                "state": decision.state,
-                "passed": decision.passed,
-                "reason": decision.reason,
+                "state": analysis.state,
+                "term_count": len(analysis.terms),
+                "reason": analysis.reason,
             },
         )
-
-        is_clarification = (
-            decision.state == ComponentState.ACCEPTED
-            and decision.passed is False
-            and bool(decision.question)
-            and len(decision.options) == 2
-        )
-        if not is_clarification:
-            return None
-
-        return QueryWorkflowResult(
-            state=ComponentState.PENDING,
-            message=decision.question or "Please clarify your request.",
-            iteration=iteration,
-            complete=False,
-            query_result=None,
-            candidates=(),
-            ambiguity=decision,
-        )
+        return analysis
 
     def _process_candidate(
         self,
@@ -548,12 +701,18 @@ class ApplicationService:
         api_key: str,
         model: str,
         clarifications: tuple[str, ...],
+        compliance_retry: bool,
     ) -> tuple[int, QueryCandidate, QueryResult | None]:
         """Generate and execute one candidate inside a worker thread."""
         attempt_number = (
             (iteration - 1) * candidates_per_iteration
             + candidate_index
         )
+        if compliance_retry:
+            attempt_number = (
+                (self.max_iterations + iteration) * candidates_per_iteration
+                + candidate_index
+            )
         try:
             candidate = self.querier.generate_candidate(
                 QueryRequest(
@@ -563,6 +722,7 @@ class ApplicationService:
                     model=model,
                     clarifications=clarifications,
                     attempt_number=attempt_number,
+                    compliance_retry=compliance_retry,
                 )
             )
             if candidate.state != ComponentState.ACCEPTED:
@@ -591,6 +751,7 @@ class ApplicationService:
         error: str | None = None,
         row_count: int | None = None,
         truncated: bool | None = None,
+        extra_details: dict[str, object] | None = None,
     ) -> None:
         details = {
             "iteration": iteration,
@@ -604,6 +765,8 @@ class ApplicationService:
             details["row_count"] = row_count
         if truncated is not None:
             details["truncated"] = truncated
+        if extra_details:
+            details.update(extra_details)
         self.event_logger.log_event(
             event=event,
             component="application",
@@ -615,8 +778,8 @@ class ApplicationService:
     def _candidate_failure_message(
         requested: int,
         successful: int,
-        generation_failures: list[tuple[int, str]],
-        execution_failures: list[tuple[int, str]],
+        generation_failures: Sequence[tuple[int, str]],
+        execution_failures: Sequence[tuple[int, str]],
     ) -> str:
         summary = (
             f"Only {successful} of {requested} candidate queries executed "

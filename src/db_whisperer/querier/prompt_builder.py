@@ -68,6 +68,7 @@ class PromptBuilder:
         schema: SchemaMetadata,
         clarifications: tuple[str, ...] = (),
         allowed_tables: set[str] | None = None,
+        compliance_retry: bool = False,
     ) -> str:
         """Build database context and append optional clarifications."""
         database_path = self._database_path(schema)
@@ -104,11 +105,20 @@ class PromptBuilder:
         )
         if normalized_clarifications:
             prompt_sections.append(
-                "CLARIFICATIONS\n"
+                "CLARIFICATIONS (BINDING; OVERRIDE CONFLICTING OR AMBIGUOUS "
+                "WORDING IN THE ORIGINAL REQUEST)\n"
                 + "\n".join(
                     f"- {clarification}"
                     for clarification in normalized_clarifications
                 )
+            )
+        if compliance_retry:
+            prompt_sections.append(
+                "COMPLIANCE RETRY\n"
+                "The previous SQL candidates were rejected because none "
+                "applied every selected clarification. Generate SQL that "
+                "applies all CLARIFICATIONS exactly. Do not repeat an "
+                "interpretation that conflicts with a selected answer."
             )
         return "\n\n".join(prompt_sections)
 

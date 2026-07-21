@@ -12,9 +12,17 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from db_whisperer.ambiguity.prompt_builder import (
     AmbiguityPromptBuilder,
+    SEMANTIC_ONLY_INSTRUCTIONS,
     STATIC_INSTRUCTIONS,
 )
-from db_whisperer.contracts import AmbiguityRequest, ExecutedQueryPair
+from db_whisperer.contracts import (
+    AmbiguityRequest,
+    ComponentState,
+    ExecutedQueryPair,
+    SemanticAmbiguityTerm,
+    SemanticColumnAnalysis,
+    SemanticColumnCandidate,
+)
 
 
 class AmbiguityPromptBuilderTest(unittest.TestCase):
@@ -43,7 +51,7 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
 
         self.assertTrue(prompt.startswith(STATIC_INSTRUCTIONS))
         self.assertIn(
-            '"options": ["<first choice>", "<second choice>"]',
+            '"source": "candidate-comparison"',
             prompt,
         )
         self.assertIn(
@@ -57,8 +65,9 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
             prompt,
         )
         self.assertIn("UNIQUE ALTERNATIVE COUNT: 2", prompt)
-        self.assertIn("--- ALTERNATIVE 1 OF 2 ---", prompt)
-        self.assertIn("--- ALTERNATIVE 2 OF 2 ---", prompt)
+        self.assertIn("ALTERNATIVE 1 OF 2: alternative_1", prompt)
+        self.assertIn("ALTERNATIVE 2 OF 2: alternative_2", prompt)
+        self.assertIn("SUPPORT: 1 OF 2 CANDIDATES", prompt)
         self.assertIn("candidate_1", prompt)
         self.assertIn("candidate_2", prompt)
         self.assertIn("SQL BEGIN\nSELECT value FROM data\nSQL END", prompt)
@@ -91,27 +100,95 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
             prompt,
         )
 
+    def test_semantic_only_ablation_hides_candidate_evidence(self) -> None:
+        pair = ExecutedQueryPair(
+            candidate_id="candidate_1",
+            sql="SELECT value FROM data",
+            columns=("value",),
+            rows=((1,),),
+        )
+        request = AmbiguityRequest(
+            user_query="Show values",
+            pairs=(pair, pair),
+            api_key="key",
+            model="provider/model",
+        )
+
+        prompt = AmbiguityPromptBuilder(
+            include_candidate_evidence=False
+        ).build(request)
+
+        self.assertTrue(prompt.startswith(SEMANTIC_ONLY_INSTRUCTIONS))
+        self.assertNotIn("EXECUTED ALTERNATIVES", prompt)
+        self.assertNotIn("SELECT value FROM data", prompt)
+
+    def test_semantic_findings_use_stable_ids_and_separate_fields(self) -> None:
+        pair = ExecutedQueryPair(
+            candidate_id="candidate_1",
+            sql='SELECT "dob" FROM "patients"',
+            columns=("dob",),
+            rows=(),
+        )
+        request = AmbiguityRequest(
+            user_query="Show patients from 2024",
+            pairs=(pair, pair),
+            api_key="key",
+            model="provider/model",
+            semantic_analysis=SemanticColumnAnalysis(
+                state=ComponentState.ACCEPTED,
+                terms=(
+                    SemanticAmbiguityTerm(
+                        term="from 2024",
+                        bucket="temporal",
+                        columns=(
+                            SemanticColumnCandidate(
+                                "patients", "dob", "TIMESTAMP", "temporal"
+                            ),
+                            SemanticColumnCandidate(
+                                "admissions",
+                                "admittime",
+                                "TIMESTAMP",
+                                "temporal",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        prompt = AmbiguityPromptBuilder().build(request)
+
+        self.assertIn("SEMANTIC FINDING semantic_1", prompt)
+        self.assertIn("TERM: from 2024", prompt)
+        self.assertIn("BUCKET: temporal", prompt)
+        self.assertNotIn("from 2024 (temporal)", prompt)
+        self.assertIn('"semantic_finding_id"', prompt)
+
     def test_instructions_make_question_discriminate_alternatives(self) -> None:
         instructions = " ".join(STATIC_INSTRUCTIONS.split())
 
         self.assertIn(
-            "Use differences in their SQL and returned tables",
+            "Compare only compliant SQL and results",
             instructions,
         )
         self.assertIn(
-            "specific missing information needed to choose between",
+            "Eligible candidate-derived distinctions take priority",
             instructions,
         )
         self.assertIn(
-            "Each option must correspond to an interpretation present",
+            "singleton interpretation is eligible only when",
             instructions,
         )
         self.assertIn(
-            "single most important two-way distinction",
+            '"A" versus "A or B"',
             instructions,
         )
         self.assertIn(
-            "Do not ask the same question again",
+            "single most important unresolved two-way distinction",
+            instructions,
+        )
+        self.assertIn(
+            "Do not repeat them",
             instructions,
         )
         self.assertIn(
@@ -152,6 +229,8 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
         self.assertIn("--- CLARIFICATION 1 ---", prompt)
         self.assertIn("Question: Should null values be ignored?", prompt)
         self.assertIn("Selected answer: Ignore null values", prompt)
+        self.assertIn("Clarifications are binding", prompt)
+        self.assertIn('"applies_all"', prompt)
 
     def test_prompt_bounds_rows_but_preserves_shape(self) -> None:
         pair = ExecutedQueryPair(
@@ -215,8 +294,8 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
         prompt = AmbiguityPromptBuilder().build(request)
 
         self.assertIn("UNIQUE ALTERNATIVE COUNT: 1", prompt)
-        self.assertIn("CANDIDATE ID: candidate_1", prompt)
-        self.assertNotIn("CANDIDATE ID: candidate_2", prompt)
+        self.assertIn("SUPPORT: 2 OF 2 CANDIDATES", prompt)
+        self.assertIn("CANDIDATE IDS: candidate_1, candidate_2", prompt)
 
     def test_differences_outside_sample_remain_distinct(self) -> None:
         first = ExecutedQueryPair(
@@ -243,8 +322,8 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
         ).build(request)
 
         self.assertIn("UNIQUE ALTERNATIVE COUNT: 2", prompt)
-        self.assertIn("--- ALTERNATIVE 1 OF 2 ---", prompt)
-        self.assertIn("--- ALTERNATIVE 2 OF 2 ---", prompt)
+        self.assertIn("ALTERNATIVE 1 OF 2: alternative_1", prompt)
+        self.assertIn("ALTERNATIVE 2 OF 2: alternative_2", prompt)
 
 
 if __name__ == "__main__":

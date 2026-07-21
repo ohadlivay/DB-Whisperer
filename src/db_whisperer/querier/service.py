@@ -17,7 +17,10 @@ from db_whisperer.querier.openrouter_client import (
     OpenRouterError,
 )
 from db_whisperer.querier.prompt_builder import PromptBuilder
-from db_whisperer.querier.schema_linker import SchemaLinker
+from db_whisperer.querier.schema_linker import (
+    SchemaLinker,
+    clarification_required_tables,
+)
 from db_whisperer.querier.sql_validator import (
     SQLValidationError,
     validate_read_only_sql,
@@ -47,17 +50,23 @@ class QueryService:
         """Expose prompt construction for evaluation and testing."""
         allowed_tables = None
         if len(request.schema.table_names) > self.rag_threshold:
+            required_tables = clarification_required_tables(
+                request.clarifications,
+                request.schema,
+            )
             allowed_tables = self.schema_linker.link_schema(
                 user_prompt=request.prompt,
                 schema=request.schema,
                 api_key=request.api_key,
                 model=request.model,
+                required_tables=required_tables,
             )
         return self.prompt_builder.build(
             request.prompt,
             request.schema,
             request.clarifications,
             allowed_tables=allowed_tables,
+            compliance_retry=request.compliance_retry,
         )
 
     def generate_candidate(self, request: QueryRequest) -> QueryCandidate:

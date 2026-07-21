@@ -6,7 +6,9 @@ import re
 from typing import Any
 
 from db_whisperer.contracts import SchemaMetadata
-from db_whisperer.schema_graph import SchemaGraph
+from db_whisperer.querier.relationship_connectivity import (
+    shortest_table_connection,
+)
 
 GENERIC_COLUMNS = {
     "id",
@@ -29,6 +31,39 @@ Return an empty list when no listed table is clearly relevant.
 Use table names exactly as they appear in the TABLES section.
 Do not invent tables or columns.
 Do not return SQL, Markdown, explanations, or any other keys."""
+
+
+_CLARIFICATION_COLUMNS = re.compile(
+    r'\(clarifying which column:\s*"([^"]+)"\s+or\s+"([^"]+)"\)',
+    re.IGNORECASE,
+)
+
+
+def clarification_required_tables(
+    clarifications: tuple[str, ...],
+    schema: SchemaMetadata,
+) -> set[str]:
+    """Return schema tables grounded by semantic clarification evidence."""
+    known_columns: dict[str, str] = {}
+    for table in schema.tables:
+        for column in table.columns:
+            known_columns[f"{table.table_name}.{column.name}"] = (
+                table.table_name
+            )
+    for column in schema.columns:
+        if column.table_name:
+            known_columns[f"{column.table_name}.{column.name}"] = (
+                column.table_name
+            )
+
+    required: set[str] = set()
+    for clarification in clarifications:
+        for match in _CLARIFICATION_COLUMNS.finditer(clarification):
+            for qualified_name in match.groups():
+                table_name = known_columns.get(qualified_name)
+                if table_name is not None:
+                    required.add(table_name)
+    return required
 
 
 class SchemaLinker:
@@ -100,9 +135,15 @@ class SchemaLinker:
         schema: SchemaMetadata,
         api_key: str,
         model: str,
+        required_tables: set[str] | None = None,
     ) -> set[str]:
         """Determine the set of relevant and connected tables for the prompt."""
-        core_tables = set()
+        known_tables = set(schema.table_names)
+        core_tables = {
+            table
+            for table in (required_tables or set())
+            if table in known_tables
+        }
 
         # 1. Rule-based token matching (always run as an fast-match / fallback)
         try:
@@ -133,23 +174,15 @@ class SchemaLinker:
         if not core_tables:
             return set(schema.table_names)
 
-        # 4. Find join paths connecting core tables in the schema graph
+        # 4. Add bridge tables from one deterministic shortest connection.
+        # This supports SQL generation only; it does not enumerate or compare
+        # alternate routes and therefore cannot create ambiguity decisions.
         allowed_tables = set(core_tables)
-        try:
-            graph = SchemaGraph.from_schema(schema)
-            # Find the shortest join path between every pair of identified tables
-            core_list = list(core_tables)
-            for i in range(len(core_list)):
-                for j in range(i + 1, len(core_list)):
-                    t1, t2 = core_list[i], core_list[j]
-                    if graph.has_table(t1) and graph.has_table(t2):
-                        enum = graph.enumerate_join_paths(t1, t2)
-                        if enum.paths:
-                            # The paths are sorted by length, so index 0 is the shortest join path
-                            shortest_path = enum.paths[0]
-                            allowed_tables.update(shortest_path.tables)
-        except Exception:
-            # Fall back to returning the disconnected core tables if graph connection fails
-            pass
+        core_list = sorted(core_tables)
+        for index, source in enumerate(core_list):
+            for target in core_list[index + 1:]:
+                allowed_tables.update(
+                    shortest_table_connection(schema, source, target)
+                )
 
         return allowed_tables

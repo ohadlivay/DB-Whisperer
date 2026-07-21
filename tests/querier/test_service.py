@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -15,9 +16,11 @@ from db_whisperer.contracts import (
     ComponentState,
     CsvUpload,
     QueryRequest,
+    Relationship,
 )
 from db_whisperer.etler import ETLService
 from db_whisperer.querier import QueryService
+from db_whisperer.querier.schema_linker import SchemaLinker
 from db_whisperer.querier.sql_validator import (
     SQLValidationError,
     validate_read_only_sql,
@@ -87,7 +90,8 @@ class QueryServiceTest(unittest.TestCase):
             self.assertIn("COLUMN STATISTICS", sent_prompt)
             self.assertIn("USER REQUEST", sent_prompt)
             self.assertIn(
-                "CLARIFICATIONS\n- Exclude null amounts.",
+            "CLARIFICATIONS (BINDING; OVERRIDE CONFLICTING OR AMBIGUOUS "
+            "WORDING IN THE ORIGINAL REQUEST)\n- Exclude null amounts.",
                 sent_prompt,
             )
 
@@ -197,7 +201,14 @@ class QueryServiceTest(unittest.TestCase):
 
             # Use a mock linker that returns only customers
             class StubSchemaLinker:
-                def link_schema(self, user_prompt, schema, api_key, model):
+                def link_schema(
+                    self,
+                    user_prompt,
+                    schema,
+                    api_key,
+                    model,
+                    required_tables=None,
+                ):
                     return {"customers"}
 
             client = FakeOpenRouterClient("SELECT 1")
@@ -221,6 +232,71 @@ class QueryServiceTest(unittest.TestCase):
             
             # orders should be pruned
             self.assertNotIn('CREATE TABLE "orders" (', prompt)
+
+    def test_clarification_pins_admissions_without_biasing_initial_prompt(
+        self,
+    ) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            ingestion = ETLService(
+                Path(directory) / "clinical.duckdb"
+            ).ingest(
+                [
+                    CsvUpload(
+                        "patients.csv",
+                        b"subject_id,dob\n1,2000-01-01\n2,2001-01-01\n",
+                    ),
+                    CsvUpload(
+                        "admissions.csv",
+                        (
+                            b"hadm_id,subject_id,admittime\n"
+                            b"10,1,2024-02-01\n11,2,2023-03-01\n"
+                        ),
+                    ),
+                ]
+            )
+            schema = replace(
+                ingestion.schema,
+                relationships=(Relationship(
+                    child_table="admissions",
+                    child_column="subject_id",
+                    parent_table="patients",
+                    parent_column="subject_id",
+                ),),
+            )
+            service = QueryService(
+                client=FakeOpenRouterClient("SELECT 1"),
+                rag_threshold=1,
+                schema_linker=SchemaLinker(),
+            )
+
+            initial = service.build_prompt(QueryRequest(
+                prompt="Show me all the patients from 2024",
+                schema=schema,
+                api_key="key",
+                model="model",
+            ))
+            clarified = service.build_prompt(QueryRequest(
+                prompt="Show me all the patients from 2024",
+                schema=schema,
+                api_key="key",
+                model="model",
+                clarifications=(
+                    "Question: Born or admitted in 2024? "
+                    '(clarifying which column: "patients.dob" or '
+                    '"admissions.admittime")\n'
+                    "Selected answer: Admitted in 2024",
+                ),
+            ))
+
+            self.assertIn('CREATE TABLE "patients" (', initial)
+            self.assertNotIn('CREATE TABLE "admissions" (', initial)
+            self.assertIn('CREATE TABLE "patients" (', clarified)
+            self.assertIn('CREATE TABLE "admissions" (', clarified)
+            self.assertIn(
+                '"admissions"."subject_id" -> '
+                '"patients"."subject_id"',
+                clarified,
+            )
 
 
 

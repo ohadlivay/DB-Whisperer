@@ -13,9 +13,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from db_whisperer.ambiguity import AmbiguityService
 from db_whisperer.contracts import (
     AmbiguityRequest,
+    ColumnMetadata,
     ComponentState,
     ExecutedQueryPair,
     QueryResult,
+    SchemaMetadata,
+    SemanticAmbiguityTerm,
+    SemanticColumnAnalysis,
+    SemanticColumnCandidate,
 )
 
 
@@ -56,7 +61,148 @@ def request() -> AmbiguityRequest:
     )
 
 
+def semantic_request() -> AmbiguityRequest:
+    base = request()
+    columns = (
+        SemanticColumnCandidate(
+            table="admissions",
+            column="admittime",
+            data_type="TIMESTAMP",
+            bucket="temporal",
+        ),
+        SemanticColumnCandidate(
+            table="patients",
+            column="dob",
+            data_type="TIMESTAMP",
+            bucket="temporal",
+        ),
+    )
+    return AmbiguityRequest(
+        user_query="Show patients from 2024",
+        pairs=base.pairs,
+        api_key=base.api_key,
+        model=base.model,
+        schema=SchemaMetadata(
+            columns=(
+                ColumnMetadata("admittime", "TIMESTAMP", "admissions"),
+                ColumnMetadata("dob", "TIMESTAMP", "patients"),
+            ),
+        ),
+        semantic_analysis=SemanticColumnAnalysis(
+            state=ComponentState.ACCEPTED,
+            terms=(
+                SemanticAmbiguityTerm(
+                    term="from 2024",
+                    bucket="temporal",
+                    columns=columns,
+                ),
+            ),
+        ),
+    )
+
+
+def clarified_request() -> AmbiguityRequest:
+    base = request()
+    return AmbiguityRequest(
+        user_query=base.user_query,
+        pairs=base.pairs,
+        api_key=base.api_key,
+        model=base.model,
+        clarifications=(
+            "Question: Should null values be ignored?\n"
+            "Selected answer: Ignore null values",
+        ),
+    )
+
+
 class AmbiguityServiceTest(unittest.TestCase):
+    def test_clarified_pass_classifies_every_alternative(self) -> None:
+        decision = AmbiguityService(client=FakeJudgeClient({
+            "status": "pass",
+            "reason": "One compliant interpretation remains.",
+            "compliance": [
+                {
+                    "alternative_id": "alternative_1",
+                    "applies_all": False,
+                    "reason": "It does not exclude null values.",
+                },
+                {
+                    "alternative_id": "alternative_2",
+                    "applies_all": True,
+                    "reason": "It explicitly excludes null values.",
+                },
+            ],
+        })).evaluate(clarified_request())
+
+        self.assertEqual(ComponentState.ACCEPTED, decision.state)
+        self.assertTrue(decision.compliance_passed)
+        self.assertEqual(("alternative_2",), decision.compliant_alternatives)
+        self.assertEqual(
+            (("alternative_1", "It does not exclude null values."),),
+            decision.rejected_alternatives,
+        )
+
+    def test_noncompliant_status_requires_all_alternatives_rejected(self) -> None:
+        decision = AmbiguityService(client=FakeJudgeClient({
+            "status": "noncompliant",
+            "reason": "Neither query applies the answer.",
+            "compliance": [
+                {
+                    "alternative_id": "alternative_1",
+                    "applies_all": False,
+                    "reason": "Null handling is unchanged.",
+                },
+                {
+                    "alternative_id": "alternative_2",
+                    "applies_all": False,
+                    "reason": "The filter does not implement the answer.",
+                },
+            ],
+        })).evaluate(clarified_request())
+
+        self.assertEqual(ComponentState.ACCEPTED, decision.state)
+        self.assertFalse(decision.compliance_passed)
+        self.assertIsNone(decision.passed)
+
+    def test_clarified_judgment_rejects_missing_compliance_item(self) -> None:
+        decision = AmbiguityService(client=FakeJudgeClient({
+            "status": "pass",
+            "reason": "Looks correct.",
+            "compliance": [{
+                "alternative_id": "alternative_1",
+                "applies_all": True,
+                "reason": "It applies the answer.",
+            }],
+        })).evaluate(clarified_request())
+
+        self.assertEqual(ComponentState.FAILED, decision.state)
+        self.assertIn("every executed alternative", decision.reason)
+
+    def test_clarified_single_pair_is_evaluated_for_compliance(self) -> None:
+        base = clarified_request()
+        single = AmbiguityRequest(
+            user_query=base.user_query,
+            pairs=base.pairs[:1],
+            api_key=base.api_key,
+            model=base.model,
+            clarifications=base.clarifications,
+        )
+        client = FakeJudgeClient({
+            "status": "pass",
+            "reason": "The only alternative applies the answer.",
+            "compliance": [{
+                "alternative_id": "alternative_1",
+                "applies_all": True,
+                "reason": "The requested filter is present.",
+            }],
+        })
+
+        decision = AmbiguityService(client=client).evaluate(single)
+
+        self.assertEqual(ComponentState.ACCEPTED, decision.state)
+        self.assertTrue(decision.compliance_passed)
+        self.assertEqual(1, len(client.prompts))
+
     def test_returns_pass(self) -> None:
         client = FakeJudgeClient(
             {"status": "pass", "reason": "Same interpretation."}
@@ -73,6 +219,8 @@ class AmbiguityServiceTest(unittest.TestCase):
         client = FakeJudgeClient(
             {
                 "status": "clarify",
+                "source": "candidate-comparison",
+                "alternative_ids": ["alternative_1", "alternative_2"],
                 "question": "Should null values be ignored?",
                 "options": ["Ignore null values", "Include null values"],
                 "reason": "The SQL alternatives handle nulls differently.",
@@ -91,6 +239,14 @@ class AmbiguityServiceTest(unittest.TestCase):
             ("Ignore null values", "Include null values"),
             decision.options,
         )
+        self.assertEqual(
+            ("alternative_1", "alternative_2"),
+            decision.evidence_alternatives,
+        )
+        self.assertEqual(
+            (("alternative_1", 1), ("alternative_2", 1)),
+            decision.candidate_support,
+        )
 
     def test_rejects_missing_question(self) -> None:
         decision = AmbiguityService(
@@ -105,6 +261,7 @@ class AmbiguityServiceTest(unittest.TestCase):
             client=FakeJudgeClient(
                 {
                     "status": "clarify",
+                    "source": "candidate-comparison",
                     "question": "Which scope?",
                     "options": ["All records"],
                 }
@@ -119,6 +276,7 @@ class AmbiguityServiceTest(unittest.TestCase):
             client=FakeJudgeClient(
                 {
                     "status": "clarify",
+                    "source": "candidate-comparison",
                     "question": "Which scope?",
                     "options": ["All records", "all records"],
                 }
@@ -127,6 +285,162 @@ class AmbiguityServiceTest(unittest.TestCase):
 
         self.assertEqual(ComponentState.FAILED, decision.state)
         self.assertIn("distinct", decision.reason)
+
+    def test_semantic_clarification_uses_stable_id_and_validated_columns(
+        self,
+    ) -> None:
+        decision = AmbiguityService(
+            client=FakeJudgeClient({
+                "status": "clarify",
+                "source": "semantic-column",
+                "semantic_finding_id": "semantic_1",
+                "columns": ["patients.dob", "admissions.admittime"],
+                "candidate_rejection_reason": (
+                    "The candidate difference is not a natural reading."
+                ),
+                "question": "Born in 2024 or admitted in 2024?",
+                "options": ["Born in 2024", "Admitted in 2024"],
+                "reason": "Candidates use DOB; schema supports admission.",
+            })
+        ).evaluate(semantic_request())
+
+        self.assertEqual(ComponentState.ACCEPTED, decision.state)
+        self.assertFalse(decision.passed)
+        self.assertEqual(
+            ("patients.dob", "admissions.admittime"),
+            decision.evidence_columns,
+        )
+        self.assertIn("patients.dob", decision.question)
+        self.assertIn(
+            "not a natural reading",
+            decision.candidate_rejection_reason,
+        )
+
+    def test_semantic_clarification_rejects_display_label_as_id(self) -> None:
+        decision = AmbiguityService(
+            client=FakeJudgeClient({
+                "status": "clarify",
+                "source": "semantic-column",
+                "semantic_finding_id": "semantic_1 (temporal)",
+                "columns": ["patients.dob", "admissions.admittime"],
+                "candidate_rejection_reason": "Candidate distinction is weak.",
+                "question": "Which date?",
+                "options": ["Birth", "Admission"],
+            })
+        ).evaluate(semantic_request())
+
+        self.assertEqual(ComponentState.FAILED, decision.state)
+        self.assertIn("exact finding ID", decision.reason)
+
+    def test_semantic_clarification_rejects_column_outside_finding(self) -> None:
+        decision = AmbiguityService(
+            client=FakeJudgeClient({
+                "status": "clarify",
+                "source": "semantic-column",
+                "semantic_finding_id": "semantic_1",
+                "columns": ["patients.dob", "patients.dod"],
+                "candidate_rejection_reason": "Candidate distinction is weak.",
+                "question": "Which date?",
+                "options": ["Birth", "Death"],
+            })
+        ).evaluate(semantic_request())
+
+        self.assertEqual(ComponentState.FAILED, decision.state)
+        self.assertIn("qualified columns", decision.reason)
+
+    def test_candidate_clarification_rejects_unknown_alternative_id(self) -> None:
+        decision = AmbiguityService(
+            client=FakeJudgeClient({
+                "status": "clarify",
+                "source": "candidate-comparison",
+                "alternative_ids": ["alternative_1", "alternative_99"],
+                "question": "Which interpretation?",
+                "options": ["First", "Second"],
+            })
+        ).evaluate(request())
+
+        self.assertEqual(ComponentState.FAILED, decision.state)
+        self.assertIn("alternative IDs", decision.reason)
+
+    def test_semantic_choice_requires_candidate_rejection_rationale(self) -> None:
+        decision = AmbiguityService(
+            client=FakeJudgeClient({
+                "status": "clarify",
+                "source": "semantic-column",
+                "semantic_finding_id": "semantic_1",
+                "columns": ["patients.dob", "admissions.admittime"],
+                "question": "Born or admitted?",
+                "options": ["Born", "Admitted"],
+            })
+        ).evaluate(semantic_request())
+
+        self.assertEqual(ComponentState.FAILED, decision.state)
+        self.assertIn("plausibility gate", decision.reason)
+
+    def test_outlier_candidate_can_yield_to_grounded_semantic_finding(
+        self,
+    ) -> None:
+        base = semantic_request()
+        candidates = (
+            ExecutedQueryPair(
+                candidate_id="candidate_1",
+                sql=(
+                    'SELECT * FROM "patients" WHERE YEAR("dob") = 2024 '
+                    'OR YEAR("dod") = 2024'
+                ),
+                columns=("dob", "dod"),
+                rows=(),
+            ),
+            ExecutedQueryPair(
+                candidate_id="candidate_2",
+                sql='SELECT * FROM "patients" WHERE YEAR("dob") = 2024',
+                columns=("dob", "dod"),
+                rows=(),
+            ),
+            ExecutedQueryPair(
+                candidate_id="candidate_3",
+                sql='SELECT * FROM "patients" WHERE YEAR("dob") = 2024',
+                columns=("dob", "dod"),
+                rows=(),
+            ),
+        )
+        request_with_outlier = AmbiguityRequest(
+            user_query=base.user_query,
+            pairs=candidates,
+            api_key=base.api_key,
+            model=base.model,
+            schema=base.schema,
+            semantic_analysis=base.semantic_analysis,
+        )
+        client = FakeJudgeClient({
+            "status": "clarify",
+            "source": "semantic-column",
+            "semantic_finding_id": "semantic_1",
+            "columns": ["patients.dob", "admissions.admittime"],
+            "candidate_rejection_reason": (
+                "Born-or-deceased is a singleton arbitrary union not "
+                "supported by the wording."
+            ),
+            "question": "Do you mean born or admitted in 2024?",
+            "options": ["Born in 2024", "Admitted in 2024"],
+        })
+
+        decision = AmbiguityService(client=client).evaluate(
+            request_with_outlier
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, decision.state)
+        self.assertEqual("semantic-column", decision.mechanism)
+        self.assertEqual(
+            (("alternative_1", 1), ("alternative_2", 2)),
+            decision.candidate_support,
+        )
+        self.assertEqual(
+            ("patients.dob", "admissions.admittime"),
+            decision.evidence_columns,
+        )
+        self.assertIn("SUPPORT: 1 OF 3 CANDIDATES", client.prompts[0])
+        self.assertIn("SUPPORT: 2 OF 3 CANDIDATES", client.prompts[0])
 
     def test_requires_at_least_two_pairs(self) -> None:
         base = request()

@@ -22,6 +22,9 @@ from db_whisperer.contracts import (
     QueryResult,
     Relationship,
     SchemaMetadata,
+    SemanticAmbiguityTerm,
+    SemanticColumnAnalysis,
+    SemanticColumnCandidate,
 )
 
 
@@ -152,525 +155,245 @@ class ConcurrentQuerySpy:
         )
 
 
-class JoinPathSpy:
-    def __init__(self, decision: AmbiguityDecision) -> None:
-        self.decision = decision
+class ComplianceRetryQuerySpy(QuerySpy):
+    def generate_candidate(self, request):
+        self.generated_requests.append(request)
+        column = "admittime" if request.compliance_retry else "dob"
+        return QueryCandidate(
+            attempt_number=request.attempt_number,
+            state=ComponentState.ACCEPTED,
+            sql=f'SELECT "{column}" FROM "patients"',
+            message="SQL generated.",
+        )
+
+    def execute_candidate(self, candidate, database_path):
+        self.executed_candidates.append((candidate, database_path))
+        column = "admittime" if "admittime" in candidate.sql else "dob"
+        return QueryResult(
+            state=ComponentState.ACCEPTED,
+            message="Returned 1 row(s).",
+            sql=candidate.sql,
+            columns=(column,),
+            rows=(("2024-01-01",),),
+        )
+
+
+class SupportedComplianceQuerySpy(QuerySpy):
+    def generate_candidate(self, request):
+        self.generated_requests.append(request)
+        column = "admittime" if request.attempt_number % 3 != 0 else "dob"
+        return QueryCandidate(
+            attempt_number=request.attempt_number,
+            state=ComponentState.ACCEPTED,
+            sql=f'SELECT "{column}" FROM "patients"',
+            message="SQL generated.",
+        )
+
+    def execute_candidate(self, candidate, database_path):
+        column = "admittime" if "admittime" in candidate.sql else "dob"
+        return QueryResult(
+            state=ComponentState.ACCEPTED,
+            message="Returned 1 row(s).",
+            sql=candidate.sql,
+            columns=(column,),
+            rows=(("2024-01-01",),),
+        )
+
+
+class SemanticAnalysisSpy:
+    def __init__(self, analysis) -> None:
+        self.analysis = analysis
         self.requests = []
 
-    def detect(self, request):
+    def analyze(self, request):
         self.requests.append(request)
-        return self.decision
+        return self.analysis
 
-
-class RaisingJoinPathSpy:
-    def __init__(self) -> None:
-        self.requests = []
-
-    def detect(self, request):
-        self.requests.append(request)
-        raise RuntimeError("join-path detector unavailable")
-
-
-RELATIONAL_SCHEMA = SchemaMetadata(
-    database_path="database.duckdb",
-    table_names=("patients", "labevents"),
-    relationships=(
-        Relationship(
-            child_table="labevents",
-            child_column="subject_id",
-            parent_table="patients",
-            parent_column="subject_id",
-        ),
-    ),
-)
-
-
-class JoinPathGateTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.event_logger = RecordingEventLogger()
-
-    def _clarify_decision(self) -> AmbiguityDecision:
+    @staticmethod
+    def fallback_decision(analysis, pairs=()):
+        term = analysis.terms[0]
+        first, second = term.columns[:2]
         return AmbiguityDecision(
             state=ComponentState.ACCEPTED,
             passed=False,
-            question="Labs for a specific visit, or all visits?",
-            options=("A specific visit", "All visits"),
-            reason="Two join paths.",
-            mechanism="join-path",
-        )
-
-    def test_join_path_clarification_short_circuits_generation(self) -> None:
-        querier = QuerySpy()
-        ambiguity = AmbiguitySpy()
-        join_path = JoinPathSpy(self._clarify_decision())
-        application = ApplicationService(
-            querier=querier,
-            ambiguity=ambiguity,
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=3,
-        )
-
-        result = application.submit_query(
-            prompt="labs for patient 123",
-            schema=RELATIONAL_SCHEMA,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertEqual(ComponentState.PENDING, result.state)
-        self.assertFalse(result.complete)
-        self.assertEqual("join-path", result.ambiguity.mechanism)
-        self.assertEqual(
-            ("A specific visit", "All visits"),
-            result.ambiguity.options,
-        )
-        self.assertIsNone(result.query_result)
-        self.assertEqual((), result.candidates)
-        # No SQL was generated and the candidate judge never ran.
-        self.assertEqual([], querier.generated_requests)
-        self.assertEqual([], ambiguity.requests)
-        self.assertEqual(1, len(join_path.requests))
-        self.assertIn(
-            "join_path_detection",
-            [event[0] for event in self.event_logger.events],
-        )
-
-    def test_join_path_pass_continues_to_candidate_flow(self) -> None:
-        querier = QuerySpy()
-        ambiguity = AmbiguitySpy(
-            AmbiguityDecision(
-                state=ComponentState.ACCEPTED,
-                passed=True,
-                reason="Candidates agree.",
-            )
-        )
-        join_path = JoinPathSpy(
-            AmbiguityDecision(
-                state=ComponentState.ACCEPTED,
-                passed=True,
-                reason="Single path.",
-                mechanism="join-path",
-            )
-        )
-        application = ApplicationService(
-            querier=querier,
-            ambiguity=ambiguity,
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=3,
-        )
-
-        result = application.submit_query(
-            prompt="labs for patient 123",
-            schema=RELATIONAL_SCHEMA,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertTrue(result.complete)
-        self.assertEqual("SELECT 3 AS value", result.query_result.sql)
-        self.assertEqual(1, len(join_path.requests))
-        self.assertEqual(3, len(querier.generated_requests))
-        self.assertEqual(1, len(ambiguity.requests))
-
-    def test_join_path_gate_runs_on_nonterminal_clarification_round(self) -> None:
-        # A second entity pair can still be ambiguous after the first is
-        # answered, so the gate must run on non-terminal clarification rounds;
-        # it delegates settled-pair exclusion to the detector.
-        join_path = JoinPathSpy(
-            AmbiguityDecision(
-                state=ComponentState.ACCEPTED,
-                passed=True,
-                mechanism="join-path",
-            )
-        )
-        ambiguity = AmbiguitySpy(
-            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-        )
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=ambiguity,
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-            max_iterations=3,
-        )
-
-        result = application.submit_query(
-            prompt="labs for patient 123",
-            schema=RELATIONAL_SCHEMA,
-            api_key="key",
-            model="provider/model",
-            clarifications=("Question: scope?\nSelected answer: all",),
-            iteration=2,
-        )
-
-        self.assertTrue(result.complete)
-        self.assertEqual(1, len(join_path.requests))
-        # The clarification passed through to the detector for settled-pair
-        # exclusion.
-        self.assertEqual(
-            ("Question: scope?\nSelected answer: all",),
-            join_path.requests[0].clarifications,
-        )
-
-    def test_join_path_gate_skipped_without_relationships(self) -> None:
-        join_path = JoinPathSpy(self._clarify_decision())
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(
-                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+            question=(
+                f'Which {term.term} do you mean? '
+                f'(clarifying which column: "{first.qualified_name}" or '
+                f'"{second.qualified_name}")'
             ),
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
+            options=(first.qualified_name, second.qualified_name),
+            reason="Deterministic semantic fallback.",
+            mechanism="semantic-column",
+            evidence_columns=(first.qualified_name, second.qualified_name),
         )
 
-        result = application.submit_query(
-            prompt="show the data",
-            schema=SchemaMetadata(database_path="database.duckdb"),
-            api_key="key",
-            model="provider/model",
-        )
 
-        self.assertTrue(result.complete)
-        self.assertEqual([], join_path.requests)
+class RaisingSemanticAnalysisSpy(SemanticAnalysisSpy):
+    def __init__(self) -> None:
+        super().__init__(None)
 
-    def test_join_path_gate_can_be_disabled(self) -> None:
-        join_path = JoinPathSpy(self._clarify_decision())
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(
-                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-            ),
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-            enable_join_path_detection=False,
-        )
+    def analyze(self, request):
+        self.requests.append(request)
+        raise RuntimeError("semantic analysis unavailable")
 
-        result = application.submit_query(
-            prompt="labs for patient 123",
-            schema=RELATIONAL_SCHEMA,
-            api_key="key",
-            model="provider/model",
-        )
 
-        self.assertTrue(result.complete)
-        self.assertEqual([], join_path.requests)
-
-    def test_join_path_failure_degrades_to_candidate_flow(self) -> None:
-        join_path = RaisingJoinPathSpy()
-        ambiguity = AmbiguitySpy(
-            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-        )
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=ambiguity,
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-        )
-
-        result = application.submit_query(
-            prompt="labs for patient 123",
-            schema=RELATIONAL_SCHEMA,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertTrue(result.complete)
-        self.assertEqual(1, len(join_path.requests))
-        self.assertEqual(1, len(ambiguity.requests))
-
-    def test_join_path_gate_skipped_for_single_table_with_self_fk(self) -> None:
-        # A single table carrying a self-referential relationship must isolate
-        # the table-count guard: CLAUDE.md calls single-table behavior the most
-        # dangerous wrong assumption.
-        join_path = JoinPathSpy(self._clarify_decision())
-        single_table = SchemaMetadata(
-            database_path="database.duckdb",
-            table_names=("events",),
-            relationships=(
-                Relationship(
-                    child_table="events",
-                    child_column="parent_event_id",
-                    parent_table="events",
-                    parent_column="event_id",
+def _semantic_analysis() -> SemanticColumnAnalysis:
+    return SemanticColumnAnalysis(
+        state=ComponentState.ACCEPTED,
+        terms=(
+            SemanticAmbiguityTerm(
+                term="date",
+                bucket="temporal",
+                columns=(
+                    SemanticColumnCandidate(
+                        table="orders",
+                        column="order_date",
+                        data_type="DATE",
+                        bucket="temporal",
+                    ),
+                    SemanticColumnCandidate(
+                        table="orders",
+                        column="required_date",
+                        data_type="DATE",
+                        bucket="temporal",
+                    ),
                 ),
             ),
-        )
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(
-                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-            ),
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-        )
-
-        result = application.submit_query(
-            prompt="show the events",
-            schema=single_table,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertTrue(result.complete)
-        self.assertEqual([], join_path.requests)
-
-    def test_join_path_gate_skipped_on_terminal_iteration(self) -> None:
-        # With max_iterations=1, round 1 is terminal; the gate must not fire and
-        # leave a clarification the user could never answer.
-        join_path = JoinPathSpy(self._clarify_decision())
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(),
-            join_path=join_path,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-            max_iterations=1,
-        )
-
-        result = application.submit_query(
-            prompt="labs for patient 123",
-            schema=RELATIONAL_SCHEMA,
-            api_key="key",
-            model="provider/model",
-            iteration=1,
-        )
-
-        self.assertTrue(result.complete)
-        self.assertEqual([], join_path.requests)
-        self.assertEqual("SELECT 2 AS value", result.query_result.sql)
-
-
-class SemanticColumnSpy:
-    def __init__(self, decision: AmbiguityDecision) -> None:
-        self.decision = decision
-        self.requests = []
-
-    def detect(self, request):
-        self.requests.append(request)
-        return self.decision
-
-
-class RaisingSemanticColumnSpy:
-    def __init__(self) -> None:
-        self.requests = []
-
-    def detect(self, request):
-        self.requests.append(request)
-        raise RuntimeError("semantic-column detector unavailable")
-
-
-class _FakeColumnClient:
-    """A fake AmbiguityOpenRouterClient returning queued JSON judgments."""
-
-    def __init__(self, *responses) -> None:
-        self.responses = list(responses)
-        self.prompts = []
-
-    def evaluate(self, prompt, api_key, model):
-        self.prompts.append(prompt)
-        return self.responses.pop(0)
-
-
-def _date_columns(*names: str) -> tuple[ColumnMetadata, ...]:
-    return tuple(
-        ColumnMetadata(name=name, data_type="DATE", table_name="orders")
-        for name in names
+        ),
+        reason="One vague date term.",
     )
 
 
-# Single table with three DATE columns: no join graph, but a semantic-column
-# ambiguity ("which date?"). Join-path is auto-skipped (no relationships).
 COLUMN_SCHEMA = SchemaMetadata(
     database_path="database.duckdb",
     table_names=("orders",),
-    columns=_date_columns("order_date", "required_date", "shipped_date"),
-)
-
-# Two related tables AND multiple same-type columns, so both gates can run and
-# their ordering (join-path first, then semantic-column) can be observed.
-RELATIONAL_COLUMN_SCHEMA = SchemaMetadata(
-    database_path="database.duckdb",
-    table_names=("orders", "customers"),
-    columns=_date_columns("order_date", "required_date")
-    + (ColumnMetadata(name="customer_id", data_type="INTEGER", table_name="orders"),),
-    relationships=(
-        Relationship(
-            child_table="orders",
-            child_column="customer_id",
-            parent_table="customers",
-            parent_column="customer_id",
-        ),
+    columns=(
+        ColumnMetadata("order_date", "DATE", "orders"),
+        ColumnMetadata("required_date", "DATE", "orders"),
     ),
 )
 
 
-class SemanticColumnGateTest(unittest.TestCase):
+class HybridAmbiguityFlowTest(unittest.TestCase):
     def setUp(self) -> None:
         self.event_logger = RecordingEventLogger()
 
-    def _clarify_decision(self) -> AmbiguityDecision:
-        return AmbiguityDecision(
-            state=ComponentState.ACCEPTED,
-            passed=False,
-            question='Which date do you mean: "order_date" or "required_date"?',
-            options=("When it was placed", "When it is required"),
-            reason="Several date columns.",
-            mechanism="semantic-column",
-        )
-
-    def _pass_decision(self, mechanism: str) -> AmbiguityDecision:
-        return AmbiguityDecision(
-            state=ComponentState.ACCEPTED,
-            passed=True,
-            reason="No ambiguity.",
-            mechanism=mechanism,
-        )
-
-    def test_clarification_short_circuits_generation(self) -> None:
+    def test_semantic_analysis_runs_before_candidates_and_is_deferred(self) -> None:
         querier = QuerySpy()
-        ambiguity = AmbiguitySpy()
-        semantic = SemanticColumnSpy(self._clarify_decision())
+        semantic = SemanticAnalysisSpy(_semantic_analysis())
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=False,
+                question="Which candidate interpretation?",
+                options=("Candidate A", "Candidate B"),
+                reason="Candidate difference is primary.",
+                mechanism="candidate-comparison",
+            )
+        )
         application = ApplicationService(
             querier=querier,
             ambiguity=ambiguity,
             semantic_column=semantic,
             event_logger=self.event_logger,
-            candidates_per_iteration=3,
-            enable_join_path_detection=False,
+            candidates_per_iteration=2,
         )
 
         result = application.submit_query(
-            prompt="show me the dates for order 5",
+            prompt="show the date",
             schema=COLUMN_SCHEMA,
             api_key="key",
             model="provider/model",
         )
 
         self.assertEqual(ComponentState.PENDING, result.state)
-        self.assertFalse(result.complete)
-        self.assertEqual("semantic-column", result.ambiguity.mechanism)
-        self.assertEqual(
-            ("When it was placed", "When it is required"),
-            result.ambiguity.options,
-        )
-        self.assertIsNone(result.query_result)
-        self.assertEqual((), result.candidates)
-        # No SQL was generated and the candidate judge never ran.
-        self.assertEqual([], querier.generated_requests)
-        self.assertEqual([], ambiguity.requests)
+        self.assertEqual("candidate-comparison", result.ambiguity.mechanism)
+        self.assertEqual(2, len(querier.generated_requests))
         self.assertEqual(1, len(semantic.requests))
-        self.assertIn(
-            "semantic_column_detection",
-            [event[0] for event in self.event_logger.events],
+        self.assertIs(ambiguity.requests[0].semantic_analysis, semantic.analysis)
+        self.assertIs(ambiguity.requests[0].schema, COLUMN_SCHEMA)
+        decision_event = next(
+            event for event in self.event_logger.events
+            if event[0] == "ambiguity_decision"
+        )
+        self.assertEqual(
+            [
+                {"alternative_id": "alternative_1", "support": 1},
+                {"alternative_id": "alternative_2", "support": 1},
+            ],
+            decision_event[2]["candidate_support"],
         )
 
-    def test_runs_after_join_path_passes(self) -> None:
-        join_path = JoinPathSpy(self._pass_decision("join-path"))
-        semantic = SemanticColumnSpy(self._clarify_decision())
+    def test_failed_unified_judge_uses_semantic_fallback(self) -> None:
+        semantic = SemanticAnalysisSpy(_semantic_analysis())
         application = ApplicationService(
             querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(),
-            join_path=join_path,
+            ambiguity=RaisingAmbiguitySpy(),
             semantic_column=semantic,
             event_logger=self.event_logger,
             candidates_per_iteration=2,
         )
 
         result = application.submit_query(
-            prompt="dates for orders by customer",
-            schema=RELATIONAL_COLUMN_SCHEMA,
+            prompt="show the date",
+            schema=COLUMN_SCHEMA,
             api_key="key",
             model="provider/model",
         )
 
         self.assertEqual(ComponentState.PENDING, result.state)
         self.assertEqual("semantic-column", result.ambiguity.mechanism)
-        # Join-path ran first and passed; semantic-column then ran.
-        self.assertEqual(1, len(join_path.requests))
-        self.assertEqual(1, len(semantic.requests))
-
-    def test_join_path_clarification_short_circuits_semantic_column(self) -> None:
-        join_path = JoinPathSpy(
-            AmbiguityDecision(
-                state=ComponentState.ACCEPTED,
-                passed=False,
-                question="A specific visit, or all visits?",
-                options=("A specific visit", "All visits"),
-                mechanism="join-path",
-            )
+        self.assertIn("orders.order_date", result.ambiguity.question)
+        decision_events = [
+            event for event in self.event_logger.events
+            if event[0] == "ambiguity_decision"
+        ]
+        self.assertEqual(1, len(decision_events))
+        self.assertTrue(decision_events[0][2]["fallback_used"])
+        self.assertEqual(
+            ["orders.order_date", "orders.required_date"],
+            decision_events[0][2]["evidence_columns"],
         )
-        semantic = SemanticColumnSpy(self._clarify_decision())
+
+    def test_analysis_failure_degrades_to_candidate_judge(self) -> None:
+        semantic = RaisingSemanticAnalysisSpy()
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+        )
         application = ApplicationService(
             querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(),
-            join_path=join_path,
+            ambiguity=ambiguity,
             semantic_column=semantic,
             event_logger=self.event_logger,
             candidates_per_iteration=2,
         )
 
         result = application.submit_query(
-            prompt="dates for orders by customer",
-            schema=RELATIONAL_COLUMN_SCHEMA,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertEqual("join-path", result.ambiguity.mechanism)
-        # Join-path took precedence, so semantic-column never ran.
-        self.assertEqual(1, len(join_path.requests))
-        self.assertEqual([], semantic.requests)
-
-    def test_pass_continues_to_candidate_flow(self) -> None:
-        querier = QuerySpy()
-        ambiguity = AmbiguitySpy(
-            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-        )
-        semantic = SemanticColumnSpy(self._pass_decision("semantic-column"))
-        application = ApplicationService(
-            querier=querier,
-            ambiguity=ambiguity,
-            semantic_column=semantic,
-            event_logger=self.event_logger,
-            candidates_per_iteration=3,
-            enable_join_path_detection=False,
-        )
-
-        result = application.submit_query(
-            prompt="show me the dates for order 5",
+            prompt="show the date",
             schema=COLUMN_SCHEMA,
             api_key="key",
             model="provider/model",
         )
 
         self.assertTrue(result.complete)
-        self.assertEqual(1, len(semantic.requests))
-        self.assertEqual(3, len(querier.generated_requests))
-        self.assertEqual(1, len(ambiguity.requests))
+        self.assertEqual(ComponentState.FAILED, ambiguity.requests[0].semantic_analysis.state)
 
-    def test_gate_can_be_disabled(self) -> None:
-        semantic = SemanticColumnSpy(self._clarify_decision())
+    def test_analysis_can_be_disabled_for_evaluation(self) -> None:
+        semantic = SemanticAnalysisSpy(_semantic_analysis())
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
+        )
         application = ApplicationService(
             querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(
-                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-            ),
+            ambiguity=ambiguity,
             semantic_column=semantic,
             event_logger=self.event_logger,
             candidates_per_iteration=2,
-            enable_join_path_detection=False,
             enable_semantic_column_detection=False,
         )
 
         result = application.submit_query(
-            prompt="show me the dates for order 5",
+            prompt="show the date",
             schema=COLUMN_SCHEMA,
             api_key="key",
             model="provider/model",
@@ -678,62 +401,10 @@ class SemanticColumnGateTest(unittest.TestCase):
 
         self.assertTrue(result.complete)
         self.assertEqual([], semantic.requests)
+        self.assertIsNone(ambiguity.requests[0].semantic_analysis)
 
-    def test_gate_skipped_with_fewer_than_two_columns(self) -> None:
-        semantic = SemanticColumnSpy(self._clarify_decision())
-        one_column = SchemaMetadata(
-            database_path="database.duckdb",
-            table_names=("orders",),
-            columns=_date_columns("order_date"),
-        )
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=AmbiguitySpy(
-                AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-            ),
-            semantic_column=semantic,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-            enable_join_path_detection=False,
-        )
-
-        result = application.submit_query(
-            prompt="show me the date",
-            schema=one_column,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertTrue(result.complete)
-        self.assertEqual([], semantic.requests)
-
-    def test_failure_degrades_to_candidate_flow(self) -> None:
-        semantic = RaisingSemanticColumnSpy()
-        ambiguity = AmbiguitySpy(
-            AmbiguityDecision(state=ComponentState.ACCEPTED, passed=True)
-        )
-        application = ApplicationService(
-            querier=QuerySpy(),
-            ambiguity=ambiguity,
-            semantic_column=semantic,
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-            enable_join_path_detection=False,
-        )
-
-        result = application.submit_query(
-            prompt="show me the dates for order 5",
-            schema=COLUMN_SCHEMA,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertTrue(result.complete)
-        self.assertEqual(1, len(semantic.requests))
-        self.assertEqual(1, len(ambiguity.requests))
-
-    def test_gate_skipped_on_terminal_iteration(self) -> None:
-        semantic = SemanticColumnSpy(self._clarify_decision())
+    def test_terminal_iteration_skips_analysis_and_judging(self) -> None:
+        semantic = SemanticAnalysisSpy(_semantic_analysis())
         application = ApplicationService(
             querier=QuerySpy(),
             ambiguity=AmbiguitySpy(),
@@ -741,11 +412,10 @@ class SemanticColumnGateTest(unittest.TestCase):
             event_logger=self.event_logger,
             candidates_per_iteration=2,
             max_iterations=1,
-            enable_join_path_detection=False,
         )
 
         result = application.submit_query(
-            prompt="show me the dates for order 5",
+            prompt="show the date",
             schema=COLUMN_SCHEMA,
             api_key="key",
             model="provider/model",
@@ -754,57 +424,6 @@ class SemanticColumnGateTest(unittest.TestCase):
 
         self.assertTrue(result.complete)
         self.assertEqual([], semantic.requests)
-
-    def test_real_semantic_service_through_application(self) -> None:
-        # Drive the REAL SemanticColumnAmbiguityService (not a spy) through the
-        # real ApplicationService, faking only the OpenRouter client, so the
-        # wiring + detection compose end to end.
-        querier = QuerySpy()
-        client = _FakeColumnClient(
-            {
-                "terms": [
-                    {
-                        "term": "dates",
-                        "columns": [
-                            {"table": "orders", "column": "order_date"},
-                            {"table": "orders", "column": "required_date"},
-                            {"table": "orders", "column": "shipped_date"},
-                        ],
-                    }
-                ]
-            },
-            {
-                "question": "Which date do you mean?",
-                "options": ["When placed", "When required"],
-                "reason": "Three date columns.",
-            },
-        )
-        application = ApplicationService(
-            querier=querier,
-            ambiguity=AmbiguitySpy(),
-            semantic_column=SemanticColumnAmbiguityService(client=client),
-            event_logger=self.event_logger,
-            candidates_per_iteration=2,
-            enable_join_path_detection=False,
-        )
-
-        result = application.submit_query(
-            prompt="show me the dates for order 5",
-            schema=COLUMN_SCHEMA,
-            api_key="key",
-            model="provider/model",
-        )
-
-        self.assertEqual(ComponentState.PENDING, result.state)
-        self.assertEqual("semantic-column", result.ambiguity.mechanism)
-        self.assertEqual(
-            ("When placed", "When required"), result.ambiguity.options
-        )
-        # Qualified column refs are appended for next-round settling.
-        self.assertIn("orders.order_date", result.ambiguity.question)
-        # The clarification short-circuited candidate generation.
-        self.assertEqual([], querier.generated_requests)
-        self.assertEqual(2, len(client.prompts))
 
 
 class ApplicationServiceTest(unittest.TestCase):
@@ -1015,6 +634,11 @@ class ApplicationServiceTest(unittest.TestCase):
                 state=ComponentState.ACCEPTED,
                 passed=True,
                 reason="Candidates agree.",
+                compliance_passed=True,
+                compliant_alternatives=(
+                    "alternative_1",
+                    "alternative_2",
+                ),
             ),
         )
         application = ApplicationService(
@@ -1069,6 +693,166 @@ class ApplicationServiceTest(unittest.TestCase):
             (clarification,),
             ambiguity.requests[1].clarifications,
         )
+
+    def test_clarified_result_uses_highest_support_compliant_alternative(
+        self,
+    ) -> None:
+        application = ApplicationService(
+            querier=SupportedComplianceQuerySpy(),
+            ambiguity=AmbiguitySpy(AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=True,
+                reason="Both alternatives apply the clarification.",
+                compliance_passed=True,
+                compliant_alternatives=("alternative_1", "alternative_2"),
+            )),
+            event_logger=self.event_logger,
+            candidates_per_iteration=3,
+        )
+
+        result = application.submit_query(
+            prompt="Show patients from 2024",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+            clarifications=(
+                "Question: Born or admitted?\nSelected answer: Admitted",
+            ),
+            iteration=2,
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertIn("admittime", result.query_result.sql)
+        selected = next(
+            event for event in self.event_logger.events
+            if event[0] == "clarification_compliant_result_selected"
+        )
+        self.assertEqual(2, selected[2]["support"])
+
+    def test_noncompliant_batch_retries_once_and_returns_verified_sql(
+        self,
+    ) -> None:
+        querier = ComplianceRetryQuerySpy()
+        ambiguity = AmbiguitySpy(
+            AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                reason="Candidates still use date of birth.",
+                compliance_passed=False,
+                rejected_alternatives=(("alternative_1", "Uses dob."),),
+            ),
+            AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=True,
+                reason="Retry applies admission time.",
+                compliance_passed=True,
+                compliant_alternatives=("alternative_1",),
+            ),
+        )
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=ambiguity,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="Show patients from 2024",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+            clarifications=(
+                "Question: Born or admitted?\nSelected answer: Admitted",
+            ),
+            iteration=2,
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertIn("admittime", result.query_result.sql)
+        self.assertEqual(4, len(result.candidates))
+        self.assertEqual(
+            [False, False, True, True],
+            [request.compliance_retry for request in querier.generated_requests],
+        )
+        self.assertEqual(2, len(ambiguity.requests))
+
+    def test_second_noncompliant_batch_fails_without_result(self) -> None:
+        noncompliant = AmbiguityDecision(
+            state=ComponentState.ACCEPTED,
+            reason="No candidate applies admission time.",
+            compliance_passed=False,
+            rejected_alternatives=(("alternative_1", "Uses dob."),),
+        )
+        application = ApplicationService(
+            querier=ComplianceRetryQuerySpy(),
+            ambiguity=AmbiguitySpy(noncompliant, noncompliant),
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="Show patients from 2024",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+            clarifications=(
+                "Question: Born or admitted?\nSelected answer: Admitted",
+            ),
+            iteration=2,
+        )
+
+        self.assertEqual(ComponentState.FAILED, result.state)
+        self.assertIsNone(result.query_result)
+        self.assertIn("could not verify", result.message)
+
+    def test_clarified_judge_failure_fails_closed_without_retry(self) -> None:
+        querier = QuerySpy()
+        application = ApplicationService(
+            querier=querier,
+            ambiguity=RaisingAmbiguitySpy(),
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+        )
+
+        result = application.submit_query(
+            prompt="Return the values",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+            clarifications=("Question: Which?\nSelected answer: First",),
+            iteration=2,
+        )
+
+        self.assertEqual(ComponentState.FAILED, result.state)
+        self.assertIsNone(result.query_result)
+        self.assertEqual(2, len(querier.generated_requests))
+
+    def test_final_iteration_still_checks_clarification_compliance(self) -> None:
+        ambiguity = AmbiguitySpy(AmbiguityDecision(
+            state=ComponentState.ACCEPTED,
+            passed=True,
+            reason="The settled answer is applied.",
+            compliance_passed=True,
+            compliant_alternatives=("alternative_1", "alternative_2"),
+        ))
+        application = ApplicationService(
+            querier=QuerySpy(),
+            ambiguity=ambiguity,
+            event_logger=self.event_logger,
+            candidates_per_iteration=2,
+            max_iterations=3,
+        )
+
+        result = application.submit_query(
+            prompt="Return values",
+            schema=self.schema,
+            api_key="key",
+            model="provider/model",
+            clarifications=("Question: Which?\nSelected answer: First",),
+            iteration=3,
+        )
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertEqual(1, len(ambiguity.requests))
 
     def test_third_iteration_returns_last_query_without_another_judgment(
         self,

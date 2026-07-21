@@ -2,129 +2,101 @@
 
 ## Overview
 
-DB Whisperer lets users query CSV data using natural language. It loads one CSV
-into DuckDB, generates SQL, executes it, and displays the result.
-
-The project uses Python, Streamlit, DuckDB, and OpenRouter.
+DB Whisperer loads one or more CSV files into DuckDB and answers natural-language
+questions with validated read-only SQL. Streamlit owns presentation,
+ApplicationService owns orchestration, and OpenRouter supplies model calls.
 
 ## Components
 
-### Component A: ETLer
+### Component A: ETL
 
-Imports one or more CSV files into DuckDB (one table per file), exposes
-per-table and column metadata, and discovers foreign-key relationships between
-tables from naming hints confirmed by value overlap.
+ETL imports one table per CSV, exposes exact table/column metadata, and discovers
+advisory foreign-key relationships from naming and value overlap. Relationships
+are never enforced as DuckDB constraints.
 
-**Input:** One or more CSV files.
+### Component B: Hybrid Ambiguity
 
-**Output:** DuckDB database, per-table schema metadata, and discovered
-relationships. Relationships are advisory metadata only and are never enforced
-as DuckDB constraints.
+Ambiguity is analyzed before and after SQL generation:
 
-### Component B: Ambiguity Specifier
+1. Before SQL, semantic analysis finds vague terms that map to multiple exact
+   columns in the same coarse type bucket. It retains all validated unresolved
+   findings but does not interrupt.
+2. The application generates and executes K candidate SQL statements.
+3. Exact SQL/result duplicates are clustered so the judge sees stable
+   alternative IDs and candidate support counts.
+4. A unified LLM judge compares executed SQL/results as primary evidence and
+   rejects alternatives that are not coherent, natural readings of the user
+   request. Semantic findings, schema columns/types, and direct relationships
+   are supporting evidence.
+5. Eligible candidate ambiguity has priority. A singleton candidate remains
+   eligible only with wording or schema/semantic corroboration. If no candidate
+   distinction passes the plausibility gate, a semantic finding may justify
+   clarification.
 
-Detects whether the user's request maps to more than one valid interpretation
-and, if so, returns one clarifying question with exactly two answer options.
-Component B has three complementary mechanisms, tried in order, and never
-generates SQL, executes queries, or manages the loop.
-
-**Primary mechanism -- schema-graph join-path multiplicity.** Before any SQL is
-generated, an LLM extracts the entities a question mentions and maps them to
-tables. The schema graph (assembled from Component A's discovered foreign keys)
-enumerates the distinct join paths between those tables. When more than one
-distinct path connects an entity pair, the request is ambiguous -- the same
-wording joins the data differently with different results. The clarifying
-question (LLM-written, with a deterministic fallback) asks the user which
-connection they mean. The canonical example is "labs for patient X", which can
-join `labevents` directly to `patients` by `subject_id` or through a hospital
-visit (`admissions`). Pure graph assembly and path enumeration live in
-`schema_graph/`; the LLM steps live in `ambiguity/`.
-
-**Secondary mechanism -- semantic-type column matching.** When join-path
-detection finds no multiplicity, an LLM maps vague terms in the question to
-candidate columns, and a deterministic guard groups those columns into semantic
-buckets (temporal, numeric, boolean, textual). When a term maps to two or more
-columns of the same bucket -- the canonical example is "dates", meaning an
-admission date, a discharge date, or a date of birth -- the request is
-ambiguous, and the clarifying question (LLM-written, with a deterministic
-fallback) asks which column the user means. This mechanism also runs for
-single-table datasets, which have no join graph to traverse.
-
-**Tertiary mechanism -- executed-candidate comparison.** When both schema-graph
-gates pass, the application generates K SQL candidates, executes them, and
-Component B compares the SQL/table pairs to decide whether they expose a
-material ambiguity, again returning a pass or one two-option question.
-
-All three mechanisms return a pass decision or one clarifying question with
-exactly two answer options, tagged with the mechanism that produced it.
+The judge returns pass or one short question with exactly two options. Direct
+relationships never trigger ambiguity by themselves, and alternate relationship
+routes are never counted or enumerated.
 
 ### Component C: Querier
 
-Converts one natural-language request into DuckDB SQL using database context and
-an LLM.
+The Querier builds schema-aware prompts, generates DuckDB SQL, validates a
+single read-only SELECT, and executes it. Prompt context includes DDL, top rows,
+shape, statistics, exact identifiers, direct relationships, the user request,
+and prior clarifications.
 
-It builds the prompt from static instructions, quoted schema DDL, five sample
-rows, table shape, column statistics, a schema-derived identifier allowlist, and
-a RELATIONSHIPS section listing discovered foreign keys so the model can join
-tables. User-confirmed ambiguity clarifications are appended when available. It
-then validates and executes the generated SQL.
-
-**Input:** User request, DuckDB database, and OpenRouter configuration.
-
-**Output:** Generated SQL and query result.
+Large schemas use schema linking. Relevant endpoints may be connected with one
+deterministic shortest relationship chain so bridge tables remain available.
+This is SQL-generation support only, not ambiguity detection.
+After a semantic clarification is answered, its schema-validated qualified
+columns pin their tables in the linked context. This happens only after the
+user answers, so pre-SQL findings do not steer initial candidate generation.
 
 ### Component D: Application and GUI
 
-Provides the Streamlit interface and coordinates the complete workflow.
+ApplicationService runs semantic analysis, parallel candidate generation and
+execution, unified ambiguity judging, fallbacks, and the clarification loop.
+Only one two-option question is shown per round. The default three-iteration
+limit permits at most two sequential questions.
 
-For each iteration, the application asks Component C for a user-selected number
-of independently generated SQL queries and processes them concurrently through
-a bounded worker pool. The default is three. Results are restored to candidate
-order before Component B compares the SQL/result pairs. The application either
-displays the most recent result, shows one clarifying question with two
-clickable options, or stops after three iterations and displays the most recent
-result. The selected question and answer are appended to the next Querier
-prompt.
+On clarified rounds, the post-SQL judge classifies every executed alternative
+against all settled answers. The application selects the highest-support
+compliant alternative. If none comply, it regenerates one candidate batch with
+binding clarification instructions; a second noncompliant or unverifiable
+batch fails without returning SQL or rows. The final iteration therefore
+returns a verified compliant result or an explicit failure, never an
+unverified last-successful result.
 
 ## High-Level Flow
 
-```mermaid
-flowchart LR
-    CSV[CSV files] --> A[ETLer]
-    A --> DB[(DuckDB)]
-    A --> S[Schema metadata]
+    User question
+        -> pre-SQL semantic analysis
+        -> generate and execute K candidates
+        -> unified post-SQL ambiguity decision
+        -> result, or one question with two options
+        -> after an answer, compliance classification
+        -> compliant result, one retry, or fail closed
 
-    U[User] --> D[Streamlit application]
-    D -->|user request + clarifications| C[Querier]
-    S --> C
-    DB --> C
-    C -->|K SQL/result pairs| B[Ambiguity Specifier]
-    B -->|pass or question + two options| D
-    D -->|selected question + answer| C
-    C -->|most recent result| D
-    D --> U
-```
+Schema columns, types, semantic findings, and direct relationships feed the
+unified decision as supporting evidence.
 
 ## Project Structure
 
-```text
-src/db_whisperer/
-|-- application/    # Workflow orchestration
-|-- etler/          # CSV ingestion and schema metadata
-|-- schema_graph/   # FK graph assembly and join-path enumeration
-|-- ambiguity/      # Join-path, semantic-column, and candidate comparison
-|-- querier/        # SQL generation, validation, and execution
-|-- gui/            # Streamlit interface
-`-- contracts.py    # Shared component data models
-```
+    src/db_whisperer/
+    |-- application/    workflow orchestration
+    |-- etler/          CSV ingestion and relationship discovery
+    |-- ambiguity/      semantic analysis and unified post-SQL judgment
+    |-- querier/        SQL generation, linking, validation, and execution
+    |-- gui/            Streamlit interface
+    -- contracts.py     shared component data models
+
+Evaluation V3 is isolated in benchmark_v3. Evaluation V2 and earlier join-path
+experiments are preserved as historical artifacts and are not the current
+executable evaluation.
 
 ## Key Constraints
 
-- Only read-only SQL is allowed.
-- OpenRouter credentials are supplied through environment variables.
-- Every prompt and raw LLM response is appended to `logs/prompts.jsonl`.
-- Prompt and response records share a request ID for correlation.
-- Candidate generation, SQL validation, and execution outcomes are logged with
-  attempt numbers, SQL when available, and failure reasons.
-- Logs contain database context and may contain sensitive CSV values. API keys
-  are not logged.
+- SQL execution remains read-only.
+- API keys are never logged or persisted.
+- Prompts and results may contain sensitive CSV values.
+- Relationship metadata is advisory support, never standalone ambiguity proof.
+- No production component enumerates relationship paths for ambiguity.

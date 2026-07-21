@@ -15,7 +15,10 @@ from db_whisperer.contracts import (
     SchemaMetadata,
     TableSchema,
 )
-from db_whisperer.querier.schema_linker import SchemaLinker
+from db_whisperer.querier.schema_linker import (
+    SchemaLinker,
+    clarification_required_tables,
+)
 
 
 class MockOpenRouterClient:
@@ -173,6 +176,51 @@ class SchemaLinkerTest(unittest.TestCase):
             model="",
         )
         self.assertEqual({"patients", "admissions", "labevents"}, set(allowed))
+
+    def test_semantic_clarification_columns_pin_exact_tables(self) -> None:
+        required = clarification_required_tables(
+            (
+                "Question: Born or admitted? (clarifying which column: "
+                '"patients.dob" or "admissions.admittime")\n'
+                "Selected answer: Admitted",
+            ),
+            SchemaMetadata(
+                table_names=("patients", "admissions"),
+                tables=(
+                    TableSchema(
+                        table_name="patients",
+                        columns=(
+                            ColumnMetadata("subject_id", "INTEGER"),
+                            ColumnMetadata("dob", "TIMESTAMP"),
+                        ),
+                        row_count=100,
+                    ),
+                    TableSchema(
+                        table_name="admissions",
+                        columns=(
+                            ColumnMetadata("subject_id", "INTEGER"),
+                            ColumnMetadata("admittime", "TIMESTAMP"),
+                        ),
+                        row_count=0,
+                    ),
+                ),
+            ),
+        )
+
+        self.assertEqual({"patients", "admissions"}, required)
+
+    def test_required_clarification_table_is_kept_with_original_match(
+        self,
+    ) -> None:
+        allowed = self.linker.link_schema(
+            user_prompt="Show patients",
+            schema=self.schema,
+            api_key="",
+            model="",
+            required_tables={"admissions"},
+        )
+
+        self.assertEqual({"patients", "admissions"}, allowed)
 
 
 if __name__ == "__main__":

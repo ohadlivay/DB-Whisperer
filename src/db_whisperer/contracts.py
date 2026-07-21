@@ -65,31 +65,6 @@ class Relationship:
 
 
 @dataclass(frozen=True)
-class JoinPath:
-    """One ordered chain of tables connected by discovered relationships.
-
-    ``tables`` is the node sequence visited from a source table to a target
-    table (length >= 2). ``relationships`` are the foreign-key edges used to
-    walk it, in traversal order, so ``len(relationships) == len(tables) - 1``.
-    A relationship is undirected for join purposes; the same edge can be walked
-    parent-to-child or child-to-parent depending on the surrounding tables.
-    """
-
-    tables: tuple[str, ...]
-    relationships: tuple[Relationship, ...]
-
-    @property
-    def hop_count(self) -> int:
-        """Number of join edges in the path."""
-        return len(self.relationships)
-
-    @property
-    def intermediate_tables(self) -> tuple[str, ...]:
-        """Tables strictly between the source and target endpoints."""
-        return self.tables[1:-1]
-
-
-@dataclass(frozen=True)
 class SchemaMetadata:
     """Minimal schema information exposed by the ETL component."""
 
@@ -123,6 +98,7 @@ class QueryRequest:
     model: str
     clarifications: tuple[str, ...] = ()
     attempt_number: int = 1
+    compliance_retry: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,59 +155,70 @@ class ExecutedQueryPair:
 
 @dataclass(frozen=True)
 class AmbiguityRequest:
-    """User request and K executed SQL/table pairs sent to Component B."""
+    """Executed alternatives plus supporting schema evidence for Component B."""
 
     user_query: str
     pairs: tuple[ExecutedQueryPair, ...]
     api_key: str
     model: str
     clarifications: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class JoinPathRequest:
-    """User request plus schema graph sent to the join-path detector.
-
-    The detector extracts the entities mentioned in ``user_query``, maps them
-    to tables in ``schema``, enumerates join paths between those tables, and
-    flags ambiguity when more than one distinct path connects an entity pair.
-    """
-
-    user_query: str
-    schema: SchemaMetadata
-    api_key: str
-    model: str
-    clarifications: tuple[str, ...] = ()
+    schema: SchemaMetadata = field(default_factory=SchemaMetadata)
+    semantic_analysis: SemanticColumnAnalysis | None = None
 
 
 @dataclass(frozen=True)
 class SemanticColumnRequest:
-    """User request plus schema sent to the semantic-column detector.
-
-    The detector (Component B's secondary mechanism) finds natural-language
-    terms whose meaning maps to more than one schema column of the same semantic
-    type -- the canonical example is "dates", which can mean an admission date,
-    a discharge date, or a date of birth -- and raises a clarification choosing
-    between the two most likely columns. It runs as a fallback after the
-    join-path mechanism finds no multiplicity.
-    """
+    """User request plus schema sent to pre-SQL semantic analysis."""
 
     user_query: str
     schema: SchemaMetadata
     api_key: str
     model: str
     clarifications: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SemanticColumnCandidate:
+    """One exact schema column associated with a vague user term."""
+
+    table: str
+    column: str
+    data_type: str
+    bucket: str
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.table}.{self.column}"
+
+
+@dataclass(frozen=True)
+class SemanticAmbiguityTerm:
+    """A vague user term with two or more plausible same-kind columns."""
+
+    term: str
+    bucket: str
+    columns: tuple[SemanticColumnCandidate, ...]
+
+
+@dataclass(frozen=True)
+class SemanticColumnAnalysis:
+    """Pre-SQL semantic findings retained for the unified ambiguity judge."""
+
+    state: ComponentState
+    terms: tuple[SemanticAmbiguityTerm, ...] = ()
+    reason: str = ""
+
+    @property
+    def ambiguous(self) -> bool:
+        return self.state == ComponentState.ACCEPTED and bool(self.terms)
 
 
 @dataclass(frozen=True)
 class AmbiguityDecision:
     """Pass or one two-option clarification returned by Component B.
 
-    ``mechanism`` records which ambiguity mechanism produced the decision
-    (for example ``"join-path"`` for schema-graph join-path multiplicity,
-    ``"semantic-column"`` for semantic-type column matching, or the default
-    empty string for the executed-candidate comparison judge), so the GUI and
-    evaluation harness can distinguish them.
+    ``mechanism`` records the evidence source selected by the unified judge:
+    ``"candidate-comparison"`` or ``"semantic-column"``.
     """
 
     state: ComponentState
@@ -240,6 +227,13 @@ class AmbiguityDecision:
     options: tuple[str, ...] = ()
     reason: str = ""
     mechanism: str = ""
+    evidence_columns: tuple[str, ...] = ()
+    evidence_alternatives: tuple[str, ...] = ()
+    candidate_support: tuple[tuple[str, int], ...] = ()
+    candidate_rejection_reason: str = ""
+    compliance_passed: bool | None = None
+    compliant_alternatives: tuple[str, ...] = ()
+    rejected_alternatives: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

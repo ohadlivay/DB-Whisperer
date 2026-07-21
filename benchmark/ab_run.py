@@ -719,6 +719,14 @@ def _print_summary(suite: AbSuite, summary: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    print(
+        "This A/B runner is a preserved legacy experiment and is no longer "
+        "runnable. Use python -m benchmark_v3.run_evaluation.",
+        file=sys.stderr,
+    )
+    return 2
+
+    # Historical implementation retained below for report provenance.
     load_env_file(BENCHMARK_DIR / ".env")
     args = _parse_args(argv)
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -772,7 +780,6 @@ def main(argv: list[str] | None = None) -> int:
     application = ApplicationService(
         etler=ETLService(database_path=database_path),
         candidates_per_iteration=suite.candidate_count,
-        enable_join_path_detection=True,
         event_logger=PromptLogger(prompt_log_path),
     )
 

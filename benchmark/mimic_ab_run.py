@@ -984,6 +984,12 @@ def run_suite_raw(
     qualitative_judge_fn: QualitativeJudgeFn | None = None,
 ) -> tuple[SchemaMetadata, list[dict[str, Any]]]:
     """Ingest the suite dataset and run raw baseline/full outputs."""
+    raise RuntimeError(
+        "The MIMIC A/B runner is a preserved legacy experiment and is no "
+        "longer runnable. Use benchmark_v3."
+    )
+
+    # Historical implementation retained below for report provenance.
     etler = etl_service or ETLService(database_path=database_path)
     ingestion = etler.ingest(dataset_uploads(suite.dataset_path))
     if ingestion.state != ComponentState.ACCEPTED:
@@ -997,7 +1003,6 @@ def run_suite_raw(
         max_parallel_candidates=max_parallel_candidates
         if max_parallel_candidates is not None
         else suite.candidate_count,
-        enable_join_path_detection=True,
         enable_semantic_column_detection=True,
         event_logger=PromptLogger(prompt_log_path),
     )

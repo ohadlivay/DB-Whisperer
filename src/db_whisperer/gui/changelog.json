@@ -1,6 +1,19 @@
 {
   "releases": [
     {
+      "version": "1.11.0",
+      "released_at": "2026-07-21T12:00:00+03:00",
+      "changes": [
+        "Reworked ambiguity decisions so executed SQL and result differences are the primary evidence, with vague same-type columns and schema metadata as supporting context.",
+        "Removed join-path multiplicity questions and alternate-path enumeration; schema linking now uses a single deterministic connection only to provide SQL context.",
+        "Clarifications remain one concise two-option question per round, with candidate-derived distinctions taking priority over semantic-column findings.",
+        "Semantic clarifications now use stable finding IDs and validated column pairs; fallback contrasts the column used by SQL candidates with a grounded alternative.",
+        "Candidate differences now pass a natural-language plausibility gate: duplicate support is retained, weak singleton outliers are discounted, and arbitrary A-versus-A-or-B interpretations no longer automatically override semantic evidence.",
+        "Final SQL is now checked against every selected clarification. If no executed alternative complies, one candidate batch is retried; an unverifiable or still-noncompliant result is withheld instead of being shown to the user.",
+        "Answered semantic clarifications now pin their referenced tables in SQL-generation schema context, including the direct relationship needed to join those tables, without changing initial candidate generation."
+      ]
+    },
+    {
       "version": "1.10.0",
       "released_at": "2026-06-30T16:00:00+03:00",
       "changes": [

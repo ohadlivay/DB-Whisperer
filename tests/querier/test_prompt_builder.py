@@ -143,7 +143,8 @@ class PromptBuilderTest(unittest.TestCase):
 
             self.assertNotIn("CLARIFICATIONS", without_clarifications)
             self.assertIn(
-                "CLARIFICATIONS\n"
+            "CLARIFICATIONS (BINDING; OVERRIDE CONFLICTING OR AMBIGUOUS "
+            "WORDING IN THE ORIGINAL REQUEST)\n"
                 "- Ignore null values.\n"
                 "- Return one row per category.",
                 with_clarifications,

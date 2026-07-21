@@ -1,5 +1,9 @@
 # DB Whisperer Benchmark
 
+> **Legacy:** These runners preserve the original baseline and A/B experiment.
+> Their ambiguity-enabled live entrypoints are intentionally disabled because
+> they do not represent the current mechanism. Use `benchmark_v3` for new runs.
+
 This directory holds two standalone benchmarks. Both keep every generated
 database, prompt log, and report inside this directory.
 

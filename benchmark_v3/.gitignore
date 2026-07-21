@@ -1,0 +1,3 @@
+results/
+*.duckdb
+__pycache__/
