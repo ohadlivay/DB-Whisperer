@@ -86,6 +86,23 @@ never `0`, and every headline number carries its `n`. The aggregation is pure
 and unit-tested in `tests/benchmark/test_study_analyze.py`; the generated report
 is standalone HTML that can later be nested into the docs site.
 
+## Deploy online (public link)
+
+To let anyone answer from a link, host the app on Streamlit Community Cloud and
+point it at a results inbox so answers survive a hosted restart. Step-by-step in
+[`DEPLOY.md`](DEPLOY.md). Two deployment settings (Streamlit secrets or env vars)
+control this:
+
+- `results_webhook` / `DB_WHISPERER_RESULTS_WEBHOOK` — a URL each completed
+  session is POSTed to (a Formspree form, an Apps Script, any JSON endpoint).
+  Unset = local files only, as before. See `sink.py`.
+- `study_datasets` / `DB_WHISPERER_STUDY_DATASETS` — restrict the study to named
+  datasets (e.g. `BikeStores`) so an open link never serves the clinical MIMIC
+  tasks. Unset = all datasets.
+
+Pull the collected submissions back into `results/*.jsonl` with
+`import_webhook.py`, then run `analyze.py` as usual.
+
 ## Honest limitations
 
 - **Scripted, not live.** The GUI replays fixed stimuli; it does not exercise the

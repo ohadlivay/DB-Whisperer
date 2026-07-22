@@ -90,6 +90,22 @@ def load_scenarios(path: Path) -> tuple[dict[str, Any], ...]:
     return tuple(scenarios)
 
 
+def filter_scenarios_by_dataset(
+    scenarios: tuple[dict[str, Any], ...],
+    allowed: list[str] | None,
+) -> tuple[dict[str, Any], ...]:
+    """Keep only scenarios whose dataset is in ``allowed``; ``None`` keeps all.
+
+    A public deployment sets this (e.g. to ``BikeStores`` only) so an open,
+    unscreened link never serves the clinical MIMIC tasks, which need a
+    clinically-literate rater to judge.
+    """
+    if not allowed:
+        return tuple(scenarios)
+    keep = {name for name in allowed if name}
+    return tuple(s for s in scenarios if s.get("dataset") in keep)
+
+
 def _seed(participant_id: str) -> int:
     digest = hashlib.sha256(participant_id.strip().encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big")

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -26,9 +27,11 @@ from uuid import uuid4
 
 import streamlit as st
 
+import sink
 from study_logic import (
     TaskInstance,
     build_plan,
+    filter_scenarios_by_dataset,
     load_scenarios,
     make_task_record,
 )
@@ -38,6 +41,35 @@ STUDY_DIR = Path(__file__).resolve().parent
 SCENARIOS_PATH = STUDY_DIR / "scenarios.json"
 RESULTS_DIR = STUDY_DIR / "results"
 RATING_HELP = "1 = not at all, 5 = completely"
+
+
+def _config(secret_key: str, env_key: str) -> str | None:
+    """A deployment setting from st.secrets (hosted) or the environment (local)."""
+    try:
+        value = st.secrets.get(secret_key)  # raises if no secrets file at all
+    except Exception:  # noqa: BLE001 - no secrets configured locally is fine
+        value = None
+    if value:
+        return str(value)
+    return os.environ.get(env_key) or None
+
+
+def _webhook_url() -> str | None:
+    """URL each completed session is posted to, if configured for deployment."""
+    return _config("results_webhook", "DB_WHISPERER_RESULTS_WEBHOOK")
+
+
+def _allowed_datasets() -> list[str] | None:
+    """Datasets the study is limited to (e.g. 'BikeStores' for a public link)."""
+    raw = _config("study_datasets", "DB_WHISPERER_STUDY_DATASETS")
+    return [name.strip() for name in raw.split(",") if name.strip()] if raw else None
+
+
+def _study_scenarios() -> tuple[Any, ...]:
+    """The scenarios this deployment serves, after any dataset restriction."""
+    return filter_scenarios_by_dataset(
+        load_scenarios(SCENARIOS_PATH), _allowed_datasets()
+    )
 
 
 def _now() -> str:
@@ -53,6 +85,23 @@ def _append_record(participant_id: str, record: dict[str, Any]) -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     with _results_path(participant_id).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    # Also accumulate in memory so the whole session can be posted to the webhook
+    # at the end — the local file above is wiped on a hosted app's restart.
+    st.session_state._session_records.append(record)
+
+
+def _flush_webhook() -> None:
+    """Post the whole completed session to the results webhook, if configured."""
+    url = _webhook_url()
+    if not url:
+        st.session_state._submit_status = None  # local-only (development) mode
+        return
+    payload = sink.build_session_payload(
+        list(st.session_state._session_records),
+        st.session_state.participant_id,
+    )
+    ok, message = sink.post_session(url, payload)
+    st.session_state._submit_status = {"ok": ok, "message": message}
 
 
 def _rating(label: str, key: str, help_text: str = RATING_HELP) -> int | None:
@@ -82,6 +131,9 @@ def _init_state() -> None:
         "asked": False,
         "chosen": None,
         "started_at": 0.0,
+        # Accumulated records for this session, posted to the webhook at the end.
+        "_session_records": [],
+        "_submit_status": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -145,10 +197,7 @@ def _render_welcome() -> None:
     )
     if st.button("Start", type="primary", disabled=not ready):
         st.session_state.participant_id = participant_id
-        st.session_state.plan = build_plan(
-            load_scenarios(SCENARIOS_PATH),
-            participant_id,
-        )
+        st.session_state.plan = build_plan(_study_scenarios(), participant_id)
         _append_record(
             participant_id,
             {
@@ -284,13 +333,23 @@ def _render_wrapup() -> None:
                 "timestamp": _now(),
             },
         )
+        _flush_webhook()
         st.session_state.phase = "done"
         st.rerun()
 
 
 def _render_done() -> None:
     st.title("Thank you! 🎉")
-    st.success("Your responses have been recorded. You can close this tab.")
+    status = st.session_state.get("_submit_status")
+    if status and not status["ok"]:
+        # Honest, not silent: the answers are saved locally but the upload
+        # failed, so tell the participant rather than pretend it worked.
+        st.warning(
+            "Your answers were saved on this device, but we couldn't upload them "
+            f"({status['message']}). Please let the researcher know."
+        )
+    else:
+        st.success("Your responses have been recorded. You can close this tab.")
     st.caption(f"Participant ID: {st.session_state.participant_id}")
 
 
@@ -301,6 +360,12 @@ def main() -> None:
         st.error(
             "scenarios.json is missing. Generate it first:\n\n"
             "`python benchmark/study/build_scenarios.py`"
+        )
+        return
+    if not _study_scenarios():
+        st.error(
+            "No study tasks match the configured datasets. Check the "
+            "`study_datasets` setting."
         )
         return
     phase = st.session_state.phase
