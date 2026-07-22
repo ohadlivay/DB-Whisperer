@@ -165,14 +165,28 @@ def _render_answer(answer: dict[str, Any]) -> None:
 def _render_welcome() -> None:
     st.title("Data assistant study")
     st.write(
-        "Thanks for helping! You'll work through a series of short tasks. For "
-        "each one you'll read a goal, ask the assistant a question, and rate how "
-        "much you trust the answer. There are no right or wrong responses about "
-        "*you* — we're testing the assistant, not you. It takes about 15 minutes."
+        "Thanks for helping test a data assistant! You'll do a series of short "
+        "tasks — about 15 minutes total. You're rating the **assistant**, so "
+        "there are no right or wrong answers about you."
     )
+    st.markdown(
+        "**How each task works:**\n\n"
+        "1. You read a **goal** — the thing you want to find out.\n"
+        "2. You press **Ask the assistant**. It answers your question — and "
+        "sometimes it first asks *you* a quick question back to make sure it "
+        "understood. If it does, pick the option that fits your goal.\n"
+        "3. You rate how confident you are that the answer is what your goal "
+        "asked for."
+    )
+    st.divider()
     # The input uses its own widget key; the chosen value is copied to the
     # stable participant_id at Start (see _init_state for why they differ).
-    st.text_input("Participant ID", key="pid_input")
+    st.text_input(
+        "Your nickname",
+        key="pid_input",
+        help="Any nickname is fine — please don't use your real name. "
+        "It only labels your answers anonymously.",
+    )
     role = _single_choice(
         "Your background",
         ["General (no clinical training)", "Clinically / health-informatics trained"],
@@ -227,11 +241,15 @@ def _render_task() -> None:
     st.progress(idx / len(plan), text=f"Task {idx + 1} of {len(plan)}")
     st.caption(f"Dataset: {instance.dataset}")
 
-    st.markdown("##### Your goal")
+    st.markdown("##### 🎯 Your goal")
     st.info(instance.goal_text)
 
-    st.markdown("##### The question being asked")
+    st.markdown("##### 💬 You'll ask the assistant this")
     st.markdown(f"> {instance.question}")
+    st.caption(
+        "This exact question gets sent to the assistant. Your job is to judge "
+        "whether its answer gives you your goal above."
+    )
 
     if not st.session_state.asked:
         if st.button("Ask the assistant", type="primary"):
@@ -242,8 +260,9 @@ def _render_task() -> None:
     # The assistant has been "asked". The asking version of an ambiguous task
     # first shows a clarifying question; everything else answers directly.
     if instance.asks_question and st.session_state.chosen is None:
-        st.markdown("##### The assistant needs to check something")
+        st.markdown("##### 🤔 The assistant needs to check what you meant")
         st.warning(instance.clarification_question)
+        st.caption("Choose the option that matches **your goal** at the top.")
         columns = st.columns(len(instance.interpretations))
         for column, interpretation in zip(
             columns, instance.interpretations, strict=True
@@ -259,7 +278,7 @@ def _render_task() -> None:
         return
 
     displayed_key = instance.displayed_key(st.session_state.chosen)
-    st.markdown("##### Answer")
+    st.markdown("##### ✅ The assistant's answer")
     _render_answer(instance.answer_for(displayed_key))
 
     _render_ratings_and_next(instance, idx)
@@ -268,7 +287,7 @@ def _render_task() -> None:
 def _render_ratings_and_next(instance: TaskInstance, idx: int) -> None:
     st.divider()
     trust = _rating(
-        "How confident are you that this answer gives you what you wanted?",
+        "How confident are you this answer gives you what your goal asked for?",
         f"trust_{idx}",
     )
     clarity = naturalness = None
