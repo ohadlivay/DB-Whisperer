@@ -62,6 +62,30 @@ Per-task fields include `version` (`asking`/`direct`), `ambiguous`, `goal_id`,
 the aggregate metrics in `../HUMAN_IN_THE_LOOP.md`: intent-match accuracy per
 version, clarification comprehension, and trust deltas.
 
+## Analysis and reporting
+
+Once you have result files, aggregate them into metrics and a shareable HTML
+report:
+
+```powershell
+# every session in results/ -> results/summary.json + results/report.html
+python benchmark/study/analyze.py
+
+# or specific files / custom output locations
+python benchmark/study/analyze.py results/p1.jsonl --out-html report.html
+```
+
+`analyze.py` reports, split by ambiguous vs control tasks: intent-match accuracy
+(asking vs direct, with the delta), clarification comprehension, trust and its
+delta, per-dataset clarity/naturalness (which surfaces the MIMIC density
+finding), and median time on task. It deliberately marks what the study does
+**not** capture — the forced-choice preference metric is not collected, and
+control tasks never ask a spurious question, so that annoyance cost is
+unmeasured — rather than omitting or faking it. Empty cells render as `n/a`,
+never `0`, and every headline number carries its `n`. The aggregation is pure
+and unit-tested in `tests/benchmark/test_study_analyze.py`; the generated report
+is standalone HTML that can later be nested into the docs site.
+
 ## Honest limitations
 
 - **Scripted, not live.** The GUI replays fixed stimuli; it does not exercise the
