@@ -41,14 +41,16 @@ Before you click Deploy, open **Advanced settings → Secrets** and paste:
 
 ```toml
 results_webhook = "https://formspree.io/f/abcdwxyz"   # your Step 1 URL
-study_datasets = "BikeStores"                          # public link = shopping tasks only
+study_datasets = "BikeStores,MIMIC"                    # test both shopping and clinical tasks
 ```
 
 - `results_webhook` — where each finished session is sent.
-- `study_datasets` — leave it as `BikeStores` so the open link only serves the
-  shopping tasks. **Remove this line** only if you want the medical (MIMIC) tasks
-  public too — but those need clinically-trained raters to judge, so keep them
-  for invited people instead.
+- `study_datasets` — the datasets to serve. `BikeStores,MIMIC` runs the full
+  study: the shopping tasks plus the clinical (MIMIC) tasks. Use just
+  `BikeStores` if you ever want a version without the clinical tasks. The MIMIC
+  tasks assume a clinically-literate rater, so share the link with your clinical
+  group — the app's opening question records each person's background either way,
+  so you can confirm it in the results.
 
 ## Step 5 — Deploy and share
 
