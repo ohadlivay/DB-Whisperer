@@ -192,6 +192,7 @@ def run_repetition(
     observer: CampaignObserver,
     api_key: str,
 ) -> dict[str, Any]:
+    raise RuntimeError(V2_RETIRED_MESSAGE)
     run_id = f"run-{repetition:02d}"
     run_dir = campaign_dir / "run-results" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -302,6 +303,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    raise RuntimeError(V2_RETIRED_MESSAGE)
     args = parse_args()
     suite = load_suite(args.suite)
     load_env_file(BENCHMARK_DIR / ".env")

@@ -894,6 +894,11 @@ def publish_campaign(
         or len(campaign["records"]) != OFFICIAL_RECORD_COUNT
     ):
         return False
+    if campaign.get("suite_hash") != load_suite(DEFAULT_SUITE).sha256:
+        campaign["complete"] = False
+        campaign["latest_error"] = "official publication requires the frozen default suite hash"
+        atomic_json(campaign_path, campaign)
+        return False
     one_page_path = one_page_path or PROJECT_ROOT / "docs" / "evaluation_method_one_page.html"
     full_report_path = full_report_path or PROJECT_ROOT / "docs" / "evaluation_report.html"
     stage_dir = campaign_dir / f".publication-{os.getpid()}-{datetime.now(timezone.utc).strftime('%f')}"

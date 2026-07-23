@@ -36,7 +36,7 @@ from benchmark_v3.run_evaluation import (
     _replace_staged,
     _campaign_directory,
 )
-from benchmark_v3.run_evaluation import BENCHMARK_DIR, DEFAULT_OUTPUT, PROJECT_ROOT, SRC
+from benchmark_v3.run_evaluation import BENCHMARK_DIR, DEFAULT_OUTPUT, DEFAULT_SUITE, PROJECT_ROOT, SRC
 from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
 from benchmark_v3.observability import BudgetStop
 
@@ -129,10 +129,22 @@ class CampaignTest(unittest.TestCase):
             self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
             self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
 
+    def test_custom_suite_hash_cannot_publish_or_touch_public_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary); public = directory / "public"; public.mkdir()
+            one_page, full = public / "evaluation_method_one_page.html", public / "evaluation_report.html"
+            one_page.write_text("old one"); full.write_text("old full")
+            (directory / "campaign.json").write_text(json.dumps({"complete": True, "suite_hash": "changed-question-or-reference", "repetitions": 5, "records": [{}] * 450}))
+            with patch("benchmark_v3.aggregate_results.aggregate_campaign", side_effect=AssertionError("aggregate")), patch("benchmark_v3.render_report.write_reports", side_effect=AssertionError("render")):
+                self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
+            campaign = json.loads((directory / "campaign.json").read_text())
+            self.assertFalse(campaign["complete"]); self.assertIn("frozen default suite", campaign["latest_error"])
+            self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
+
     def test_publication_writes_aggregate_then_exactly_two_reports(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary); public = directory / "public"; public.mkdir()
-            (directory / "campaign.json").write_text(json.dumps({"complete": True, "repetitions": 5, "records": [{}] * 450}))
+            (directory / "campaign.json").write_text(json.dumps({"complete": True, "suite_hash": load_suite(DEFAULT_SUITE).sha256, "repetitions": 5, "records": [{}] * 450}))
             aggregate = {"validated": True}
             def render_staged(_: Path, staged_one: Path, staged_full: Path) -> tuple[Path, Path]:
                 staged_one.write_text("new one"); staged_full.write_text("new full")
@@ -149,7 +161,7 @@ class CampaignTest(unittest.TestCase):
                 aggregate_path = directory / "aggregate.json"; one_page = public / "evaluation_method_one_page.html"; full = public / "evaluation_report.html"
                 aggregate_path.write_bytes(b"old aggregate"); one_page.write_bytes(b"old one"); full.write_bytes(b"old full")
                 before = tuple(path.read_bytes() for path in (aggregate_path, one_page, full))
-                (directory / "campaign.json").write_text(json.dumps({"complete": True, "repetitions": 5, "records": [{}] * 450}))
+                (directory / "campaign.json").write_text(json.dumps({"complete": True, "suite_hash": load_suite(DEFAULT_SUITE).sha256, "repetitions": 5, "records": [{}] * 450}))
                 calls = 0
                 def render_staged(_: Path, staged_one: Path, staged_full: Path) -> tuple[Path, Path]:
                     staged_one.write_text("new one"); staged_full.write_text("new full")
@@ -168,7 +180,7 @@ class CampaignTest(unittest.TestCase):
             directory = Path(temporary); public = directory / "public"; public.mkdir()
             one_page, full = public / "evaluation_method_one_page.html", public / "evaluation_report.html"
             one_page.write_text("old one"); full.write_text("old full")
-            (directory / "campaign.json").write_text(json.dumps({"complete": True, "repetitions": 5, "records": [{}] * 450}))
+            (directory / "campaign.json").write_text(json.dumps({"complete": True, "suite_hash": load_suite(DEFAULT_SUITE).sha256, "repetitions": 5, "records": [{}] * 450}))
             with patch("benchmark_v3.aggregate_results.aggregate_campaign", side_effect=RuntimeError("broken aggregate")):
                 self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
             campaign = json.loads((directory / "campaign.json").read_text())

@@ -58,6 +58,9 @@ backups and rollback. Incomplete, budget-stopped, or errored campaigns never
 replace the public reports; a failed promotion restores the prior aggregate and
 report bytes and records `latest_error`. Runs with fewer than five repetitions
 are nonpublishing validation/smoke artifacts and the CLI exits nonzero.
+Official publication additionally requires the loaded suite hash to match the
+frozen `DEFAULT_SUITE`; a custom `--suite` can retain its own checkpoints and
+raw evidence but cannot replace public reports.
 
 The campaign runner uses the four arms `baseline`, `candidate_only`,
 `semantic_only`, and `full`. Baseline generates one candidate; the ambiguity

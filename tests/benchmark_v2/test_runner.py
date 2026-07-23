@@ -5,7 +5,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from benchmark_v2.run_evaluation import build_services, load_env_file
+from unittest.mock import patch
+
+from benchmark_v2.run_evaluation import (
+    V2_RETIRED_MESSAGE, build_services, load_env_file, main, run_repetition,
+)
 
 
 class RunnerConfigurationTest(unittest.TestCase):
@@ -30,3 +34,13 @@ class RunnerConfigurationTest(unittest.TestCase):
                     os.environ.pop("API_KEY", None)
                 else:
                     os.environ["API_KEY"] = previous
+
+    def test_main_fails_before_any_v2_side_effect(self) -> None:
+        with patch("benchmark_v2.run_evaluation.parse_args", side_effect=AssertionError("args")), patch("benchmark_v2.run_evaluation.load_env_file", side_effect=AssertionError("env")), patch("benchmark_v2.run_evaluation.CampaignObserver", side_effect=AssertionError("observer")):
+            with self.assertRaisesRegex(RuntimeError, "preserved historical experiment"):
+                main()
+
+    def test_repetition_fails_before_etl_or_status_side_effects(self) -> None:
+        with patch("benchmark_v2.run_evaluation.ETLService", side_effect=AssertionError("etl")), patch("benchmark_v2.run_evaluation.Path.mkdir", side_effect=AssertionError("directory")):
+            with self.assertRaisesRegex(RuntimeError, "preserved historical experiment"):
+                run_repetition(1, None, Path("ignored"), None, "key")
