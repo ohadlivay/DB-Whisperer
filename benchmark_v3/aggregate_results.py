@@ -22,7 +22,9 @@ AMBIGUITY_FUNNEL = {
     "compliance": "compliance",
     "final_alignment": "final_alignment",
 }
-COMPONENTS = ("correctness", "efficiency", "safety", "grounding")
+COMPONENTS = (
+    "ambiguity", "correctness", "efficiency", "safety", "grounding", "etl",
+)
 
 
 def bootstrap_ci(values: Sequence[float], *, samples: int = 2000) -> tuple[float, float]:
@@ -132,6 +134,7 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
             float(record["score"].get("score", 0.0))
             for record in records if record["arm"] == "etl"
         )
+        etl_scores.append(etl_score * 100)
         for arm in ARMS:
             for name, value in _per_run_arm(records, arm, etl_score).items():
                 if value is not None:
@@ -139,8 +142,6 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
             for name, values in _family_units(records, arm, etl_score).items():
                 family_units[arm][name].extend(values)
         for record in records:
-            if record["arm"] == "etl":
-                etl_scores.append(float(record["score"].get("score", 0.0)) * 100)
             if record["score"]["passed"] is False:
                 failures.append(dict(record))
             if record["score"].get("oracle_review") is True:
@@ -171,6 +172,11 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
         for arm in ARMS if arm != "baseline"
     }
     first = reports[0]
+    warnings = sorted({
+        str(warning)
+        for source in (*reports, campaign)
+        for warning in source.get("relationship_warnings", ())
+    })
     aggregate = {
         "report_type": "dbwhisperer_v3_aggregate", "complete": True,
         "suite_version": first["suite_version"], "suite_hash": first["suite_hash"],
@@ -183,6 +189,7 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
             "metrics": {key: status[key] for key in required_usage},
         },
         "failures": failures, "oracle_reviews": oracle_reviews,
+        "relationship_warnings": warnings,
         "records": [record for report in reports for record in report["records"]],
         "run_reports": reports, "campaign": campaign,
     }

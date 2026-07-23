@@ -58,6 +58,19 @@ def _published_distributions(value: Any, path: str) -> None:
         interval = value["confidence_interval_95"]
         if not isinstance(interval, list) or len(interval) != 2:
             raise ValueError(f"published distribution interval is invalid: {path}")
+        numeric_fields = ("mean", "stddev", "min", "max")
+        if any(
+            isinstance(value[field], bool)
+            or not isinstance(value[field], (int, float))
+            or not math.isfinite(float(value[field]))
+            for field in numeric_fields
+        ) or any(
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+            for item in interval
+        ):
+            raise ValueError(f"published distribution must be finite: {path}")
     for key, item in value.items():
         _published_distributions(item, f"{path}.{key}")
 
@@ -104,6 +117,13 @@ def validate_reports(
             raise ValueError("V3 reports have incompatible fingerprints")
         if campaign is not None and campaign.get("fingerprint") != report.get("fingerprint"):
             raise ValueError("campaign fingerprint is incompatible with run report")
+        fingerprint = report["fingerprint"]
+        for field in (
+            "suite_hash", "dataset_hash", "model", "prompt_hash",
+            "scorer_version", "candidate_count", "arms", "runtime_hash",
+        ):
+            if field in report and report[field] != fingerprint.get(field):
+                raise ValueError("run report top-level fingerprint is incompatible")
         records = report.get("records")
         if not isinstance(records, list):
             raise ValueError("run report records are missing")

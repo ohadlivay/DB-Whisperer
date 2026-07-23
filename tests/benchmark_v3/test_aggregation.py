@@ -162,3 +162,27 @@ class AggregationTest(unittest.TestCase):
             list(bootstrap_ci(run_values)),
             aggregate["arms"]["full"]["composite"]["confidence_interval_95"],
         )
+
+    def test_includes_frozen_ambiguity_etl_components_and_shared_etl_per_repetition(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            for path in directory.glob("run-*.json"):
+                report = json.loads(path.read_text())
+                etl = [row for row in report["records"] if row["arm"] == "etl"]
+                etl[0]["score"]["score"] = 0.0
+                etl[1]["score"]["score"] = 1.0
+                report["relationship_warnings"] = ["sampled relation"]
+                path.write_text(json.dumps(report))
+            campaign = json.loads((directory / "campaign.json").read_text())
+            campaign["relationship_warnings"] = ["campaign warning", "sampled relation"]
+            (directory / "campaign.json").write_text(json.dumps(campaign))
+            aggregate = self._aggregate(directory)
+        shared = aggregate["shared_etl"]
+        self.assertEqual(50.0, shared["mean"])
+        self.assertEqual(0.0, shared["stddev"])
+        self.assertEqual(50.0, shared["min"])
+        self.assertEqual(50.0, shared["max"])
+        self.assertIn("ambiguity", aggregate["arms"]["full"]["components"])
+        self.assertIn("etl", aggregate["arms"]["full"]["components"])
+        self.assertEqual(["campaign warning", "sampled relation"], build_report_model(aggregate)["warnings"])

@@ -91,3 +91,21 @@ class ResultsValidationTest(unittest.TestCase):
         del payload["shared_etl"]["confidence_interval_95"]
         with self.assertRaisesRegex(ValueError, "distribution"):
             aggregation.validate_aggregate(payload)
+
+    def test_rejects_coordinated_top_level_fingerprint_tamper_and_invalid_distribution_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            report["dataset_hash"] = "tampered"
+            report_path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "top-level"):
+                self._aggregate(directory)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            payload = self._aggregate(directory)
+        payload["shared_etl"]["mean"] = "50"
+        with self.assertRaisesRegex(ValueError, "distribution"):
+            aggregation.validate_aggregate(payload)
