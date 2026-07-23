@@ -16,6 +16,7 @@ from benchmark_v3.observability import (
     BudgetStop,
     CampaignObserver,
     InstrumentedSession,
+    UsageValidationError,
     retry_transient,
 )
 
@@ -233,6 +234,51 @@ class CampaignObserverTest(unittest.TestCase):
                 with self.assertRaises(requests.ConnectionError):
                     session.post("https://example.invalid")
             self.assertIn("network down", observer.status["latest_error"])
+
+    def test_invalid_provider_usage_fails_closed_without_logging_response_body(self) -> None:
+        invalid_usages = (
+            {"prompt_tokens": 1.5, "completion_tokens": 0, "cost": 0.1},
+            {"prompt_tokens": -1, "completion_tokens": 0, "cost": 0.1},
+            {"prompt_tokens": 1, "completion_tokens": "2", "cost": 0.1},
+            {"prompt_tokens": 1, "completion_tokens": 0, "cost": float("nan")},
+            {"prompt_tokens": 1, "completion_tokens": 0, "cost": float("inf")},
+            {"prompt_tokens": 1, "completion_tokens": 0, "cost": -0.01},
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for usage in invalid_usages:
+                observer = CampaignObserver(Path(temporary), (), 3.75)
+                session = InstrumentedSession(observer, attempts=1)
+                response = SimpleNamespace(
+                    status_code=200,
+                    text="Authorization: Bearer provider-body-secret",
+                    json=lambda usage=usage: {"usage": usage, "model": "model"},
+                )
+                transport = SimpleNamespace(post=lambda *args, **kwargs: response)
+                with self.subTest(usage=usage), patch.object(
+                    session,
+                    "_transport",
+                    return_value=transport,
+                ):
+                    with self.assertRaises(UsageValidationError):
+                        session.post("https://example.invalid")
+                    self.assertEqual(0.0, observer.status["cost_usd"])
+                    self.assertNotIn(
+                        "provider-body-secret",
+                        observer.status["latest_error"],
+                    )
+                    self.assertIn("invalid provider usage", observer.status["latest_error"])
+
+    def test_resume_clears_stale_active_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            work_item = item("stale")
+            first = CampaignObserver(directory, (work_item,), 3.75)
+            first.activate(work_item, "generating")
+
+            resumed = CampaignObserver(directory, (work_item,), 3.75)
+
+            self.assertEqual({}, resumed.status["active_by_key"])
+            self.assertEqual([], resumed.status["active"])
 
     def test_final_http_error_updates_latest_error_without_response_body(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

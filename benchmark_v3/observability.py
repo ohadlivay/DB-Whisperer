@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -53,6 +54,10 @@ class BudgetStop(RuntimeError):
     """Raised before a request when the recorded campaign cost is exhausted."""
 
 
+class UsageValidationError(ValueError):
+    """Raised when provider usage cannot safely affect campaign budget."""
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -88,7 +93,12 @@ def _is_sensitive_field(name: str) -> bool:
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a JSON file, tolerating short Windows file locks."""
 
-    serialized = json.dumps(_safe_value(payload), indent=2, default=str) + "\n"
+    serialized = json.dumps(
+        _safe_value(payload),
+        indent=2,
+        default=str,
+        allow_nan=False,
+    ) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     last_error: OSError | None = None
     with _ATOMIC_WRITE_LOCK:
@@ -170,11 +180,9 @@ def initial_status(
     status["completed_units"] = completed
     status["passed"] = checkpoint_passes
     status["failed"] = completed - checkpoint_passes
-    active_by_key = dict(status.get("active_by_key", {}))
-    for key in checkpoint_keys:
-        active_by_key.pop(key, None)
-    status["active_by_key"] = active_by_key
-    status["active"] = list(active_by_key.values())
+    # Work from a previous process is no longer active after initialization.
+    status["active_by_key"] = {}
+    status["active"] = []
     return status
 
 
@@ -203,6 +211,52 @@ def _load_checkpoint_results(
         except (OSError, json.JSONDecodeError):
             continue
     return results
+
+
+def _nonnegative_token_count(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise UsageValidationError(f"invalid provider usage: {field}")
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric < 0 or not numeric.is_integer():
+        raise UsageValidationError(f"invalid provider usage: {field}")
+    return int(numeric)
+
+
+def _nonnegative_cost(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise UsageValidationError("invalid provider usage: cost_usd")
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric < 0:
+        raise UsageValidationError("invalid provider usage: cost_usd")
+    return numeric
+
+
+def _provider_usage(response: requests.Response) -> tuple[int, int, float, str]:
+    """Read finite, nonnegative provider usage without retaining response body."""
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return 0, 0, 0.0, ""
+    if not isinstance(payload, Mapping):
+        raise UsageValidationError("invalid provider usage: response payload")
+    raw_usage = payload.get("usage", {})
+    if not isinstance(raw_usage, Mapping):
+        raise UsageValidationError("invalid provider usage: usage payload")
+    raw_cost = (
+        raw_usage["cost"]
+        if "cost" in raw_usage
+        else raw_usage.get("total_cost", 0.0)
+    )
+    return (
+        _nonnegative_token_count(raw_usage.get("prompt_tokens", 0), "prompt_tokens"),
+        _nonnegative_token_count(
+            raw_usage.get("completion_tokens", 0),
+            "completion_tokens",
+        ),
+        _nonnegative_cost(raw_cost),
+        str(payload.get("model", "")),
+    )
 
 
 class _SafePromptLogger:
@@ -315,7 +369,9 @@ class CampaignObserver:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return json.loads(json.dumps(self.status, default=str))
+            return json.loads(
+                json.dumps(self.status, default=str, allow_nan=False)
+            )
 
     def _eta_by_arm_category_locked(self) -> dict[str, float]:
         all_durations = [
@@ -407,7 +463,12 @@ class CampaignObserver:
             )
 
     def _append_jsonl(self, path: Path, record: dict[str, Any]) -> None:
-        serialized = json.dumps(_safe_value(record), ensure_ascii=False, default=str)
+        serialized = json.dumps(
+            _safe_value(record),
+            ensure_ascii=False,
+            default=str,
+            allow_nan=False,
+        )
         with self._lock:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
@@ -485,15 +546,27 @@ class CampaignObserver:
         completion_tokens: int,
         cost_usd: float,
     ) -> None:
+        validated_prompt_tokens = _nonnegative_token_count(
+            prompt_tokens,
+            "prompt_tokens",
+        )
+        validated_completion_tokens = _nonnegative_token_count(
+            completion_tokens,
+            "completion_tokens",
+        )
+        validated_cost = _nonnegative_cost(cost_usd)
         with self._lock:
             self._publish_locked(
-                prompt_tokens=int(self.status.get("prompt_tokens", 0)) + int(prompt_tokens),
+                prompt_tokens=(
+                    int(self.status.get("prompt_tokens", 0))
+                    + validated_prompt_tokens
+                ),
                 completion_tokens=(
                     int(self.status.get("completion_tokens", 0))
-                    + int(completion_tokens)
+                    + validated_completion_tokens
                 ),
                 cost_usd=round(
-                    float(self.status.get("cost_usd", 0.0)) + float(cost_usd),
+                    float(self.status.get("cost_usd", 0.0)) + validated_cost,
                     8,
                 ),
             )
@@ -605,24 +678,22 @@ class InstrumentedSession(requests.Session):
                 status_code=status_code,
             )
             return response
-        usage: dict[str, Any] = {}
-        model = ""
         try:
-            payload = response.json()
-            if isinstance(payload, dict):
-                raw_usage = payload.get("usage", {})
-                usage = raw_usage if isinstance(raw_usage, dict) else {}
-                model = str(payload.get("model", ""))
-        except ValueError:
-            pass
-        prompt_tokens = int(usage.get("prompt_tokens") or 0)
-        completion_tokens = int(usage.get("completion_tokens") or 0)
-        cost_usd = float(usage.get("cost") or usage.get("total_cost") or 0.0)
-        self.observer.record_usage(
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cost_usd=cost_usd,
-        )
+            prompt_tokens, completion_tokens, cost_usd, model = _provider_usage(
+                response
+            )
+            self.observer.record_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
+            )
+        except UsageValidationError:
+            self.observer.event(
+                "model_call_failed",
+                severity="error",
+                message="invalid provider usage",
+            )
+            raise
         self.observer.event(
             "model_call_completed",
             response_model=model,
