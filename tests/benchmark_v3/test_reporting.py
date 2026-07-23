@@ -74,6 +74,15 @@ class ReportingTest(unittest.TestCase):
         for key in ("ArrowRight", "ArrowLeft", "Home", "End", "activateTab"):
             self.assertIn(key, rendered)
 
+    def test_sortable_tables_expose_keyboard_sorting_semantics(self) -> None:
+        rendered = render_full_report(fixture_model())
+        for contract in (
+            "role','button'", "aria-sort','none'", "aria-label','Sort by '",
+            "event.key==='Enter'||event.key===' '", "cell.onclick=sort", "ascending=!ascending",
+            "ascending?'ascending':'descending'",
+        ):
+            self.assertIn(contract, rendered)
+
     def test_model_evidence_is_escaped_and_rendering_does_not_mutate_it(self) -> None:
         model = fixture_model(); case = model["cases"][0]
         case.update({"question": "<script>alert(1)</script>", "expected_sql": "SELECT '<b>expected</b>'"})
