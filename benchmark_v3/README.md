@@ -75,8 +75,9 @@ sources, scorer, and arms. Dataset/reference artifacts are fingerprinted and
 cached in the campaign directory; relationship-discovery warnings are carried
 into each report. The Windows launcher keeps one in-place `Overall evaluation`
 line showing completed tests out of all 450 tests, overall percentage,
-campaign elapsed time, campaign ETA, pass/fail totals, calls, retries, and
-spend. It does not print a separate progress block for each test.
+campaign elapsed time, and campaign ETA. The compact line stays within a
+standard 80-column Command Prompt and does not print a separate progress block
+for each test.
 Use `--workers 1` for a conservative serial live run.
 
 Outputs under `benchmark_v3/results/` are ignored by git. Do not commit API

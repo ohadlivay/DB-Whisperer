@@ -26,11 +26,10 @@ class ProgressTest(unittest.TestCase):
             "latest_error": "timeout",
         })
         self.assertIn("25.0%", rendered)
-        self.assertIn("Overall evaluation", rendered)
-        self.assertIn("5/20 tests complete", rendered)
+        self.assertIn("Overall  25.0%", rendered)
+        self.assertIn("tests 5/20", rendered)
         self.assertIn("elapsed 00:02:05", rendered)
         self.assertIn("ETA 00:06:15", rendered)
-        self.assertIn("$0.4200/$3.75", rendered)
         self.assertNotIn("stay_icu", rendered)
         self.assertNotIn("full/ambiguity", rendered)
 
@@ -93,7 +92,7 @@ class ProgressTest(unittest.TestCase):
             self.assertNotIn("\n", stream.getvalue())
             self.assertEqual(
                 2,
-                stream.getvalue().count("Overall evaluation"),
+                stream.getvalue().count("Overall"),
             )
 
     def test_interval_must_be_positive(self) -> None:
@@ -138,12 +137,26 @@ class ProgressTest(unittest.TestCase):
 
             self.assertLess(perf_counter() - started, 2)
             self.assertIn(
-                "Overall evaluation 100.0% | 1/1 tests complete",
+                "Overall 100.0% | tests 1/1",
                 stream.getvalue(),
             )
             self.assertTrue(stream.getvalue().endswith("\n"))
             with self.assertRaisesRegex(RuntimeError, "stopped"):
                 progress.start()
+
+    def test_official_progress_line_fits_an_eighty_column_terminal(self) -> None:
+        rendered = TerminalProgress.snapshot({
+            "completed_units": 450,
+            "total_units": 450,
+            "elapsed_seconds": 2 * 60 * 60,
+            "eta_seconds": 0,
+        })
+
+        self.assertLessEqual(len(rendered), 79)
+        self.assertEqual(
+            "Overall 100.0% | tests 450/450 | elapsed 02:00:00 | ETA 00:00:00",
+            rendered,
+        )
 
     def test_stop_is_bounded_when_stream_write_stalls(self) -> None:
         class StallingStream(StringIO):

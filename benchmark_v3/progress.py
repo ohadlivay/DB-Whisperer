@@ -49,14 +49,10 @@ class TerminalProgress:
         total = int(status.get("total_units", 0))
         percent = 100.0 * complete / total if total else 0.0
         return (
-            f"Overall evaluation {percent:5.1f}% | "
-            f"{complete}/{total} tests complete | "
+            f"Overall {percent:5.1f}% | "
+            f"tests {complete}/{total} | "
             f"elapsed {format_duration(status.get('elapsed_seconds'))} | "
-            f"ETA {format_duration(status.get('eta_seconds'))} | "
-            f"passed {status.get('passed', 0)} failed {status.get('failed', 0)} | "
-            f"calls {status.get('model_calls', 0)} retries {status.get('retries', 0)} | "
-            f"${float(status.get('cost_usd', 0)):.4f}/"
-            f"${float(status.get('budget_usd', 0)):.2f}"
+            f"ETA {format_duration(status.get('eta_seconds'))}"
         )
 
     def _interactive(self) -> bool:
