@@ -33,10 +33,12 @@ $env:OPENROUTER_API_KEY = "..."
 python -m benchmark_v3.run_evaluation
 ```
 
-For the official external campaign, first validate the suite locally, then set
-`OPENROUTER_API_KEY` only in the shell that will run it. Do not place the key in
-the launcher, a command file, source control, or a prompt log. From the repo
-root, use the no-secret Windows launcher:
+For the official external campaign, first validate the suite locally. If
+`OPENROUTER_API_KEY` is absent, the launcher requests it through a masked
+PowerShell prompt and keeps it only in the external process environment for
+the duration of the run. Do not place the key in the launcher, a command file,
+source control, or a prompt log. From the repo root, use the no-secret Windows
+launcher:
 
 ```powershell
 benchmark_v3\run_official_evaluation.cmd official-20260723

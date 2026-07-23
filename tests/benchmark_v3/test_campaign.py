@@ -203,6 +203,9 @@ class CampaignTest(unittest.TestCase):
         self.assertIn(".venv\\Scripts\\python.exe", launcher)
         self.assertNotIn("\n  python -m", launcher)
         self.assertIn("No project virtualenv Python", launcher)
+        self.assertIn("Read-Host 'OpenRouter API key' -AsSecureString", launcher)
+        self.assertIn("ZeroFreeBSTR", launcher)
+        self.assertNotIn("set /p OPENROUTER_API_KEY", launcher)
 
     def test_budget_stop_drains_admitted_cells_without_new_submissions(self) -> None:
         suite = self._suite(repetitions=2)

@@ -15,12 +15,24 @@ goto finish
 
 :run
 cd /d "%REPO_ROOT%"
+if defined OPENROUTER_API_KEY goto launch
+
+echo OPENROUTER_API_KEY is not set. Enter it in the masked prompt.
+for /f "usebackq delims=" %%K in (`powershell -NoProfile -Command "$s=Read-Host 'OpenRouter API key' -AsSecureString; $b=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s); try {[Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)} finally {[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b)}"`) do set "OPENROUTER_API_KEY=%%K"
+if defined OPENROUTER_API_KEY goto launch
+
+echo ERROR: No OpenRouter API key was supplied.
+set "EXIT_CODE=1"
+goto finish
+
+:launch
 if "%~1"=="" (
   "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5
 ) else (
   "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5 --campaign-id "%~1"
 )
 set "EXIT_CODE=%ERRORLEVEL%"
+set "OPENROUTER_API_KEY="
 
 :finish
 echo.
