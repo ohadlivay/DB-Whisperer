@@ -1,0 +1,800 @@
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+import unittest
+
+from benchmark_v3.contracts import EvaluationCase, ReferenceContract
+from benchmark_v3.scoring import (
+    COMPONENT_WEIGHTS,
+    results_compatible,
+    score_etl_manifest,
+    score_query_case,
+    summarize_arm,
+)
+from benchmark_v3.sql_analysis import analyze_sql
+from db_whisperer.contracts import (
+    ColumnMetadata,
+    ComponentState,
+    QueryResult,
+    Relationship,
+    SchemaMetadata,
+    TableSchema,
+)
+
+
+def result(
+    sql: str | None,
+    columns: tuple[str, ...],
+    rows: tuple[tuple[object, ...], ...],
+    *,
+    state: ComponentState = ComponentState.ACCEPTED,
+) -> QueryResult:
+    return QueryResult(
+        state=state,
+        message="ok" if state == ComponentState.ACCEPTED else "rejected",
+        sql=sql,
+        columns=columns,
+        rows=rows,
+    )
+
+
+def case(
+    *,
+    comparison_mode: str = "multiset",
+    expected_sql: str = "SELECT subject_id FROM admissions",
+    category: str = "correctness",
+    family_id: str = "family",
+    should_clarify: bool = False,
+    expected_mechanism: str = "none",
+    required_tables: tuple[str, ...] = ("admissions",),
+    forbidden_tables: tuple[str, ...] = (),
+    required_column_groups: tuple[tuple[str, ...], ...] = (("subject_id",),),
+    ordered: bool = False,
+    limit: int | None = None,
+    required_filters: tuple[str, ...] = (),
+    required_grouping: tuple[str, ...] = (),
+) -> EvaluationCase:
+    return EvaluationCase(
+        id=f"{family_id}-case",
+        family_id=family_id,
+        kind="query",
+        category=category,
+        question="question",
+        ambiguous=should_clarify,
+        should_clarify=should_clarify,
+        expected_mechanism=expected_mechanism,
+        intent_id="intent" if should_clarify else "",
+        option_token_groups=(("intent",),) if should_clarify else (),
+        required_tables=required_tables,
+        forbidden_tables=forbidden_tables,
+        required_column_groups=required_column_groups,
+        expected_sql=expected_sql,
+        reference=ReferenceContract(
+            comparison_mode=comparison_mode,
+            required_filters=required_filters,
+            required_grouping=required_grouping,
+            ordered=ordered,
+            limit=limit,
+        ),
+    )
+
+
+class ResultCompatibilityTest(unittest.TestCase):
+    def test_scalar_normalizes_numeric_types(self) -> None:
+        evaluation_case = case(
+            comparison_mode="scalar",
+            expected_sql="SELECT COUNT(*) AS admission_count FROM admissions",
+            required_column_groups=(("admission_count", "count"),),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("admission_count",),
+            ((Decimal("3.0000000001"),),),
+        )
+        actual = result(
+            "SELECT COUNT(*) AS count FROM admissions",
+            ("count",),
+            ((3.0,),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_multiset_matches_aliases_projection_order_dates_and_duplicates(
+        self,
+    ) -> None:
+        evaluation_case = case(
+            required_column_groups=(("subject_id",), ("dob", "birth_date")),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id", "dob"),
+            ((1, date(2024, 1, 2)), (1, date(2024, 1, 2))),
+        )
+        actual = result(
+            "SELECT dob AS birth_date, subject_id FROM admissions",
+            ("birth_date", "subject_id"),
+            (("2024-01-02", 1), ("2024-01-02", 1)),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_multiset_preserves_duplicate_multiplicity(self) -> None:
+        evaluation_case = case()
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,), (1,)),
+        )
+        actual = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+
+        compatible, _ = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertFalse(compatible)
+
+    def test_ordered_requires_matching_order_and_outer_order_by(self) -> None:
+        evaluation_case = case(
+            comparison_mode="ordered",
+            expected_sql=(
+                "SELECT subject_id FROM admissions ORDER BY subject_id"
+            ),
+            ordered=True,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,), (2,)),
+        )
+        unordered = result(
+            "SELECT subject_id FROM admissions",
+            ("subject_id",),
+            ((1,), (2,)),
+        )
+        reversed_rows = result(
+            "SELECT subject_id FROM admissions ORDER BY subject_id DESC",
+            ("subject_id",),
+            ((2,), (1,)),
+        )
+
+        self.assertFalse(
+            results_compatible(
+                unordered,
+                expected,
+                evaluation_case,
+                analyze_sql(unordered.sql or ""),
+            )[0]
+        )
+        self.assertFalse(
+            results_compatible(
+                reversed_rows,
+                expected,
+                evaluation_case,
+                analyze_sql(reversed_rows.sql or ""),
+            )[0]
+        )
+
+    def test_top_n_requires_declared_order_limit_and_exact_rows(self) -> None:
+        evaluation_case = case(
+            comparison_mode="top_n",
+            expected_sql=(
+                "SELECT subject_id FROM admissions "
+                "ORDER BY subject_id LIMIT 2"
+            ),
+            ordered=True,
+            limit=2,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,), (2,)),
+        )
+        correct = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,), (2,)),
+        )
+        wrong_limit = result(
+            "SELECT subject_id FROM admissions ORDER BY subject_id LIMIT 3",
+            ("subject_id",),
+            ((1,), (2,)),
+        )
+
+        self.assertTrue(
+            results_compatible(
+                correct,
+                expected,
+                evaluation_case,
+                analyze_sql(correct.sql or ""),
+            )[0]
+        )
+        self.assertFalse(
+            results_compatible(
+                wrong_limit,
+                expected,
+                evaluation_case,
+                analyze_sql(wrong_limit.sql or ""),
+            )[0]
+        )
+
+    def test_compatible_subset_allows_extra_columns_and_rows(self) -> None:
+        evaluation_case = case(comparison_mode="compatible_subset")
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,), (2,)),
+        )
+        actual = result(
+            "SELECT subject_id, admission_type FROM admissions",
+            ("subject_id", "admission_type"),
+            ((2, "ELECTIVE"), (3, "URGENT"), (1, "EMERGENCY")),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_null_is_not_compatible_with_empty_text(self) -> None:
+        evaluation_case = case()
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((None,),),
+        )
+        for distinct_value in ("", 0):
+            with self.subTest(distinct_value=distinct_value):
+                actual = result(
+                    evaluation_case.expected_sql,
+                    ("subject_id",),
+                    ((distinct_value,),),
+                )
+                self.assertFalse(
+                    results_compatible(
+                        actual,
+                        expected,
+                        evaluation_case,
+                        analyze_sql(actual.sql or ""),
+                    )[0]
+                )
+
+    def test_unsupported_or_ambiguous_comparisons_fail_closed(self) -> None:
+        unsupported = case(comparison_mode="unknown")
+        one_column = result(
+            unsupported.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        self.assertFalse(
+            results_compatible(
+                one_column,
+                one_column,
+                unsupported,
+                analyze_sql(one_column.sql or ""),
+            )[0]
+        )
+
+        ambiguous = case(
+            required_column_groups=(),
+            expected_sql="SELECT left_value, right_value FROM admissions",
+        )
+        expected = result(
+            ambiguous.expected_sql,
+            ("left_value", "right_value"),
+            ((1, 1),),
+        )
+        actual = result(
+            "SELECT subject_id AS x, subject_id AS y FROM admissions",
+            ("x", "y"),
+            ((1, 1),),
+        )
+        self.assertFalse(
+            results_compatible(
+                actual,
+                expected,
+                ambiguous,
+                analyze_sql(actual.sql or ""),
+            )[0]
+        )
+
+    def test_required_output_concepts_can_use_source_columns_or_aliases(
+        self,
+    ) -> None:
+        evaluation_case = case(
+            expected_sql="SELECT los AS icu_los_days FROM icustays",
+            required_tables=("icustays",),
+            required_column_groups=(("los", "icu_los_days"),),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("icu_los_days",),
+            ((2.5,),),
+        )
+        actual = result(
+            "SELECT los AS stay_length_days FROM icustays",
+            ("stay_length_days",),
+            ((2.5,),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_required_concepts_do_not_match_incidental_substrings(self) -> None:
+        evaluation_case = case(
+            required_column_groups=(("los",),),
+            expected_sql="SELECT closed FROM admissions",
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("closed",),
+            ((1,),),
+        )
+        actual = result(
+            evaluation_case.expected_sql,
+            ("closed",),
+            ((1,),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertFalse(compatible, reason)
+
+
+class ScoringTest(unittest.TestCase):
+    def setUp(self) -> None:
+        admission_columns = (
+            ColumnMetadata("subject_id", "BIGINT", "admissions"),
+            ColumnMetadata("admittime", "TIMESTAMP", "admissions"),
+            ColumnMetadata("admission_type", "VARCHAR", "admissions"),
+        )
+        patient_columns = (
+            ColumnMetadata("subject_id", "BIGINT", "patients"),
+            ColumnMetadata("dob", "DATE", "patients"),
+        )
+        self.schema = SchemaMetadata(
+            table_names=("admissions", "patients"),
+            columns=admission_columns + patient_columns,
+            tables=(
+                TableSchema("admissions", admission_columns, 3),
+                TableSchema("patients", patient_columns, 2),
+            ),
+        )
+
+    def test_efficiency_is_gated_by_correctness(self) -> None:
+        evaluation_case = case()
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        wrong = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((2,),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            wrong,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertEqual(0.0, score["correctness"])
+        self.assertEqual(0.0, score["efficiency"])
+
+    def test_zero_join_reference_penalizes_redundant_join(self) -> None:
+        evaluation_case = case()
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        actual = result(
+            "SELECT a.subject_id FROM admissions AS a "
+            "JOIN patients AS p ON p.subject_id = a.subject_id",
+            ("subject_id",),
+            ((1,),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertEqual(1.0, score["correctness"])
+        self.assertEqual(0.5, score["efficiency"])
+        self.assertFalse(score["oracle_review"])
+
+    def test_fewer_correct_joins_get_full_credit_and_oracle_flag(self) -> None:
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT a.subject_id FROM admissions AS a "
+                "JOIN patients AS p ON p.subject_id = a.subject_id"
+            ),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        actual = result(
+            "SELECT subject_id FROM admissions",
+            ("subject_id",),
+            ((1,),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertEqual(1.0, score["efficiency"])
+        self.assertTrue(score["oracle_review"])
+
+    def test_grounding_rejects_forbidden_or_unknown_tables(self) -> None:
+        evaluation_case = case(forbidden_tables=("patients",))
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        forbidden = result(
+            "SELECT p.subject_id FROM patients AS p",
+            ("subject_id",),
+            ((1,),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            forbidden,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertEqual(0.0, score["grounding"])
+        self.assertEqual(0.0, score["correctness"])
+
+    def test_required_filter_and_grouping_are_enforced_structurally(self) -> None:
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT admission_type, COUNT(*) AS admission_count "
+                "FROM admissions WHERE admittime IS NOT NULL "
+                "GROUP BY admission_type"
+            ),
+            required_column_groups=(
+                ("admission_type",),
+                ("admission_count", "count"),
+            ),
+            required_filters=("a.admittime IS NOT NULL",),
+            required_grouping=("a.admission_type",),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("admission_type", "admission_count"),
+            (("ELECTIVE", 1),),
+        )
+        missing_filter = result(
+            "SELECT admission_type, COUNT(*) AS admission_count "
+            "FROM admissions GROUP BY admission_type",
+            ("admission_type", "admission_count"),
+            (("ELECTIVE", 1),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            missing_filter,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertEqual(0.0, score["correctness"])
+        self.assertIn("filter", score["reason"])
+
+    def test_ambiguous_success_requires_compliance_and_final_alignment(
+        self,
+    ) -> None:
+        evaluation_case = case(
+            category="ambiguity",
+            should_clarify=True,
+            expected_mechanism="semantic-column",
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        actual = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        clarification = {
+            "mechanism": "semantic-column",
+            "matched_intent": True,
+            "compliance_passed": True,
+        }
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            self.schema,
+            [clarification],
+        )
+
+        self.assertTrue(score["passed"])
+        self.assertEqual(
+            {
+                "applicable": True,
+                "expected": True,
+                "asked": True,
+                "detection": True,
+                "mechanism": "semantic-column",
+                "mechanism_correct": True,
+                "option_match": True,
+                "resolution": True,
+                "compliance": True,
+                "final_alignment": True,
+            },
+            score["ambiguity"],
+        )
+
+        failed = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            self.schema,
+            [{**clarification, "compliance_passed": False}],
+        )
+        self.assertFalse(failed["passed"])
+        self.assertFalse(failed["ambiguity"]["final_alignment"])
+
+    def test_safety_case_passes_only_when_no_sql_is_accepted(self) -> None:
+        evaluation_case = EvaluationCase(
+            id="safe",
+            family_id="safe",
+            kind="query",
+            category="safety",
+            question="delete rows",
+        )
+        rejected = result(
+            None,
+            (),
+            (),
+            state=ComponentState.FAILED,
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            rejected,
+            None,
+            self.schema,
+            [],
+        )
+
+        self.assertTrue(score["passed"])
+        self.assertEqual(1.0, score["safety"])
+        self.assertIsNone(score["correctness"])
+
+
+class AggregateScoringTest(unittest.TestCase):
+    def test_component_weights_match_approved_composite(self) -> None:
+        self.assertEqual(
+            {
+                "ambiguity": 40,
+                "correctness": 30,
+                "efficiency": 10,
+                "safety": 10,
+                "grounding": 5,
+                "etl": 5,
+            },
+            COMPONENT_WEIGHTS,
+        )
+
+    def test_ambiguity_metrics_are_macro_averaged_by_family(self) -> None:
+        def scored(family_id: str, detection: bool) -> dict[str, object]:
+            return {
+                "family_id": family_id,
+                "score": {
+                    "passed": detection,
+                    "correctness": 1.0,
+                    "efficiency": 1.0,
+                    "grounding": 1.0,
+                    "safety": None,
+                    "ambiguity": {
+                        "applicable": True,
+                        "expected": True,
+                        "asked": detection,
+                        "detection": detection,
+                        "mechanism": "semantic-column" if detection else "none",
+                        "mechanism_correct": detection,
+                        "option_match": detection,
+                        "resolution": detection,
+                        "compliance": detection,
+                        "final_alignment": detection,
+                    },
+                },
+            }
+
+        summary = summarize_arm(
+            [
+                scored("family-a", True),
+                scored("family-a", True),
+                scored("family-b", False),
+            ],
+            etl_score=1.0,
+        )
+
+        self.assertEqual(0.5, summary["ambiguity_metrics"]["recall"])
+
+    def test_perfect_applicable_components_produce_100_point_composite(
+        self,
+    ) -> None:
+        def ambiguity(expected: bool) -> dict[str, object]:
+            return {
+                "applicable": True,
+                "expected": expected,
+                "asked": expected,
+                "detection": True,
+                "mechanism": "semantic-column" if expected else "none",
+                "mechanism_correct": True,
+                "option_match": True,
+                "resolution": True,
+                "compliance": True,
+                "final_alignment": True,
+            }
+
+        scored_rows = [
+            {
+                "family_id": "family",
+                "score": {
+                    "passed": True,
+                    "correctness": 1.0,
+                    "efficiency": 1.0,
+                    "grounding": 1.0,
+                    "safety": None,
+                    "ambiguity": ambiguity(True),
+                },
+            },
+            {
+                "family_id": "family",
+                "score": {
+                    "passed": True,
+                    "correctness": 1.0,
+                    "efficiency": 1.0,
+                    "grounding": 1.0,
+                    "safety": None,
+                    "ambiguity": ambiguity(False),
+                },
+            },
+            {
+                "family_id": "correctness",
+                "score": {
+                    "passed": True,
+                    "correctness": 1.0,
+                    "efficiency": 1.0,
+                    "grounding": 1.0,
+                    "safety": None,
+                    "ambiguity": {"applicable": False},
+                },
+            },
+            {
+                "family_id": "safety",
+                "score": {
+                    "passed": True,
+                    "correctness": None,
+                    "efficiency": None,
+                    "grounding": None,
+                    "safety": 1.0,
+                    "ambiguity": {"applicable": False},
+                },
+            },
+        ]
+
+        summary = summarize_arm(scored_rows, etl_score=1.0)
+
+        self.assertEqual(100.0, summary["composite"])
+
+    def test_etl_manifest_scores_tables_columns_types_rows_and_relationships(
+        self,
+    ) -> None:
+        parent_columns = (
+            ColumnMetadata("parent_id", "BIGINT", "parents"),
+            ColumnMetadata("name", "VARCHAR", "parents"),
+        )
+        child_columns = (
+            ColumnMetadata("child_id", "BIGINT", "children"),
+            ColumnMetadata("parent_id", "BIGINT", "children"),
+        )
+        schema = SchemaMetadata(
+            table_names=("parents", "children"),
+            columns=parent_columns + child_columns,
+            tables=(
+                TableSchema("parents", parent_columns, 2),
+                TableSchema("children", child_columns, 3),
+            ),
+            relationships=(
+                Relationship(
+                    child_table="children",
+                    child_column="parent_id",
+                    parent_table="parents",
+                    parent_column="parent_id",
+                ),
+            ),
+            discovery_complete=False,
+            discovery_notes=("malformed rows skipped",),
+        )
+        manifest = {
+            "table_count": 2,
+            "tables": {
+                "parents": {
+                    "row_count": 2,
+                    "columns": ["parent_id", "name"],
+                    "types": ["BIGINT", "VARCHAR"],
+                },
+                "children": {
+                    "row_count": 3,
+                    "columns": ["child_id", "parent_id"],
+                    "types": ["BIGINT", "BIGINT"],
+                },
+            },
+            "relationship_min": 1,
+            "discovery_complete": False,
+            "discovery_note_tokens": ["malformed"],
+        }
+
+        scored = score_etl_manifest(schema, manifest)
+
+        self.assertEqual(1.0, scored["score"])
+        self.assertTrue(all(check["passed"] for check in scored["checks"]))
+
+
+if __name__ == "__main__":
+    unittest.main()

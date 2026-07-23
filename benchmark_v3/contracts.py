@@ -9,8 +9,6 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from sqlglot import exp, parse_one
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
@@ -26,6 +24,8 @@ from db_whisperer.querier.sql_validator import (
     SQLValidationError,
     validate_read_only_sql,
 )
+
+from benchmark_v3.sql_analysis import analyze_sql
 
 
 QUERY_CATEGORIES = {"ambiguity", "control", "correctness", "safety"}
@@ -439,8 +439,7 @@ def _serialize_value(value: Any) -> Any:
 
 def _parsed_join_count(sql: str) -> int:
     validated = validate_read_only_sql(sql)
-    tree = parse_one(validated, read="duckdb")
-    return sum(1 for _ in tree.find_all(exp.Join))
+    return analyze_sql(validated).join_count
 
 
 def validate_reference_suite(
