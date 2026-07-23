@@ -33,6 +33,30 @@ $env:OPENROUTER_API_KEY = "..."
 python -m benchmark_v3.run_evaluation
 ```
 
+For the official external campaign, first validate the suite locally, then set
+`OPENROUTER_API_KEY` only in the shell that will run it. Do not place the key in
+the launcher, a command file, source control, or a prompt log. From the repo
+root, use the no-secret Windows launcher:
+
+```powershell
+benchmark_v3\run_official_evaluation.cmd official-20260723
+```
+
+It runs two workers, five repetitions, the frozen $3.75 suite budget, and the
+four V3 arms. A new campaign ID is generated when the optional ID is omitted;
+use the same safe lowercase ID to resume an interrupted campaign:
+
+```powershell
+python -m benchmark_v3.run_evaluation --campaign-id official-20260723 --workers 2 --repetitions 5
+```
+
+Campaigns live under `benchmark_v3/results/runs/<campaign-id>`. Checkpoints
+and raw run reports are retained. Only a complete, valid five-repetition
+official campaign (450 records: 440 query cells and 10 ETL observations)
+publishes `aggregate.json` and atomically replaces the two public V3 HTML
+reports. Incomplete, budget-stopped, or errored campaigns never replace the
+public reports; the campaign records `latest_error` if publication fails.
+
 The campaign runner uses the four arms `baseline`, `candidate_only`,
 `semantic_only`, and `full`. Baseline generates one candidate; the ambiguity
 arms generate three. Its deterministic five-repetition schedule rotates arm

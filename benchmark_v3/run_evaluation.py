@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 from importlib import metadata as importlib_metadata
 import os
 from pathlib import Path
 import random
+import re
 import stat
 import sys
 from threading import Lock, local
@@ -39,9 +41,12 @@ from db_whisperer.querier.sql_validator import FORBIDDEN_SQL
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 DEFAULT_SUITE = BENCHMARK_DIR / "cases" / "evaluation_cases.json"
-DEFAULT_OUTPUT = BENCHMARK_DIR / "results" / "campaign"
+DEFAULT_OUTPUT = BENCHMARK_DIR / "results" / "runs"
 ARMS = ("baseline", "candidate_only", "semantic_only", "full")
 _FORBIDDEN_OPERATION = "Generated SQL contains a forbidden operation."
+OFFICIAL_REPETITIONS = 5
+OFFICIAL_RECORD_COUNT = 450
+_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -819,6 +824,7 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     payload = {
         **metadata,
         "complete": not stopped and len(completed) == len(schedule),
+        "repetitions": config.suite.repetitions,
         "records": records,
         "relationship_warnings": warnings,
         "query_cell_count": len(query_schedule),
@@ -831,19 +837,74 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
             "relationship_warnings": warnings,
         })
     atomic_json(campaign_path, payload)
+    if payload["complete"] and config.suite.repetitions == OFFICIAL_REPETITIONS and len(records) == OFFICIAL_RECORD_COUNT:
+        if not publish_campaign(config.campaign_dir):
+            stopped = True
     return CampaignResult(fingerprint, frozenset(completed), tuple(records), stopped)
+
+
+def publish_campaign(
+    campaign_dir: Path,
+    *,
+    one_page_path: Path | None = None,
+    full_report_path: Path | None = None,
+) -> bool:
+    """Publish only a complete official campaign; raw evidence is never removed."""
+    campaign_path = campaign_dir / "campaign.json"
+    if not campaign_path.exists():
+        return False
+    campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+    if (
+        campaign.get("complete") is not True
+        or campaign.get("repetitions") != OFFICIAL_REPETITIONS
+        or not isinstance(campaign.get("records"), list)
+        or len(campaign["records"]) != OFFICIAL_RECORD_COUNT
+    ):
+        return False
+    one_page_path = one_page_path or PROJECT_ROOT / "docs" / "evaluation_method_one_page.html"
+    full_report_path = full_report_path or PROJECT_ROOT / "docs" / "evaluation_report.html"
+    try:
+        from benchmark_v3.aggregate_results import aggregate_campaign, validate_aggregate
+        from benchmark_v3.render_report import write_reports
+
+        aggregate = aggregate_campaign(campaign_dir)
+        validate_aggregate(aggregate)
+        aggregate_path = campaign_dir / "aggregate.json"
+        atomic_json(aggregate_path, aggregate)
+        write_reports(aggregate_path, one_page_path, full_report_path)
+        return True
+    except Exception as error:
+        campaign["complete"] = False
+        campaign["latest_error"] = f"publication failed: {error}"
+        atomic_json(campaign_path, campaign)
+        return False
+
+
+def _campaign_directory(campaign_id: str | None) -> Path:
+    identifier = campaign_id or datetime.now(timezone.utc).strftime("campaign-%Y%m%d-%H%M%S-%f")
+    if not _CAMPAIGN_ID.fullmatch(identifier):
+        raise ValueError("campaign id must be a safe lowercase slug")
+    return DEFAULT_OUTPUT / identifier
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite", type=Path, default=DEFAULT_SUITE)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--repetitions", type=int, default=OFFICIAL_REPETITIONS)
+    parser.add_argument("--campaign-id")
     args = parser.parse_args()
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         raise SystemExit("OPENROUTER_API_KEY is required for a live V3 campaign.")
-    run_campaign(CampaignConfig(load_suite(args.suite), args.output, api_key, args.workers))
+    if args.workers not in {1, 2} or not 1 <= args.repetitions <= OFFICIAL_REPETITIONS:
+        raise SystemExit("workers must be 1 or 2; repetitions must be between 1 and 5.")
+    try:
+        campaign_dir = _campaign_directory(args.campaign_id)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    suite = replace(load_suite(args.suite), repetitions=args.repetitions)
+    run_campaign(CampaignConfig(suite, campaign_dir, api_key, args.workers))
 
 
 if __name__ == "__main__":

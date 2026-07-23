@@ -30,8 +30,10 @@ from benchmark_v3.run_evaluation import (
     _serialize_schema,
     _load_matching_checkpoints,
     run_campaign,
+    publish_campaign,
+    _campaign_directory,
 )
-from benchmark_v3.run_evaluation import BENCHMARK_DIR, PROJECT_ROOT, SRC
+from benchmark_v3.run_evaluation import BENCHMARK_DIR, DEFAULT_OUTPUT, PROJECT_ROOT, SRC
 from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
 from benchmark_v3.observability import BudgetStop
 
@@ -114,6 +116,42 @@ class CampaignTest(unittest.TestCase):
             self.assertTrue((directory / "campaign.json").exists())
         self.assertEqual(20, len(result.completed_keys))
         self.assertLessEqual(maximum, 2)
+
+    def test_publication_requires_complete_official_campaign_and_keeps_public_reports_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary); public = directory / "public"; public.mkdir()
+            one_page, full = public / "evaluation_method_one_page.html", public / "evaluation_report.html"
+            one_page.write_text("old one"); full.write_text("old full")
+            (directory / "campaign.json").write_text(json.dumps({"complete": False, "repetitions": 5, "records": [{}] * 450}))
+            self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
+            self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
+
+    def test_publication_writes_aggregate_then_exactly_two_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary); public = directory / "public"; public.mkdir()
+            (directory / "campaign.json").write_text(json.dumps({"complete": True, "repetitions": 5, "records": [{}] * 450}))
+            aggregate = {"validated": True}
+            with patch("benchmark_v3.aggregate_results.aggregate_campaign", return_value=aggregate), patch("benchmark_v3.aggregate_results.validate_aggregate") as validate, patch("benchmark_v3.render_report.write_reports", return_value=(public / "evaluation_method_one_page.html", public / "evaluation_report.html")) as write:
+                self.assertTrue(publish_campaign(directory, one_page_path=public / "evaluation_method_one_page.html", full_report_path=public / "evaluation_report.html"))
+            self.assertEqual(aggregate, json.loads((directory / "aggregate.json").read_text()))
+            validate.assert_called_once_with(aggregate); write.assert_called_once()
+
+    def test_publication_error_preserves_public_reports_and_marks_campaign_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary); public = directory / "public"; public.mkdir()
+            one_page, full = public / "evaluation_method_one_page.html", public / "evaluation_report.html"
+            one_page.write_text("old one"); full.write_text("old full")
+            (directory / "campaign.json").write_text(json.dumps({"complete": True, "repetitions": 5, "records": [{}] * 450}))
+            with patch("benchmark_v3.aggregate_results.aggregate_campaign", side_effect=RuntimeError("broken aggregate")):
+                self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
+            campaign = json.loads((directory / "campaign.json").read_text())
+            self.assertFalse(campaign["complete"]); self.assertIn("publication failed", campaign["latest_error"])
+            self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
+
+    def test_campaign_directory_uses_safe_unique_slug_shape(self) -> None:
+        self.assertEqual(DEFAULT_OUTPUT / "official-20260723", _campaign_directory("official-20260723"))
+        with self.assertRaises(ValueError):
+            _campaign_directory("../unsafe")
 
     def test_budget_stop_drains_admitted_cells_without_new_submissions(self) -> None:
         suite = self._suite(repetitions=2)
