@@ -5,3 +5,4 @@ data/generated/*.duckdb.wal
 logs/*.jsonl
 /.streamlit/secrets.toml
 /.idea
+/.worktrees/
