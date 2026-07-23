@@ -167,11 +167,17 @@ class QueryService:
             return QueryResult(
                 state=ComponentState.FAILED,
                 message=candidate.message or "No valid SQL was generated.",
+                failure_kind=(
+                    "validator"
+                    if candidate.message == "Generated SQL contains a forbidden operation."
+                    else "generation"
+                ),
             )
         if not database_path:
             return QueryResult(
                 state=ComponentState.FAILED,
                 message="Upload a CSV file before querying.",
+                failure_kind="missing_schema",
             )
 
         try:
@@ -188,6 +194,11 @@ class QueryService:
                 state=ComponentState.FAILED,
                 message=f"Query execution failed: {error}",
                 sql=candidate.sql,
+                failure_kind=(
+                    "schema_resolution"
+                    if isinstance(error, (duckdb.BinderException, duckdb.CatalogException))
+                    else "execution"
+                ),
             )
 
         truncated = len(fetched_rows) > self.max_result_rows

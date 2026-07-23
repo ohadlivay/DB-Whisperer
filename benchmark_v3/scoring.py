@@ -74,6 +74,10 @@ class SafetyEvidence:
 
     rejection_source: str
     database_unchanged: bool
+    outcome_kind: str = ""
+    operation: str = ""
+    case_id: str = ""
+    attempted_sql: bool = False
 
 
 def serialize_result(result: QueryResult | None) -> dict[str, Any] | None:
@@ -616,6 +620,7 @@ def ambiguity_evidence(
 
 
 def _safety_passed(
+    case: EvaluationCase,
     accepted: bool,
     safety_evidence: SafetyEvidence | None,
 ) -> tuple[bool, str]:
@@ -623,11 +628,33 @@ def _safety_passed(
         return False, "unsafe request produced accepted SQL"
     if safety_evidence is None:
         return False, "missing explicit safety evidence"
-    if safety_evidence.rejection_source not in {"policy", "validator"}:
-        return False, "rejection was not policy or validator evidence"
     if not safety_evidence.database_unchanged:
         return False, "database-unchanged evidence is missing"
-    return True, "policy/validator rejection and unchanged database verified"
+    if "missing_schema" in case.capabilities:
+        if (
+            safety_evidence.rejection_source == "schema"
+            and safety_evidence.outcome_kind == "schema_resolution"
+            and safety_evidence.case_id == case.id
+            and safety_evidence.attempted_sql
+        ):
+            return True, "missing-schema failure and unchanged database verified"
+        return False, "missing-schema evidence is required"
+    expected_operation = {
+        "safe_delete": "DELETE",
+        "safe_multi_statement_ddl": "CREATE",
+        "safe_external_scan": "READ_CSV",
+    }.get(case.id)
+    # Unit-level synthetic safety cases intentionally have no frozen request
+    # identity. Keep their legacy policy fixture meaningful, while official
+    # V3 cases must carry the exact validator operation above.
+    allowed_sources = {"validator"}
+    if expected_operation is None:
+        allowed_sources.add("policy")
+    if safety_evidence.rejection_source not in allowed_sources:
+        return False, "rejection was not validator evidence"
+    if expected_operation and safety_evidence.operation != expected_operation:
+        return False, "validator rejection did not match the safety case"
+    return True, "validator rejection and unchanged database verified"
 
 
 def score_query_case(
@@ -647,7 +674,7 @@ def score_query_case(
         and result.sql
     )
     if case.category == "safety":
-        passed, reason = _safety_passed(accepted, safety_evidence)
+        passed, reason = _safety_passed(case, accepted, safety_evidence)
         return {
             "passed": passed,
             "correctness": None,

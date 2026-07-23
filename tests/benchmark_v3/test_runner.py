@@ -11,7 +11,7 @@ from benchmark_v3.contracts import load_suite
 from benchmark_v3.observability import CampaignObserver
 from benchmark_v3.run_evaluation import ARMS, CampaignDataset, WorkItem, build_schedule, build_services, run_cell
 from benchmark_v3.contracts import EvaluationCase
-from db_whisperer.contracts import AmbiguityDecision, ComponentState, QueryResult, SchemaMetadata
+from db_whisperer.contracts import AmbiguityDecision, ComponentState, QueryCandidate, QueryResult, SchemaMetadata
 from db_whisperer.querier import QueryService
 
 
@@ -82,6 +82,8 @@ class RunnerTest(unittest.TestCase):
         pending = SimpleNamespace(
             state=ComponentState.PENDING, complete=False,
             query_result=None,
+            semantic_fallback_used=True,
+            compliance_retry_used=True,
             ambiguity=AmbiguityDecision(
                 state=ComponentState.ACCEPTED, passed=False,
                 question="Which?", options=("Hospital stay", "ICU stay"),
@@ -95,6 +97,8 @@ class RunnerTest(unittest.TestCase):
         )
         self.assertEqual(2, len(record["clarifications"]))
         self.assertEqual("Hospital stay", record["clarifications"][0]["chosen"])
+        self.assertTrue(record["clarifications"][-1]["fallback_used"])
+        self.assertTrue(record["clarifications"][-1]["compliance_retry_used"])
         self.assertEqual("missing", record["result"]["state"])
 
     def test_safety_uses_validator_rejection_and_unchanged_database_snapshot(self) -> None:
@@ -154,12 +158,14 @@ class RunnerTest(unittest.TestCase):
         self.assertFalse(record["score"]["passed"])
 
     def test_real_validator_trace_scores_forbidden_suite_requests_without_database_mutation(self) -> None:
-        class DeleteClient:
+        class SafetyClient:
+            def __init__(self, sql: str) -> None:
+                self.sql = sql
+
             def generate_sql(self, **kwargs: object) -> str:
-                return "DELETE FROM \"admissions\";"
+                return self.sql
 
         suite = load_suite(SUITE_PATH)
-        query = QueryService(client=DeleteClient())
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "fixture.duckdb"
             connection = duckdb.connect(str(database))
@@ -171,12 +177,53 @@ class RunnerTest(unittest.TestCase):
             )
             for case in [item for item in suite.query_cases if item.category == "safety"][:3]:
                 with self.subTest(case=case.id):
+                    query = QueryService(client=SafetyClient({
+                        "safe_delete": "DELETE FROM \"admissions\";",
+                        "safe_multi_statement_ddl": "CREATE TABLE copied AS SELECT 1;",
+                        "safe_external_scan": "SELECT * FROM READ_CSV('secret.csv');",
+                    }[case.id]))
                     record = run_cell(
                         WorkItem(1, case.id, case.family_id, case.category, "baseline"),
                         case, dataset, query, {}, "offline", "model",
                     )
                     self.assertTrue(record["score"]["passed"])
                     self.assertEqual(before, database.read_bytes())
+
+    def test_safety_evidence_is_collected_for_every_arm_and_is_case_specific(self) -> None:
+        suite = load_suite(SUITE_PATH)
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "fixture.duckdb"
+            database.write_bytes(b"unchanged")
+            dataset = CampaignDataset(SchemaMetadata(database_path=str(database)), "dataset", {}, {})
+            for arm in ARMS:
+                for case in (item for item in suite.query_cases if item.category == "safety"):
+                    if case.id == "missing_clinical_concept":
+                        candidate = QueryCandidate(1, ComponentState.ACCEPTED, "SELECT genomic_risk_score FROM patients;")
+                        result = QueryResult(ComponentState.FAILED, "schema", failure_kind="schema_resolution")
+                    else:
+                        operation = {
+                            "safe_delete": "DELETE FROM patients",
+                            "safe_multi_statement_ddl": "CREATE TABLE copied AS SELECT 1",
+                            "safe_external_scan": "READ_CSV('secret.csv')",
+                        }[case.id]
+                        candidate = QueryCandidate(1, ComponentState.FAILED, operation, "Generated SQL contains a forbidden operation.")
+                        result = QueryResult(ComponentState.FAILED, candidate.message)
+                    workflow = SimpleNamespace(
+                        state=ComponentState.FAILED, complete=True, query_result=result,
+                        ambiguity=None, candidates=(candidate,), candidate_results=(result,),
+                        semantic_fallback_used=False, compliance_retry_used=False,
+                    )
+                    query = SimpleNamespace(
+                        generate_candidate=lambda request, value=candidate: value,
+                        execute_candidate=lambda candidate, path, value=result: value,
+                    )
+                    apps = {arm: SimpleNamespace(submit_query=lambda **kwargs: workflow)} if arm != "baseline" else {}
+                    record = run_cell(
+                        WorkItem(1, case.id, case.family_id, case.category, arm), case,
+                        dataset, query, apps, "offline", "model",
+                    )
+                    with self.subTest(arm=arm, case=case.id):
+                        self.assertTrue(record["score"]["passed"])
 
     def test_choice_uses_any_declared_synonym_group(self) -> None:
         case = EvaluationCase(

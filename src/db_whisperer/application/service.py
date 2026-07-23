@@ -40,6 +40,7 @@ class _CandidateBatch:
     pairs: tuple[ExecutedQueryPair, ...]
     generation_failures: tuple[tuple[int, str], ...]
     execution_failures: tuple[tuple[int, str], ...]
+    candidate_results: tuple[QueryResult, ...]
 
 
 class ApplicationService:
@@ -185,6 +186,8 @@ class ApplicationService:
             compliance_retry=False,
         )
         all_candidates = list(batch.candidates)
+        all_candidate_results = list(batch.candidate_results)
+        compliance_retry_used = False
         if not batch.results:
             return self._failure(
                 self._candidate_failure_message(
@@ -195,6 +198,7 @@ class ApplicationService:
                 ),
                 iteration,
                 tuple(all_candidates),
+                tuple(all_candidate_results),
             )
 
         last_result = batch.results[-1][1]
@@ -206,6 +210,7 @@ class ApplicationService:
                 complete=True,
                 query_result=last_result,
                 candidates=tuple(all_candidates),
+                candidate_results=tuple(all_candidate_results),
             )
 
         if len(batch.pairs) < 2 and not clarifications:
@@ -218,9 +223,10 @@ class ApplicationService:
                 ),
                 iteration,
                 tuple(all_candidates),
+                tuple(all_candidate_results),
             )
 
-        ambiguity = self._evaluate_ambiguity(
+        ambiguity, semantic_fallback_used = self._evaluate_ambiguity(
             prompt=prompt,
             schema=schema,
             api_key=api_key,
@@ -233,6 +239,7 @@ class ApplicationService:
         )
 
         if clarifications and ambiguity.compliance_passed is False:
+            compliance_retry_used = True
             self.event_logger.log_event(
                 event="clarification_compliance_retry_started",
                 component="application",
@@ -250,6 +257,7 @@ class ApplicationService:
                 compliance_retry=True,
             )
             all_candidates.extend(retry_batch.candidates)
+            all_candidate_results.extend(retry_batch.candidate_results)
             if not retry_batch.results:
                 return self._compliance_failure(
                     iteration,
@@ -262,9 +270,12 @@ class ApplicationService:
                         retry_batch.execution_failures,
                     ),
                     model,
+                    tuple(all_candidate_results),
+                    semantic_fallback_used,
+                    compliance_retry_used,
                 )
             batch = retry_batch
-            ambiguity = self._evaluate_ambiguity(
+            ambiguity, retry_semantic_fallback_used = self._evaluate_ambiguity(
                 prompt=prompt,
                 schema=schema,
                 api_key=api_key,
@@ -274,6 +285,9 @@ class ApplicationService:
                 semantic_analysis=semantic_analysis,
                 pairs=batch.pairs,
                 compliance_retry=True,
+            )
+            semantic_fallback_used = (
+                semantic_fallback_used or retry_semantic_fallback_used
             )
 
         if clarifications:
@@ -287,6 +301,9 @@ class ApplicationService:
                     ambiguity,
                     ambiguity.reason,
                     model,
+                    tuple(all_candidate_results),
+                    semantic_fallback_used,
+                    compliance_retry_used,
                 )
             selected = self._select_compliant_result(batch, ambiguity)
             if selected is None:
@@ -296,6 +313,9 @@ class ApplicationService:
                     ambiguity,
                     "No validated compliant alternative could be selected.",
                     model,
+                    tuple(all_candidate_results),
+                    semantic_fallback_used,
+                    compliance_retry_used,
                 )
             selected_alternative, last_result = selected
             self.event_logger.log_event(
@@ -337,6 +357,9 @@ class ApplicationService:
                 query_result=last_result,
                 candidates=tuple(all_candidates),
                 ambiguity=ambiguity,
+                candidate_results=tuple(all_candidate_results),
+                semantic_fallback_used=semantic_fallback_used,
+                compliance_retry_used=compliance_retry_used,
             )
         if (
             ambiguity.state != ComponentState.ACCEPTED
@@ -353,6 +376,9 @@ class ApplicationService:
                 query_result=last_result,
                 candidates=tuple(all_candidates),
                 ambiguity=ambiguity,
+                candidate_results=tuple(all_candidate_results),
+                semantic_fallback_used=semantic_fallback_used,
+                compliance_retry_used=compliance_retry_used,
             )
         if ambiguity.passed:
             return QueryWorkflowResult(
@@ -363,6 +389,9 @@ class ApplicationService:
                 query_result=last_result,
                 candidates=tuple(all_candidates),
                 ambiguity=ambiguity,
+                candidate_results=tuple(all_candidate_results),
+                semantic_fallback_used=semantic_fallback_used,
+                compliance_retry_used=compliance_retry_used,
             )
         return QueryWorkflowResult(
             state=ComponentState.PENDING,
@@ -371,6 +400,9 @@ class ApplicationService:
             query_result=last_result,
             candidates=tuple(all_candidates),
             ambiguity=ambiguity,
+            candidate_results=tuple(all_candidate_results),
+            semantic_fallback_used=semantic_fallback_used,
+            compliance_retry_used=compliance_retry_used,
         )
 
     def _run_candidate_batch(
@@ -389,6 +421,7 @@ class ApplicationService:
         pairs: list[ExecutedQueryPair] = []
         generation_failures: list[tuple[int, str]] = []
         execution_failures: list[tuple[int, str]] = []
+        candidate_results: list[QueryResult] = []
         worker_count = min(
             candidates_per_iteration,
             self.max_parallel_candidates,
@@ -414,6 +447,8 @@ class ApplicationService:
         batch_label = "compliance-retry-" if compliance_retry else ""
         for candidate_index, candidate, query_result in outcomes:
             candidates.append(candidate)
+            if query_result is not None:
+                candidate_results.append(query_result)
             event_details = {"compliance_retry": compliance_retry}
             if candidate.state != ComponentState.ACCEPTED:
                 generation_failures.append(
@@ -486,6 +521,7 @@ class ApplicationService:
             pairs=tuple(pairs),
             generation_failures=tuple(generation_failures),
             execution_failures=tuple(execution_failures),
+            candidate_results=tuple(candidate_results),
         )
 
     def _evaluate_ambiguity(
@@ -499,7 +535,7 @@ class ApplicationService:
         semantic_analysis: SemanticColumnAnalysis | None,
         pairs: tuple[ExecutedQueryPair, ...],
         compliance_retry: bool,
-    ) -> AmbiguityDecision:
+    ) -> tuple[AmbiguityDecision, bool]:
         try:
             ambiguity = self.ambiguity.evaluate(
                 AmbiguityRequest(
@@ -581,7 +617,7 @@ class ApplicationService:
                 "fallback_trigger_reason": fallback_trigger_reason,
             },
         )
-        return ambiguity
+        return ambiguity, fallback_used
 
     @staticmethod
     def _select_compliant_result(
@@ -610,6 +646,9 @@ class ApplicationService:
         ambiguity: AmbiguityDecision,
         reason: str,
         model: str,
+        candidate_results: tuple[QueryResult, ...],
+        semantic_fallback_used: bool,
+        compliance_retry_used: bool,
     ) -> QueryWorkflowResult:
         message = (
             "No SQL result was returned because DB Whisperer could not "
@@ -629,7 +668,10 @@ class ApplicationService:
             complete=True,
             query_result=None,
             candidates=candidates,
+            candidate_results=candidate_results,
             ambiguity=ambiguity,
+            semantic_fallback_used=semantic_fallback_used,
+            compliance_retry_used=compliance_retry_used,
         )
 
     def _analyze_semantic_columns(
@@ -812,6 +854,7 @@ class ApplicationService:
         message: str,
         iteration: int,
         candidates: tuple[QueryCandidate, ...] = (),
+        candidate_results: tuple[QueryResult, ...] = (),
     ) -> QueryWorkflowResult:
         result = QueryResult(
             state=ComponentState.FAILED,
@@ -823,4 +866,5 @@ class ApplicationService:
             iteration=iteration,
             query_result=result,
             candidates=candidates,
+            candidate_results=candidate_results,
         )

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
+from importlib import metadata as importlib_metadata
 import os
 from pathlib import Path
 import random
@@ -14,6 +15,8 @@ import sys
 from threading import Lock, local
 from time import perf_counter
 from typing import Any, Callable, Mapping
+
+import duckdb
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC = PROJECT_ROOT / "src"
@@ -32,6 +35,7 @@ from db_whisperer.contracts import ComponentState, CsvUpload, QueryCandidate, Qu
 from db_whisperer.etler import ETLService
 from db_whisperer.querier import QueryService
 from db_whisperer.querier.openrouter_client import OpenRouterClient
+from db_whisperer.querier.sql_validator import FORBIDDEN_SQL
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 DEFAULT_SUITE = BENCHMARK_DIR / "cases" / "evaluation_cases.json"
@@ -65,6 +69,7 @@ class ClarificationTurn:
     candidate_support: tuple[tuple[str, int], ...] = ()
     candidate_rejection_reason: str = ""
     fallback_used: bool | None = None
+    compliance_retry_used: bool | None = None
     compliance_passed: bool | None = None
     compliant_alternatives: tuple[str, ...] = ()
 
@@ -79,8 +84,8 @@ class ClarificationTurn:
             "matched_intent": self.matched_intent,
             "candidate_support": [list(pair) for pair in self.candidate_support],
             "candidate_rejection_reason": self.candidate_rejection_reason,
-            # The production workflow currently does not expose a fallback flag.
             "fallback_used": self.fallback_used,
+            "compliance_retry_used": self.compliance_retry_used,
             "compliance_passed": self.compliance_passed,
             "compliant_alternatives": list(self.compliant_alternatives),
         }
@@ -143,18 +148,46 @@ def _source_hash(*relative_paths: str) -> str:
     return _hash_paths(tuple(PROJECT_ROOT / path for path in relative_paths))
 
 
-def _fingerprint(suite: EvaluationSuite, dataset_hash: str) -> CampaignFingerprint:
+def _fingerprint(
+    suite: EvaluationSuite,
+    dataset_hash: str,
+    *,
+    workers: int = 2,
+) -> CampaignFingerprint:
     prompt_hash = _source_hash(
         "src/db_whisperer/querier/prompt_builder.py",
         "src/db_whisperer/ambiguity/prompt_builder.py",
         "src/db_whisperer/ambiguity/semantic_column_service.py",
+        "src/db_whisperer/application/service.py",
+        "src/db_whisperer/ambiguity/service.py",
+        "src/db_whisperer/ambiguity/candidate_alternatives.py",
+        "src/db_whisperer/querier/schema_linker.py",
+        "src/db_whisperer/querier/sql_validator.py",
+        "src/db_whisperer/querier/openrouter_client.py",
+        "src/db_whisperer/ambiguity/openrouter_client.py",
+        "src/db_whisperer/contracts.py",
     )
-    runtime_hash = _source_hash(
+    runtime_source_hash = _source_hash(
         "benchmark_v3/run_evaluation.py",
         "benchmark_v3/observability.py",
         "requirements.txt",
     )
     scorer_hash = _source_hash("benchmark_v3/scoring.py")
+    runtime_inputs = {
+        "python": sys.version,
+        "dependencies": {
+            package: importlib_metadata.version(package)
+            for package in ("duckdb", "requests", "streamlit", "sqlglot")
+        },
+        "workers": workers,
+        "repetitions": suite.repetitions,
+        "candidate_count": suite.candidate_count,
+        "arms": ARMS,
+        "runtime_source_hash": runtime_source_hash,
+    }
+    runtime_hash = sha256(
+        json.dumps(runtime_inputs, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     return CampaignFingerprint(
         suite_hash=suite.sha256,
         dataset_hash=dataset_hash,
@@ -276,6 +309,75 @@ def _reference_artifact_path(
     return campaign_dir / f"references-{dataset_hash}-{suite_hash}.json"
 
 
+def _database_hash(path: Path) -> str | None:
+    try:
+        return sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _cached_dataset_is_valid(
+    cached: Mapping[str, Any],
+    suite: EvaluationSuite,
+    dataset_hash: str,
+    database: Path,
+) -> bool:
+    if cached.get("dataset_hash") != dataset_hash or cached.get("suite_hash") != suite.sha256:
+        return False
+    if not database.is_file() or cached.get("database_hash") != _database_hash(database):
+        return False
+    try:
+        connection = duckdb.connect(str(database), read_only=True)
+        try:
+            connection.execute("SELECT 1")
+        finally:
+            connection.close()
+    except duckdb.Error:
+        return False
+    schema = cached.get("schema")
+    references = cached.get("references")
+    if not isinstance(schema, Mapping) or not isinstance(references, Mapping):
+        return False
+    try:
+        cached_schema = _deserialize_schema(schema)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if cached_schema.database_path != str(database.resolve()):
+        return False
+    expected = {case.id: case for case in suite.query_cases if case.expected_sql}
+    if set(references) != set(expected):
+        return False
+    for case_id, case in expected.items():
+        value = references.get(case_id)
+        if not isinstance(value, Mapping):
+            return False
+        if (
+            value.get("sql") != case.expected_sql
+            or not isinstance(value.get("join_count"), int)
+            or value.get("comparison_mode") != case.comparison_mode
+            or not isinstance(value.get("truncated"), bool)
+        ):
+            return False
+        if value["join_count"] != _expected_join_count(case.expected_sql):
+            return False
+        if (
+            not isinstance(value.get("columns"), list)
+            or not all(isinstance(column, str) for column in value["columns"])
+            or not isinstance(value.get("rows"), list)
+            or not all(isinstance(row, list) for row in value["rows"])
+        ):
+            return False
+    return True
+
+
+def _expected_join_count(sql: str) -> int:
+    """Derive the frozen reference join contract from its validated SQL."""
+    from benchmark_v3.sql_analysis import analyze_sql
+    from db_whisperer.querier.sql_validator import validate_read_only_sql
+
+    return analyze_sql(validate_read_only_sql(sql)).join_count
+
+
 def _serialize_schema(schema: SchemaMetadata) -> dict[str, Any]:
     return asdict(schema)
 
@@ -312,9 +414,10 @@ def _prepare_dataset(
     dataset_hash: str,
 ) -> CampaignDataset:
     artifact = _reference_artifact_path(campaign_dir, dataset_hash, suite.sha256)
+    database = campaign_dir / "datasets" / f"{dataset_hash}.duckdb"
     if artifact.exists():
         cached = json.loads(artifact.read_text(encoding="utf-8"))
-        if cached.get("dataset_hash") == dataset_hash and cached.get("suite_hash") == suite.sha256:
+        if _cached_dataset_is_valid(cached, suite, dataset_hash, database):
             refs = {
                 key: QueryResult(
                     state=ComponentState.ACCEPTED,
@@ -330,8 +433,12 @@ def _prepare_dataset(
                 _deserialize_schema(cached["schema"]), dataset_hash, refs,
                 {key: int(value["join_count"]) for key, value in cached["references"].items()},
             )
-
-    database = campaign_dir / "datasets" / f"{dataset_hash}.duckdb"
+        artifact.unlink(missing_ok=True)
+    try:
+        if database.exists():
+            database.chmod(database.stat().st_mode | stat.S_IWRITE)
+    except OSError:
+        pass
     schema = ingest_dataset(suite.dataset_path, database)
     query, _ = build_services(suite.candidate_count)
     try:
@@ -355,6 +462,7 @@ def _prepare_dataset(
         "schema": _serialize_schema(schema),
         "references": evidence,
         "discovery_warnings": list(schema.discovery_notes),
+        "database_hash": _database_hash(database),
     })
     try:
         database.chmod(database.stat().st_mode & ~stat.S_IWRITE)
@@ -393,13 +501,35 @@ def _database_snapshot(schema: SchemaMetadata) -> str | None:
         return None
 
 
-def _validator_safety_evidence(
-    candidate: QueryCandidate | None,
+def _safety_evidence(
+    case: EvaluationCase,
+    candidates: tuple[QueryCandidate, ...],
+    candidate_results: tuple[QueryResult, ...],
     before: str | None,
     after: str | None,
 ) -> SafetyEvidence:
-    source = "validator" if candidate and candidate.message == _FORBIDDEN_OPERATION else "unknown"
-    return SafetyEvidence(source, before is not None and before == after)
+    unchanged = before is not None and before == after
+    attempted_sql = any(
+        candidate.state == ComponentState.ACCEPTED
+        and bool(getattr(candidate, "sql", ""))
+        for candidate in candidates
+    )
+    for result in candidate_results:
+        if result.failure_kind == "schema_resolution":
+            return SafetyEvidence(
+                "schema", unchanged, "schema_resolution", case_id=case.id,
+                attempted_sql=attempted_sql,
+            )
+    for candidate in candidates:
+        if candidate.message != _FORBIDDEN_OPERATION:
+            continue
+        match = FORBIDDEN_SQL.search(getattr(candidate, "sql", "") or "")
+        operation = match.group(1).upper() if match else ""
+        return SafetyEvidence(
+            "validator", unchanged, "forbidden_operation", operation,
+            case_id=case.id, attempted_sql=attempted_sql,
+        )
+    return SafetyEvidence("unknown", unchanged, case_id=case.id, attempted_sql=attempted_sql)
 
 
 def _baseline_result(
@@ -422,10 +552,13 @@ def run_cell(
     started = perf_counter()
     turns: list[ClarificationTurn] = []
     before = _database_snapshot(dataset.schema) if case.category == "safety" else None
-    candidate: QueryCandidate | None = None
+    trace_candidates: list[QueryCandidate] = []
+    trace_results: list[QueryResult] = []
     if item.arm == "baseline":
         request = QueryRequest(case.question, dataset.schema, api_key, model)
         result, candidate = _baseline_result(query, request)
+        trace_candidates.append(candidate)
+        trace_results.append(result)
     else:
         result: QueryResult | None = None
         answers: tuple[str, ...] = ()
@@ -436,6 +569,10 @@ def run_cell(
                 model=model, clarifications=answers, iteration=iteration,
             )
             result = workflow.query_result
+            trace_candidates.extend(getattr(workflow, "candidates", ()))
+            trace_results.extend(getattr(workflow, "candidate_results", ()))
+            if result is not None:
+                trace_results.append(result)
             if workflow.complete or workflow.state == ComponentState.FAILED:
                 break
             decision = workflow.ambiguity
@@ -460,16 +597,17 @@ def run_cell(
                 last.iteration, last.mechanism, last.question, last.options,
                 last.chosen_index, last.chosen, last.matched_intent,
                 last.candidate_support, last.candidate_rejection_reason,
-                fallback_used=None,
+                fallback_used=getattr(workflow, "semantic_fallback_used", None),
+                compliance_retry_used=getattr(workflow, "compliance_retry_used", None),
                 compliance_passed=(decision.compliance_passed if decision else None),
                 compliant_alternatives=(decision.compliant_alternatives if decision else ()),
             )
-            candidates = getattr(workflow, "candidates", ())
-            if candidates:
-                candidate = candidates[-1]
     clarifications = [turn.to_record() for turn in turns]
     safety = (
-        _validator_safety_evidence(candidate, before, _database_snapshot(dataset.schema))
+        _safety_evidence(
+            case, tuple(trace_candidates), tuple(trace_results), before,
+            _database_snapshot(dataset.schema),
+        )
         if case.category == "safety" else None
     )
     return {
@@ -545,8 +683,27 @@ def _load_matching_checkpoints(
         if path.stem not in expected or payload.get("work_item") != expected[path.stem]:
             raise ValueError("checkpoint work identity is incompatible")
         record = payload.get("record")
+        expected_record = expected[path.stem]
         if not isinstance(record, dict):
             raise ValueError("checkpoint record is invalid")
+        if any(
+            record.get(field) != expected_record[source]
+            for field, source in (
+                ("run", "repetition"), ("case_id", "case_id"),
+                ("family_id", "family_id"), ("category", "category"),
+                ("arm", "arm"),
+            )
+        ):
+            raise ValueError("checkpoint record work identity is incompatible")
+        result = record.get("result")
+        score = record.get("score")
+        if (
+            not isinstance(result, Mapping)
+            or not {"state", "sql", "columns", "rows"} <= set(result)
+            or not isinstance(score, Mapping)
+            or not isinstance(score.get("passed"), bool)
+        ):
+            raise ValueError("checkpoint record shape is invalid")
         records[path.stem] = record
     return records
 
@@ -573,7 +730,7 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     if config.workers not in {1, 2}:
         raise ValueError("workers must be one or two")
     dataset_hash = config.dataset.dataset_hash if config.dataset else _hash_files(config.suite.dataset_path)
-    fingerprint = _fingerprint(config.suite, dataset_hash)
+    fingerprint = _fingerprint(config.suite, dataset_hash, workers=config.workers)
     query_schedule = build_schedule(config.suite)
     schedule = query_schedule + build_etl_schedule(config.suite)
     campaign_path = config.campaign_dir / "campaign.json"
@@ -588,9 +745,16 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     }
     # Make compatibility durable before preparing data or admitting a cell.
     atomic_json(campaign_path, {**metadata, "complete": False, "records": list(checkpoint_records.values())})
-    dataset = config.dataset or _prepare_dataset(config.suite, config.campaign_dir, dataset_hash)
     observer = CampaignObserver(config.campaign_dir, schedule, config.suite.budget_usd)
     progress = (config.progress_factory or (lambda value: TerminalProgress(value, stream=sys.stderr)))(observer)
+    progress.start()
+    try:
+        dataset = config.dataset or _prepare_dataset(
+            config.suite, config.campaign_dir, dataset_hash,
+        )
+    except Exception:
+        progress.stop()
+        raise
     query_cases = {case.id: case for case in config.suite.query_cases}
     etl_cases = {case.id: case for case in config.suite.etl_cases}
     services_by_thread = local()
@@ -616,7 +780,6 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
         return item, run_cell(item, query_cases[item.case_id], dataset, query, apps, config.api_key, config.suite.model)
 
     pending = [item for item in schedule if item.key not in completed]
-    progress.start()
     try:
         with ThreadPoolExecutor(max_workers=config.workers) as pool:
             iterator = iter(pending)

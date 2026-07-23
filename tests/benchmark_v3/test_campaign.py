@@ -9,7 +9,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from benchmark_v3.contracts import EvaluationCase, EvaluationSuite, load_suite
+import duckdb
+
+from benchmark_v3.contracts import EvaluationCase, EvaluationSuite, ReferenceContract, load_suite
 from benchmark_v3.run_evaluation import (
     build_etl_schedule,
     build_schedule,
@@ -18,11 +20,14 @@ from benchmark_v3.run_evaluation import (
     CampaignFingerprint,
     WorkItem,
     _checkpoint_payload,
+    _cached_dataset_is_valid,
     _fingerprint,
     _fingerprint_payload,
+    _database_hash,
     _prepare_dataset,
     _reference_artifact_path,
     _serialize_schema,
+    _load_matching_checkpoints,
     run_campaign,
 )
 from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
@@ -69,7 +74,7 @@ class CampaignTest(unittest.TestCase):
             directory = Path(temporary)
             skipped = WorkItem(1, "case", "family", "correctness", "baseline")
             (directory / "checkpoints").mkdir()
-            fingerprint = _fingerprint(suite, "dataset")
+            fingerprint = _fingerprint(suite, "dataset", workers=1)
             (directory / "checkpoints" / f"{skipped.key}.json").write_text(
                 json.dumps(_checkpoint_payload(skipped, fingerprint, self._record(skipped))),
                 encoding="utf-8",
@@ -137,20 +142,11 @@ class CampaignTest(unittest.TestCase):
         self.assertFalse(checkpoint["score"]["passed"])
 
     def test_fingerprint_changes_when_runtime_configuration_changes(self) -> None:
-        base = CampaignFingerprint(
-            suite_hash="suite",
-            dataset_hash="dataset",
-            model="model",
-            prompt_hash="prompt",
-            scorer_version="v3",
-            candidate_count=3,
-            arms=("baseline", "candidate_only", "semantic_only", "full"),
-            runtime_hash="runtime-a",
-        )
-        changed = CampaignFingerprint(
-            **{**base.__dict__, "runtime_hash": "runtime-b"}
-        )
+        suite = self._suite()
+        base = _fingerprint(suite, "dataset", workers=1)
+        changed = _fingerprint(suite, "dataset", workers=2)
         self.assertNotEqual(base, changed)
+        self.assertNotEqual(base.runtime_hash, changed.runtime_hash)
 
     def test_fingerprint_changes_for_prompt_and_runtime_inputs(self) -> None:
         suite = self._suite()
@@ -231,13 +227,22 @@ class CampaignTest(unittest.TestCase):
 
     def test_reference_artifact_reuses_schema_references_and_warnings(self) -> None:
         suite = self._suite()
-        schema = SchemaMetadata(discovery_notes=("cached relationship warning",))
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
+            database = directory / "datasets" / "dataset.duckdb"
+            database.parent.mkdir()
+            connection = duckdb.connect(str(database))
+            connection.execute("CREATE TABLE cached_marker (id INTEGER)")
+            connection.close()
+            schema = SchemaMetadata(
+                database_path=str(database.resolve()),
+                discovery_notes=("cached relationship warning",),
+            )
             artifact = _reference_artifact_path(directory, "dataset", suite.sha256)
             artifact.write_text(json.dumps({
                 "dataset_hash": "dataset", "suite_hash": suite.sha256,
                 "schema": _serialize_schema(schema), "references": {},
+                "database_hash": _database_hash(database),
             }), encoding="utf-8")
             with patch("benchmark_v3.run_evaluation.ingest_dataset", side_effect=AssertionError("cache miss")):
                 dataset = _prepare_dataset(suite, directory, "dataset")
@@ -286,6 +291,89 @@ class CampaignTest(unittest.TestCase):
                     suite, directory, "offline", 1, self._dataset(),
                     cell_runner=lambda item, *args: self._record(item),
                 ))
+
+    def test_checkpoint_record_must_repeat_the_exact_work_identity_and_shape(self) -> None:
+        suite = self._suite()
+        item = WorkItem(1, "case", "family", "correctness", "baseline")
+        fingerprint = _fingerprint(suite, "dataset")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "checkpoints").mkdir()
+            payload = _checkpoint_payload(item, fingerprint, self._record(item))
+            payload["record"]["arm"] = "full"
+            (directory / "checkpoints" / f"{item.key}.json").write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ValueError, "record"):
+                _load_matching_checkpoints(directory, (item,), fingerprint)
+
+    def test_cache_with_missing_campaign_database_rebuilds_before_cells(self) -> None:
+        suite = self._suite()
+        schema = SchemaMetadata(database_path="missing.duckdb")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            artifact = _reference_artifact_path(directory, "dataset", suite.sha256)
+            artifact.write_text(json.dumps({
+                "dataset_hash": "dataset", "suite_hash": suite.sha256,
+                "schema": _serialize_schema(schema), "references": {},
+            }))
+            with patch("benchmark_v3.run_evaluation.ingest_dataset", side_effect=RuntimeError("rebuild attempted")):
+                with self.assertRaisesRegex(RuntimeError, "rebuild"):
+                    _prepare_dataset(suite, directory, "dataset")
+
+    def test_cache_with_corrupt_campaign_database_rebuilds_before_cells(self) -> None:
+        suite = self._suite()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            database = directory / "datasets" / "dataset.duckdb"
+            database.parent.mkdir()
+            database.write_bytes(b"not a duckdb database")
+            artifact = _reference_artifact_path(directory, "dataset", suite.sha256)
+            artifact.write_text(json.dumps({
+                "dataset_hash": "dataset", "suite_hash": suite.sha256,
+                "schema": _serialize_schema(SchemaMetadata(database_path=str(database.resolve()))),
+                "references": {}, "database_hash": _database_hash(database),
+            }))
+            with patch("benchmark_v3.run_evaluation.ingest_dataset", side_effect=RuntimeError("rebuild attempted")):
+                with self.assertRaisesRegex(RuntimeError, "rebuild"):
+                    _prepare_dataset(suite, directory, "dataset")
+
+    def test_cache_rejects_incomplete_reference_contracts(self) -> None:
+        case = EvaluationCase(
+            id="needs_reference", family_id="needs_reference", kind="query",
+            category="correctness", question="count rows", expected_sql="SELECT 1",
+            reference=ReferenceContract("scalar"),
+        )
+        suite = EvaluationSuite(
+            name="offline", version="v3", path=SUITE_PATH,
+            dataset_path=SUITE_PATH.parent, model="model", repetitions=1,
+            candidate_count=3, budget_usd=3.75, cases=(case,), sha256="suite",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "dataset.duckdb"
+            connection = duckdb.connect(str(database)); connection.execute("SELECT 1"); connection.close()
+            cached = {
+                "dataset_hash": "dataset", "suite_hash": suite.sha256,
+                "database_hash": _database_hash(database),
+                "schema": _serialize_schema(SchemaMetadata(database_path=str(database.resolve()))),
+                "references": {},
+            }
+            self.assertFalse(_cached_dataset_is_valid(cached, suite, "dataset", database))
+
+    def test_progress_starts_before_slow_dataset_preparation(self) -> None:
+        suite = self._suite()
+        lifecycle: list[str] = []
+        class Progress:
+            def start(self) -> None: lifecycle.append("start")
+            def stop(self) -> None: lifecycle.append("stop")
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch("benchmark_v3.run_evaluation._prepare_dataset", side_effect=lambda *args: lifecycle.append("prepare") or self._dataset()):
+                run_campaign(CampaignConfig(
+                    suite, Path(temporary), "offline", 1, dataset=None,
+                    cell_runner=lambda item, *args: self._record(item),
+                    progress_factory=lambda observer: Progress(),
+                ))
+        self.assertEqual("start", lifecycle[0])
+        self.assertLess(lifecycle.index("start"), lifecycle.index("prepare"))
+        self.assertEqual("stop", lifecycle[-1])
 
     def test_incompatible_checkpoint_is_not_resumed(self) -> None:
         suite = load_suite(SUITE_PATH)

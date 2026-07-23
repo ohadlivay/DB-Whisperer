@@ -121,6 +121,8 @@ class QueryResult:
     columns: tuple[str, ...] = ()
     rows: tuple[tuple[Any, ...], ...] = ()
     truncated: bool = False
+    # A stable failure category is intentionally separate from human-facing text.
+    failure_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -246,4 +248,7 @@ class QueryWorkflowResult:
     complete: bool = False
     query_result: QueryResult | None = None
     candidates: tuple[QueryCandidate, ...] = field(default_factory=tuple)
+    candidate_results: tuple[QueryResult, ...] = field(default_factory=tuple)
     ambiguity: AmbiguityDecision | None = None
+    semantic_fallback_used: bool = False
+    compliance_retry_used: bool = False

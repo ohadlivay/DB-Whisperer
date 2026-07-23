@@ -343,6 +343,8 @@ class HybridAmbiguityFlowTest(unittest.TestCase):
 
         self.assertEqual(ComponentState.PENDING, result.state)
         self.assertEqual("semantic-column", result.ambiguity.mechanism)
+        self.assertTrue(result.semantic_fallback_used)
+        self.assertFalse(result.compliance_retry_used)
         self.assertIn("orders.order_date", result.ambiguity.question)
         decision_events = [
             event for event in self.event_logger.events
@@ -774,6 +776,7 @@ class ApplicationServiceTest(unittest.TestCase):
             [request.compliance_retry for request in querier.generated_requests],
         )
         self.assertEqual(2, len(ambiguity.requests))
+        self.assertTrue(result.compliance_retry_used)
 
     def test_second_noncompliant_batch_fails_without_result(self) -> None:
         noncompliant = AmbiguityDecision(

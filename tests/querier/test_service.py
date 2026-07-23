@@ -115,7 +115,30 @@ class QueryServiceTest(unittest.TestCase):
 
             self.assertEqual(ComponentState.FAILED, result.state)
             self.assertIsNone(result.sql)
+            self.assertEqual("validator", result.failure_kind)
             self.assertEqual(1, len(service.client.prompts))
+
+    def test_missing_column_is_recorded_as_schema_resolution(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as directory:
+            ingestion = ETLService(
+                Path(directory) / "test.duckdb"
+            ).ingest([CsvUpload("data.csv", b"id\n1\n")])
+            service = QueryService(
+                client=FakeOpenRouterClient('SELECT "missing_column" FROM "data";')
+            )
+
+            result = service.query(
+                QueryRequest(
+                    prompt="Show the unavailable value",
+                    schema=ingestion.schema,
+                    api_key="test-key",
+                    model="test/model",
+                )
+            )
+
+            self.assertEqual(ComponentState.FAILED, result.state)
+            self.assertEqual("schema_resolution", result.failure_kind)
+            self.assertIn("missing_column", result.sql)
 
     def test_invalid_sql_is_preserved_on_failed_candidate(self) -> None:
         with TemporaryDirectory(dir=ROOT) as directory:
