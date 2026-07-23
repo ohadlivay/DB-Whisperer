@@ -1,9 +1,4 @@
-"""Presentation-only HTML publishers for the two Evaluation V3 reports.
-
-The renderers deliberately format the validated report model; they never score,
-aggregate, or infer campaign results.
-"""
-
+"""Presentation-only publishers for the two Evaluation V3 HTML reports."""
 from __future__ import annotations
 
 import html
@@ -14,28 +9,19 @@ from typing import Any, Mapping
 
 from benchmark_v3.report_model import build_report_model
 
+REPORT_TABS = (("overview", "Overview"), ("comparison", "System Comparison"),
+               ("questions", "Results by Question"), ("quality", "Quality Components"),
+               ("ambiguity", "Ambiguity Funnel"), ("operations", "Safety, ETL & Operations"),
+               ("methodology", "Methodology"), ("evidence", "Case Evidence"))
+ARM_LABELS = {"baseline": "Baseline", "candidate_only": "Candidate Only",
+              "semantic_only": "Semantic Only", "full": "Full System"}
 
-REPORT_TABS = (
-    ("overview", "Overview"),
-    ("comparison", "System Comparison"),
-    ("questions", "Results by Question"),
-    ("quality", "Quality Components"),
-    ("ambiguity", "Ambiguity Funnel"),
-    ("operations", "Safety, ETL & Operations"),
-    ("methodology", "Methodology"),
-    ("evidence", "Case Evidence"),
-)
 
-ARM_LABELS = {
-    "baseline": "Baseline",
-    "candidate_only": "Candidate Only",
-    "semantic_only": "Semantic Only",
-    "full": "Full System",
-}
+def _map(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _text(value: Any) -> str:
-    """Return text safe for a HTML text node, including model-provided data."""
     if value is None:
         return "Not reported"
     if isinstance(value, (dict, list, tuple)):
@@ -48,148 +34,71 @@ def _json(value: Any) -> str:
 
 
 def _mean(value: Any) -> str:
-    if isinstance(value, Mapping):
-        return _text(value.get("mean"))
-    return _text(value)
+    return _text(_map(value).get("mean") if isinstance(value, Mapping) else value)
 
 
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _arm_cards(model: Mapping[str, Any]) -> str:
-    cards = _mapping(model.get("arm_cards", model.get("arms")))
-    return "".join(
-        "<article class=\"card arm\"><p class=\"eyebrow\">{label}</p>"
-        "<strong>{score}</strong><span>Composite score</span><small>Pass rate: {pass_rate}</small></article>".format(
-            label=_text(label), score=_mean(_mapping(cards.get(key)).get("composite")),
-            pass_rate=_mean(_mapping(cards.get(key)).get("pass_rate")),
-        )
-        for key, label in ARM_LABELS.items()
-    )
-
-
-def _list_items(values: Any) -> str:
-    if not isinstance(values, list):
-        values = [values] if values else []
-    return "".join(f"<li>{_text(value)}</li>" for value in values) or "<li>None reported.</li>"
-
-
-def _case_evidence(model: Mapping[str, Any]) -> str:
-    cases = model.get("cases", model.get("records", []))
-    if not isinstance(cases, list):
-        return "<p>No case-level evidence was supplied.</p>"
-    blocks: list[str] = []
-    for case in cases:
-        record = _mapping(case)
-        result = _mapping(record.get("result"))
-        score = _mapping(record.get("score"))
-        ambiguity = _mapping(score.get("ambiguity"))
-        case_id = record.get("case_id", record.get("id", "unnamed case"))
-        blocks.append(
-            "<details><summary>{case_id} · {category} · {arm} · run {run}</summary>"
-            "<div class=\"evidence-grid\"><section><h4>Question</h4><pre>{question}</pre><h4>Expected SQL</h4><pre>{expected}</pre>"
-            "<h4>Generated SQL</h4><pre>{sql}</pre><h4>Result</h4><pre>{result}</pre></section>"
-            "<section><h4>Score</h4><pre>{score}</pre><h4>Clarifications</h4><pre>{clarifications}</pre>"
-            "<h4>Candidate support</h4><pre>{support}</pre><h4>Clarification compliance</h4><pre>{compliance}</pre></section>"
-            "</div></details>".format(
-                case_id=_text(case_id), category=_text(record.get("category")),
-                arm=_text(record.get("arm")), run=_text(record.get("run")),
-                question=_json(record.get("question", "Not recorded")),
-                expected=_json(record.get("expected_sql", record.get("reference_sql", "Not recorded"))),
-                sql=_json(result.get("sql", "Not recorded")), result=_json(result), score=_json(score),
-                clarifications=_json(record.get("clarifications", [])),
-                support=_json(ambiguity.get("candidate_support", record.get("candidate_support", []))),
-                compliance=_json(ambiguity.get("compliance", record.get("compliance"))),
-            )
-        )
-    return "".join(blocks) or "<p>No case-level evidence was supplied.</p>"
-
-
-def _component_rows(model: Mapping[str, Any], section: str) -> str:
-    arms = _mapping(model.get("arms"))
-    names = ("ambiguity", "correctness", "efficiency", "safety", "grounding", "etl")
-    rows = []
-    for name in names:
-        cells = "".join(
-            f"<td>{_mean(_mapping(_mapping(arms.get(key)).get('components')).get(name))}</td>"
-            for key in ARM_LABELS
-        )
-        rows.append(f"<tr><th>{_text(name.title())}</th>{cells}</tr>")
-    return "".join(rows)
-
-
-def _table_header() -> str:
-    return "".join(f"<th>{_text(label)}</th>" for label in ARM_LABELS.values())
+def _items(values: Any) -> str:
+    values = values if isinstance(values, list) else ([values] if values else [])
+    return "".join("<li>%s</li>" % _text(value) for value in values) or "<li>None reported.</li>"
 
 
 def _style() -> str:
-    return """
-    :root{--ink:#182338;--paper:#f5f7f3;--surface:#fff;--teal:#087f7b;--cyan:#14b8c4;--muted:#607087;--line:#dce4e7;--shadow:0 12px 35px #18233818}
-    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 Inter,Arial,sans-serif}h1,h2,h3,h4{font-family:Georgia,serif;line-height:1.15}main{max-width:1180px;margin:auto;padding:28px 24px 72px}.hero{margin:0;background:linear-gradient(125deg,#182338,#087f7b);color:white;padding:58px max(24px,calc((100vw - 1132px)/2));}.hero h1{font-size:clamp(2.3rem,6vw,4.7rem);margin:0}.hero p{max-width:780px;font-size:1.1rem}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.74rem;font-weight:700;color:var(--teal)}.hero .eyebrow{color:#9ce8e2}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:24px 0}.card,details,.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:20px}.arm strong{display:block;font:2.4rem Georgia,serif;color:var(--teal)}.arm span,.arm small{display:block;color:var(--muted)}.toolbar{position:sticky;top:0;z-index:3;background:#fffffff0;border-bottom:1px solid var(--line);overflow:auto;white-space:nowrap}.toolbar a{display:inline-block;padding:13px 10px;color:var(--ink);text-decoration:none;font-weight:700}.toolbar a:hover{color:var(--teal)}.tab{scroll-margin-top:52px;margin-top:28px}.tab h2{font-size:2rem}table{border-collapse:collapse;width:100%;background:var(--surface)}th,td{padding:10px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:#e8f3f2}pre{background:#182338;color:#eaf4f3;padding:12px;overflow:auto;white-space:pre-wrap;border-radius:8px}.evidence-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}summary{cursor:pointer;font-weight:700}details{margin:10px 0}.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}.muted{color:var(--muted)}@media(max-width:760px){.cards{grid-template-columns:1fr 1fr}.evidence-grid,.two{grid-template-columns:1fr}main{padding:20px 14px 48px}.hero{padding:42px 20px}}
-    """
+    return """:root{--ink:#182338;--muted:#5d697b;--paper:#f5f7f3;--card:#fff;--line:#dce2dc;--navy:#143149;--teal:#087a72;--amber:#c88716;--shadow:0 14px 38px #152a3914}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:var(--paper);font:15px/1.58 Inter,Segoe UI,Arial,sans-serif}body.dark{--ink:#edf2f7;--muted:#aeb9c8;--paper:#0d1722;--card:#152333;--line:#2b3d4e;--navy:#e7f4f7;--teal:#67d7cc;--shadow:0 14px 38px #0004}h1,h2,h3{font-family:Georgia,serif}.skip{position:absolute;left:-999px}.skip:focus{left:16px;top:12px;z-index:100}.hero{padding:58px max(24px,calc((100vw - 1080px)/2)) 76px;color:#fff;background:linear-gradient(135deg,#102a41,#174d59 62%,#08776f)}.eyebrow{color:#a6e9e1;font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}.hero h1{margin:0;font-size:clamp(38px,6vw,68px)}.toolbar{position:sticky;top:0;z-index:20;padding:10px 18px;background:color-mix(in srgb,var(--paper) 92%,transparent);border-bottom:1px solid var(--line)}.toolbar-inner{max-width:1180px;margin:auto;display:flex;gap:9px;align-items:center}.context{margin-right:auto;color:var(--muted);font-weight:700;font-size:13px}.button,.tab-button{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);cursor:pointer}.button{padding:8px 11px;border-radius:10px;font-weight:750}.tablist{display:flex;overflow:auto}.tab-button{padding:12px 10px;border-width:0 0 3px;white-space:nowrap;font-weight:700}.tab-button[aria-selected=true]{color:var(--teal);border-color:var(--teal)}main{max-width:1180px;margin:auto;padding:0 22px 68px}.numbers{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:-36px 0 30px;position:relative}.number,.card,.panel,details{border:1px solid var(--line);background:var(--card);box-shadow:var(--shadow);border-radius:15px}.number{padding:17px 18px}.number strong{display:block;color:var(--teal);font:700 31px Georgia,serif}.number span{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase}.card,.panel{padding:20px}.cards,.steps,.versions{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.arm strong{display:block;color:var(--teal);font:700 28px Georgia,serif}.question-card,.takeaway{padding:25px;border-left:6px solid var(--teal);border-radius:17px;background:var(--card);box-shadow:var(--shadow);font:700 23px/1.35 Georgia,serif}.takeaway{border-color:var(--amber);font:inherit}.two,.evidence-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}section{margin-top:30px}.tab-panel[hidden]{display:none}table{width:100%;border-collapse:collapse;background:var(--card)}th,td{padding:10px;border:1px solid var(--line);text-align:left;vertical-align:top}pre{padding:12px;overflow:auto;white-space:pre-wrap;color:#eaf4f3;background:#182338;border-radius:8px}details{margin:10px 0;padding:12px}@media(max-width:760px){.numbers,.cards,.steps,.versions,.two,.evidence-grid{grid-template-columns:1fr}.context{display:none}}@media print{.toolbar{display:none}.tab-panel[hidden]{display:block}.hero{color:#111;background:#fff;border-bottom:2px solid #111}}"""
+
+
+def _cards(model: Mapping[str, Any]) -> str:
+    cards = _map(model.get("arm_cards", model.get("arms")))
+    return "".join("<article class=\"card arm\"><p>%s</p><strong>%s</strong><span>Composite score</span><small>Pass rate: %s</small></article>" % (label, _mean(_map(cards.get(key)).get("composite")), _mean(_map(cards.get(key)).get("pass_rate"))) for key, label in ARM_LABELS.items())
+
+
+def _evidence(model: Mapping[str, Any]) -> str:
+    cases = model.get("cases", model.get("records", []))
+    if not isinstance(cases, list):
+        return "<p>No case evidence was supplied.</p>"
+    out = []
+    for record in cases:
+        row, result = _map(record), _map(_map(record).get("result"))
+        turns = row.get("clarifications", [])
+        support = [_map(turn).get("candidate_support", []) for turn in turns if isinstance(turn, Mapping)] if isinstance(turns, list) else []
+        out.append("<details><summary>%s · %s · %s · run %s</summary><div class=\"evidence-grid\"><div><h4>Question</h4><pre>%s</pre><h4>Expected SQL</h4><pre>%s</pre><h4>Generated SQL</h4><pre>%s</pre><h4>Result</h4><pre>%s</pre></div><div><h4>Score</h4><pre>%s</pre><h4>Clarifications</h4><pre>%s</pre><h4>Candidate support</h4><pre>%s</pre><h4>Clarification compliance</h4><pre>%s</pre><h4>Comparison metadata</h4><pre>%s</pre></div></div></details>" % (_text(row.get("case_id")), _text(row.get("category")), _text(row.get("arm")), _text(row.get("run")), _json(row.get("question", "Not recorded")), _json(row.get("expected_sql", "Not recorded")), _json(result.get("sql")), _json(result), _json(row.get("score", {})), _json(turns), _json(support), _json([_map(turn).get("compliance_passed") for turn in turns] if isinstance(turns, list) else []), _json(row.get("comparison", {}))))
+    return "".join(out) or "<p>No case evidence was supplied.</p>"
 
 
 def render_one_page(model: Mapping[str, Any]) -> str:
-    """Render the compact, campaign-backed V3 method and outcome summary."""
-    provenance = _mapping(model.get("provenance"))
-    methodology = _mapping(model.get("methodology"))
-    return """<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>{style}</style></head><body>
-    <header class=\"hero\"><p class=\"eyebrow\">Campaign publication · Evaluation V3</p><h1>{title}</h1><p>A four-arm comparison of a single-pass baseline, candidate-only, semantic-only, and hybrid clarification workflow.</p></header>
-    <main><section class=\"panel\"><h2>What changed</h2><p>V3 evaluates 24 cases across K=3 SQL candidates and five repetitions with frozen deterministic scoring. Candidate SQL and executed results are primary ambiguity evidence; semantic-column findings support one targeted two-option clarification. Relationship paths never trigger clarification.</p><p class=\"muted\">Suite {suite} · model {model_name} · {design}</p></section><section class=\"cards\">{cards}</section><section class=\"two\"><article class=\"panel\"><h2>Ambiguity funnel</h2><pre>{funnel}</pre></article><article class=\"panel\"><h2>Campaign operations</h2><pre>{operations}</pre></article></section><section class=\"two\"><article class=\"panel\"><h2>Findings</h2><ul>{findings}</ul></article><article class=\"panel\"><h2>Interpretation limits</h2><ul>{limitations}</ul></article></section></main></body></html>""".format(
-        title=_text(model.get("title", "DB Whisperer Evaluation V3")), style=_style(),
-        suite=_text(provenance.get("suite_version")), model_name=_text(provenance.get("model")),
-        design=_text(methodology.get("design")), cards=_arm_cards(model),
-        funnel=_json(model.get("ambiguity_funnel", {})), operations=_json(model.get("operations", model.get("operational", {}))),
-        findings=_list_items(model.get("findings")), limitations=_list_items(model.get("limitations")),
-    )
+    provenance, methodology = _map(model.get("provenance")), _map(model.get("methodology"))
+    return """<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>%s</title><style>%s</style></head><body><a class=\"skip\" href=\"#main\">Skip to content</a><header class=\"hero\"><p class=\"eyebrow\">Campaign publication · Evaluation V3</p><h1>%s</h1><p>A plain-language overview of the V3 method and evidence.</p></header><nav class=\"toolbar\" aria-label=\"Page tools\"><div class=\"toolbar-inner\"><span class=\"context\">Evaluation V3 overview</span><button class=\"button\" id=\"theme\">Theme</button><button class=\"button\" id=\"print\">Print</button></div></nav><main id=\"main\"><div class=\"numbers\"><div class=\"number\"><strong>24</strong><span>Cases</span></div><div class=\"number\"><strong>4</strong><span>Arms</span></div><div class=\"number\"><strong>5×</strong><span>Repetitions</span></div><div class=\"number\"><strong>K=3</strong><span>Candidate arms</span></div></div><section><h2>The question we tested</h2><div class=\"question-card\">Can targeted clarification improve schema-aware text-to-SQL while preserving correct and safe answers?</div></section><section><h2>How the test worked</h2><div class=\"steps\"><article class=\"card\">22 query cases</article><article class=\"card\">2 ETL fixtures</article><article class=\"card\">Frozen deterministic scoring</article><article class=\"card\">Checkpoint each cell</article></div></section><section><h2>What the four arms did</h2><div class=\"cards\">%s</div></section><section><h2>What the aggregate shows</h2><div class=\"two\"><article class=\"panel\"><h3>Ambiguity funnel</h3><pre>%s</pre></article><article class=\"panel\"><h3>Campaign operations</h3><pre>%s</pre></article></div></section><section><h2>What we learned</h2><div class=\"takeaway\"><ul>%s</ul></div></section><section><h2>How to interpret the results</h2><ul>%s</ul><pre>%s</pre></section></main><script>const b=document.body;if(localStorage.getItem('dbw-v3-theme')==='dark')b.classList.add('dark');document.getElementById('theme').onclick=()=>{b.classList.toggle('dark');localStorage.setItem('dbw-v3-theme',b.classList.contains('dark')?'dark':'light')};document.getElementById('print').onclick=()=>window.print();</script></body></html>""" % (_text(model.get("title", "DB Whisperer Evaluation V3")), _style(), _text(model.get("title", "DB Whisperer Evaluation V3")), _cards(model), _json(model.get("ambiguity_funnel", {})), _json(model.get("operations", {})), _items(model.get("findings")), _items(model.get("limitations")), _json({"methodology": methodology, "provenance": provenance}))
 
 
 def render_full_report(model: Mapping[str, Any]) -> str:
-    """Render the eight-tab evidence report from a validated presentation model."""
-    provenance = _mapping(model.get("provenance")); methodology = _mapping(model.get("methodology"))
-    deltas = _mapping(model.get("arm_deltas")); failures = model.get("failures", [])
-    nav = "".join(f"<a href=\"#{key}\">{label}</a>" for key, label in REPORT_TABS)
-    return """<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} evidence report</title><style>{style}</style></head><body>
-    <header class=\"hero\"><p class=\"eyebrow\">Auditable campaign evidence</p><h1>{title}</h1><p>Four V3 arms, 24 cases, K=3 candidates, and five repetitions.</p></header><nav class=\"toolbar\">{nav}</nav><main>
-    <section class=\"tab\" id=\"overview\"><h2>Overview</h2><p>{design}</p><p class=\"muted\">Suite {suite} ({suite_hash}) · model {model_name} · fingerprint {fingerprint}</p><div class=\"cards\">{cards}</div></section>
-    <section class=\"tab\" id=\"comparison\"><h2>System Comparison</h2><table><thead><tr><th>Measure</th>{headers}</tr></thead><tbody><tr><th>Composite score</th>{composites}</tr><tr><th>Pass rate</th>{pass_rates}</tr></tbody></table><h3>Published deltas</h3><pre>{deltas}</pre></section>
-    <section class=\"tab\" id=\"questions\"><h2>Results by Question</h2><p>Per-case SQL, results, scores, transcripts, and support are retained in Case Evidence.</p>{case_evidence}</section>
-    <section class=\"tab\" id=\"quality\"><h2>Quality Components</h2><table><thead><tr><th>Component</th>{headers}</tr></thead><tbody>{components}</tbody></table></section>
-    <section class=\"tab\" id=\"ambiguity\"><h2>Ambiguity Funnel</h2><p>The Ambiguity funnel reports clarification compliance and candidate support from scored records, not inferred by this renderer.</p><pre>{funnel}</pre></section>
-    <section class=\"tab\" id=\"operations\"><h2>Safety, ETL &amp; Operations</h2><div class=\"two\"><article class=\"panel\"><h3>Shared ETL</h3><pre>{etl}</pre><h3>Warnings</h3><ul>{warnings}</ul></article><article class=\"panel\"><h3>Campaign operations</h3><pre>{operations}</pre><h3>Usage</h3><pre>{usage}</pre></article></div></section>
-    <section class=\"tab\" id=\"methodology\"><h2>Methodology</h2><p>V3 uses exactly four arms: Baseline, Candidate Only, Semantic Only, and Full System. It runs 24 cases with K=3 candidates for every request and five complete repetitions. Relationship-route multiplicity is outside this evaluation.</p><pre>{methodology}</pre></section>
-    <section class=\"tab\" id=\"evidence\"><h2>Case Evidence</h2><h3>Failures</h3><pre>{failures}</pre><h3>Oracle reviews</h3><pre>{oracles}</pre><h3>Case transcripts and SQL evidence</h3>{case_evidence}</section>
-    </main></body></html>""".format(
-        title=_text(model.get("title", "DB Whisperer Evaluation V3")), style=_style(), nav=nav,
-        design=_text(methodology.get("design")), suite=_text(provenance.get("suite_version")),
-        suite_hash=_text(provenance.get("suite_hash")), model_name=_text(provenance.get("model")),
-        fingerprint=_text(provenance.get("fingerprint")), cards=_arm_cards(model), headers=_table_header(),
-        composites="".join(f"<td>{_mean(_mapping(model.get('headline_metrics')).get(key))}</td>" for key in ARM_LABELS),
-        pass_rates="".join(f"<td>{_mean(_mapping(_mapping(model.get('arms')).get(key)).get('pass_rate'))}</td>" for key in ARM_LABELS),
-        deltas=_json(deltas), components=_component_rows(model, "components"), funnel=_json(model.get("ambiguity_funnel", {})),
-        etl=_json(model.get("shared_etl", {})), warnings=_list_items(model.get("warnings")),
-        operations=_json(model.get("operations", model.get("operational", {}))), usage=_json(model.get("usage", {})),
-        methodology=_json(methodology), failures=_json(failures), oracles=_json(model.get("oracle_reviews", [])),
-        case_evidence=_case_evidence(model),
-    )
+    arms = _map(model.get("arms")); headers = "".join("<th>%s</th>" % label for label in ARM_LABELS.values())
+    components = "".join("<tr><th>%s</th>%s</tr>" % (name.title(), "".join("<td>%s</td>" % _mean(_map(_map(arms.get(arm)).get("components")).get(name)) for arm in ARM_LABELS)) for name in ("ambiguity", "correctness", "efficiency", "safety", "grounding", "etl"))
+    contents = {
+        "overview": "<h2>Overview</h2><div class=\"cards\">%s</div><pre>%s</pre>" % (_cards(model), _json(model.get("provenance", {}))),
+        "comparison": "<h2>System Comparison</h2><table class=\"sortable\"><thead><tr><th>Measure</th>%s</tr></thead><tbody><tr><th>Composite</th>%s</tr><tr><th>Pass rate</th>%s</tr></tbody></table><pre>%s</pre>" % (headers, "".join("<td>%s</td>" % _mean(_map(model.get("headline_metrics")).get(arm)) for arm in ARM_LABELS), "".join("<td>%s</td>" % _mean(_map(arms.get(arm)).get("pass_rate")) for arm in ARM_LABELS), _json(model.get("arm_deltas", {}))),
+        "questions": "<h2>Results by Question</h2>" + _evidence(model),
+        "quality": "<h2>Quality Components</h2><table class=\"sortable\"><thead><tr><th>Component</th>%s</tr></thead><tbody>%s</tbody></table>" % (headers, components),
+        "ambiguity": "<h2>Ambiguity Funnel</h2><p>The Ambiguity funnel records clarification compliance and candidate support from transcript turns.</p><pre>%s</pre>" % _json(model.get("ambiguity_funnel", {})),
+        "operations": "<h2>Safety, ETL &amp; Operations</h2><pre>%s</pre><ul>%s</ul>" % (_json({"shared_etl": model.get("shared_etl"), "operations": model.get("operations"), "usage": model.get("usage")}), _items(model.get("warnings"))),
+        "methodology": "<h2>Methodology</h2><p>Baseline uses K=1. Candidate Only, Semantic Only, and Full System use K=3. The frozen suite has 22 query cases and 2 ETL fixtures (24 total), with five repetitions and a checkpoint after every cell. Relationship-route multiplicity is outside this evaluation.</p><pre>%s</pre>" % _json(model.get("methodology", {})),
+        "evidence": "<h2>Case Evidence</h2><h3>Failures</h3><pre>%s</pre><h3>Oracle reviews</h3><pre>%s</pre>%s" % (_json(model.get("failures", [])), _json(model.get("oracle_reviews", [])), _evidence(model)),
+    }
+    buttons = "".join("<button class=\"tab-button\" role=\"tab\" id=\"tab-%s\" aria-controls=\"panel-%s\" aria-selected=\"%s\" tabindex=\"%s\">%s</button>" % (key, key, str(key == "overview").lower(), 0 if key == "overview" else -1, label) for key, label in REPORT_TABS)
+    panels = "".join("<span id=\"%s\" hidden></span><section id=\"panel-%s\" class=\"tab-panel\" role=\"tabpanel\" aria-labelledby=\"tab-%s\"%s>%s</section>" % (key, key, key, "" if key == "overview" else " hidden", contents[key]) for key, _ in REPORT_TABS)
+    script = """<script>document.documentElement.classList.add('js');const tabs=[...document.querySelectorAll('[role=tab]')],panels=[...document.querySelectorAll('[role=tabpanel]')];function activateTab(key,focus=false){tabs.forEach(t=>{const on=t.id==='tab-'+key;t.setAttribute('aria-selected',on);t.tabIndex=on?0:-1});panels.forEach(p=>p.hidden=p.id!=='panel-'+key);if(focus)document.getElementById('tab-'+key).focus()}tabs.forEach((tab,index)=>{tab.onclick=()=>activateTab(tab.id.slice(4));tab.onkeydown=e=>{if(!['ArrowRight','ArrowLeft','Home','End'].includes(e.key))return;e.preventDefault();const n=e.key==='Home'?0:e.key==='End'?tabs.length-1:e.key==='ArrowRight'?(index+1)%tabs.length:(index-1+tabs.length)%tabs.length;activateTab(tabs[n].id.slice(4),true)}});document.querySelectorAll('table.sortable').forEach(table=>{const body=table.tBodies[0];[...table.tHead.rows[0].cells].forEach((cell,index)=>{cell.tabIndex=0;cell.onclick=()=>{const rows=[...body.rows].reverse();rows.sort((a,b)=>a.cells[index].textContent.localeCompare(b.cells[index].textContent,undefined,{numeric:true}));rows.forEach(row=>body.appendChild(row))}})});const b=document.body;if(localStorage.getItem('dbw-v3-theme')==='dark')b.classList.add('dark');document.getElementById('theme').onclick=()=>{b.classList.toggle('dark');localStorage.setItem('dbw-v3-theme',b.classList.contains('dark')?'dark':'light')};document.getElementById('print').onclick=()=>window.print();</script>"""
+    return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>%s evidence report</title><style>%s</style></head><body><header class=\"hero\"><p class=\"eyebrow\">Auditable campaign evidence</p><h1>%s</h1><p>Four V3 arms, 24 cases, and five repetitions.</p></header><nav class=\"toolbar\" aria-label=\"Report tools\"><div class=\"toolbar-inner\"><span class=\"context\">V3 evidence report</span><div class=\"tablist\" role=\"tablist\" aria-label=\"Report sections\">%s</div><button class=\"button\" id=\"theme\">Theme</button><button class=\"button\" id=\"print\">Print</button></div></nav><main>%s</main>%s</body></html>" % (_text(model.get("title", "DB Whisperer Evaluation V3")), _style(), _text(model.get("title", "DB Whisperer Evaluation V3")), buttons, panels, script)
 
 
 def _atomic_write(path: Path, contents: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary = path.with_name(".%s.%s.tmp" % (path.name, os.getpid()))
     temporary.write_text(contents, encoding="utf-8")
     temporary.replace(path)
     return path
 
 
 def write_reports(aggregate_path: Path, one_page_path: Path, full_report_path: Path) -> tuple[Path, Path]:
-    """Publish exactly the one-page and full V3 reports with atomic replacements."""
     aggregate = json.loads(Path(aggregate_path).read_text(encoding="utf-8"))
     model = aggregate.get("model") if isinstance(aggregate, Mapping) else None
     if not isinstance(model, Mapping):
         model = build_report_model(aggregate)
-    return (
-        _atomic_write(Path(one_page_path), render_one_page(model)),
-        _atomic_write(Path(full_report_path), render_full_report(model)),
-    )
+    return (_atomic_write(Path(one_page_path), render_one_page(model)), _atomic_write(Path(full_report_path), render_full_report(model)))

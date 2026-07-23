@@ -145,6 +145,10 @@ class AggregationTest(unittest.TestCase):
         )
         model = build_report_model(aggregate)
         self.assertTrue({"methodology", "headline_metrics", "arm_cards", "charts", "tables", "findings", "limitations", "cases", "evidence", "ambiguity_funnel", "operations", "warnings"} <= set(model))
+        query_case = next(row for row in model["cases"] if row["arm"] == "full")
+        self.assertNotEqual("Not recorded", query_case.get("question"))
+        self.assertTrue(query_case.get("expected_sql"))
+        self.assertIn("comparison", query_case)
 
     def test_bootstrap_interval_uses_question_family_units_not_run_means(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -10,7 +10,7 @@ The four fixed arms are Baseline, Candidate Only, Semantic Only, and Full System
 
 ## Test-suite redesign
 
-The frozen V3 suite contains 24 cases across direct answers, semantic ambiguity, candidate-derived ambiguity, clarification resolution, safety, and relational requests. Every arm sees the same cases and database state.
+The frozen V3 suite contains 22 query cases and 2 ETL fixtures (24 cases total) across direct answers, semantic ambiguity, candidate-derived ambiguity, clarification resolution, safety, and relational requests. Every arm sees the same query cases and database state; ETL fixtures are shared operational evidence.
 
 ## Ambiguity-funnel scoring
 
@@ -22,7 +22,7 @@ Correctness is scored from the expected result and executable SQL evidence. Mult
 
 ## K=3, five repetitions, and budget control
 
-Each request produces K=3 SQL candidates, and the complete compatible campaign is repeated five times. The planned campaign ceiling is $3.75; usage and retries are retained as campaign-global operational evidence when they cannot be attributed safely to an individual repetition.
+Baseline is a single-pass K=1 comparison. Candidate Only, Semantic Only, and Full System each produce K=3 SQL candidates; the complete compatible campaign is repeated five times. The planned campaign ceiling is $3.75; usage and retries are retained as campaign-global operational evidence when they cannot be attributed safely to an individual repetition.
 
 ## Faster campaign execution
 
@@ -30,7 +30,7 @@ Campaigns use two workers while generating the three candidates for a request in
 
 ## Progress, checkpoints, and resume
 
-The runner records progress after each compatible repetition and writes a checkpoint with immutable suite, model, and scoring fingerprints. Resume is permitted only when those fingerprints match; incomplete or incompatible runs are excluded from aggregation.
+The runner records progress and writes a checkpoint after every campaign cell, with immutable suite, model, and scoring fingerprints. Resume is permitted only when those fingerprints match; incomplete or incompatible runs are excluded from aggregation.
 
 ## Aggregation and publication
 

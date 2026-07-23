@@ -61,6 +61,19 @@ class ReportingTest(unittest.TestCase):
         self.assertIn("K=3", combined)
         self.assertIn("five repetitions", combined)
 
+    def test_full_report_has_reference_toolbar_and_accessible_tabs(self) -> None:
+        rendered = render_full_report(fixture_model())
+        self.assertIn('role="tablist"', rendered)
+        self.assertIn('role="tab"', rendered)
+        self.assertIn('role="tabpanel"', rendered)
+        self.assertIn('aria-controls="panel-overview"', rendered)
+        self.assertIn('aria-selected="true"', rendered)
+        self.assertIn('hidden', rendered)
+        self.assertIn('id="theme"', rendered)
+        self.assertIn('id="print"', rendered)
+        for key in ("ArrowRight", "ArrowLeft", "Home", "End", "activateTab"):
+            self.assertIn(key, rendered)
+
     def test_model_evidence_is_escaped_and_rendering_does_not_mutate_it(self) -> None:
         model = fixture_model(); case = model["cases"][0]
         case.update({"question": "<script>alert(1)</script>", "expected_sql": "SELECT '<b>expected</b>'"})
@@ -86,6 +99,6 @@ class ReportingTest(unittest.TestCase):
             "Progress, checkpoints, and resume", "Aggregation and publication", "Interpretation limits",
         ):
             self.assertIn(heading, document)
-        for decision in ("$3.75", "two workers", "K=3", "five", "birth date", "admission date"):
+        for decision in ("$3.75", "two workers", "K=1", "K=3", "22 query cases", "checkpoint after every campaign cell", "birth date", "admission date"):
             self.assertIn(decision, document)
         self.assertNotIn("join-path ambiguity", document.casefold())
