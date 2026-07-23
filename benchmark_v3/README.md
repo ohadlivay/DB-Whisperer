@@ -33,5 +33,13 @@ $env:OPENROUTER_API_KEY = "..."
 python -m benchmark_v3.run_evaluation
 ```
 
+The campaign runner uses the four arms `baseline`, `candidate_only`,
+`semantic_only`, and `full`. Baseline generates one candidate; the ambiguity
+arms generate three. Its deterministic five-repetition schedule rotates arm
+order, runs at most two case/arm cells concurrently, writes atomic checkpoints
+and `campaign.json`, and resumes only when the campaign fingerprint matches
+the suite, dataset, model, prompt/runtime configuration, scorer, and arms.
+Use `--workers 1` for a conservative serial live run.
+
 Outputs under `benchmark_v3/results/` are ignored by git. Do not commit API
 keys, prompt logs, generated DuckDB files, or raw sensitive database values.
