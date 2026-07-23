@@ -28,12 +28,15 @@ class TerminalProgress:
         *,
         stream: TextIO,
         interval: float = 1.0,
+        interactive: bool | None = None,
     ) -> None:
         if interval <= 0:
             raise ValueError("progress interval must be positive")
         self.observer = observer
         self.stream = stream
         self.interval = float(interval)
+        self._interactive_override = interactive
+        self._last_width = 0
         self._stop = Event()
         self._thread = Thread(target=self._render_loop, daemon=True)
         self._lifecycle_lock = Lock()
@@ -45,34 +48,20 @@ class TerminalProgress:
         complete = int(status.get("completed_units", 0))
         total = int(status.get("total_units", 0))
         percent = 100.0 * complete / total if total else 0.0
-        active = ", ".join(
-            (
-                f"r{item.get('run', '?')}:{item.get('case', '?')}/"
-                f"{item.get('arm', '?')}"
-                f" [{item.get('phase', 'working')}]"
-            )
-            for item in status.get("active", [])
-        ) or "waiting"
-        eta_buckets = ", ".join(
-            f"{bucket} {format_duration(seconds)}"
-            for bucket, seconds in sorted(
-                dict(status.get("eta_by_arm_category", {})).items()
-            )
-        ) or "no samples"
-        latest_error = str(status.get("latest_error", "") or "none")
         return (
-            f"{percent:5.1f}% {complete}/{total} | "
+            f"Overall evaluation {percent:5.1f}% | "
+            f"{complete}/{total} tests complete | "
             f"elapsed {format_duration(status.get('elapsed_seconds'))} | "
-            f"ETA {format_duration(status.get('eta_seconds'))} "
-            f"({eta_buckets}) | "
-            f"pass {status.get('passed', 0)} fail {status.get('failed', 0)} | "
+            f"ETA {format_duration(status.get('eta_seconds'))} | "
+            f"passed {status.get('passed', 0)} failed {status.get('failed', 0)} | "
             f"calls {status.get('model_calls', 0)} retries {status.get('retries', 0)} | "
             f"${float(status.get('cost_usd', 0)):.4f}/"
-            f"${float(status.get('budget_usd', 0)):.2f} | "
-            f"{active} | error {latest_error}"
+            f"${float(status.get('budget_usd', 0)):.2f}"
         )
 
     def _interactive(self) -> bool:
+        if self._interactive_override is not None:
+            return self._interactive_override
         try:
             return bool(self.stream.isatty())
         except (AttributeError, OSError):
@@ -85,7 +74,11 @@ class TerminalProgress:
         rendered = self.snapshot(self.observer.snapshot())
         try:
             if self._interactive():
-                self.stream.write("\r" + rendered + ("\n" if final else ""))
+                width = max(self._last_width, len(rendered))
+                self._last_width = width
+                self.stream.write(
+                    "\r" + rendered.ljust(width) + ("\n" if final else "")
+                )
             else:
                 self.stream.write(rendered + "\n")
             self.stream.flush()

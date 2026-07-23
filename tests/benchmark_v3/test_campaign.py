@@ -198,6 +198,38 @@ class CampaignTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "did not complete"):
                 main()
 
+    def test_main_forces_single_line_progress_when_requested(self) -> None:
+        captured: list[CampaignConfig] = []
+        result = CampaignResult(
+            CampaignFingerprint(
+                "suite", "data", "model", "prompt", "scorer", 3, (), "runtime"
+            ),
+            frozenset(),
+            (),
+            published=True,
+        )
+
+        def run(config: CampaignConfig) -> CampaignResult:
+            captured.append(config)
+            return result
+
+        with (
+            patch("benchmark_v3.run_evaluation.run_campaign", side_effect=run),
+            patch("benchmark_v3.run_evaluation.os.getenv", return_value="key"),
+            patch(
+                "sys.argv",
+                [
+                    "run_evaluation",
+                    "--campaign-id",
+                    "official",
+                    "--interactive-progress",
+                ],
+            ),
+        ):
+            main()
+
+        self.assertIsNotNone(captured[0].progress_factory)
+
     def test_external_launcher_uses_only_project_virtualenv_python(self) -> None:
         launcher = (BENCHMARK_DIR / "run_official_evaluation.cmd").read_text(encoding="utf-8")
         self.assertIn(".venv\\Scripts\\python.exe", launcher)
@@ -206,6 +238,7 @@ class CampaignTest(unittest.TestCase):
         self.assertIn("Read-Host 'OpenRouter API key' -AsSecureString", launcher)
         self.assertIn("ZeroFreeBSTR", launcher)
         self.assertNotIn("set /p OPENROUTER_API_KEY", launcher)
+        self.assertIn("--interactive-progress", launcher)
 
     def test_budget_stop_drains_admitted_cells_without_new_submissions(self) -> None:
         suite = self._suite(repetitions=2)

@@ -946,6 +946,11 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--repetitions", type=int, default=OFFICIAL_REPETITIONS)
     parser.add_argument("--campaign-id")
+    parser.add_argument(
+        "--interactive-progress",
+        action="store_true",
+        help="Keep one campaign-wide progress line updated in place.",
+    )
     args = parser.parse_args()
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not api_key:
@@ -957,7 +962,22 @@ def main() -> None:
     except ValueError as error:
         raise SystemExit(str(error)) from error
     suite = replace(load_suite(args.suite), repetitions=args.repetitions)
-    result = run_campaign(CampaignConfig(suite, campaign_dir, api_key, args.workers))
+    progress_factory = None
+    if args.interactive_progress:
+        progress_factory = lambda observer: TerminalProgress(
+            observer,
+            stream=sys.stderr,
+            interactive=True,
+        )
+    result = run_campaign(
+        CampaignConfig(
+            suite,
+            campaign_dir,
+            api_key,
+            args.workers,
+            progress_factory=progress_factory,
+        )
+    )
     if args.repetitions != OFFICIAL_REPETITIONS or not result.published or result.stopped_for_budget:
         raise SystemExit("Campaign did not complete and publish the official five-repetition result.")
 

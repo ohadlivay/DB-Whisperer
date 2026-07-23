@@ -26,12 +26,13 @@ class ProgressTest(unittest.TestCase):
             "latest_error": "timeout",
         })
         self.assertIn("25.0%", rendered)
+        self.assertIn("Overall evaluation", rendered)
+        self.assertIn("5/20 tests complete", rendered)
         self.assertIn("elapsed 00:02:05", rendered)
         self.assertIn("ETA 00:06:15", rendered)
         self.assertIn("$0.4200/$3.75", rendered)
-        self.assertIn("r1:stay_icu/full [judging]", rendered)
-        self.assertIn("full/ambiguity 00:06:15", rendered)
-        self.assertIn("error timeout", rendered)
+        self.assertNotIn("stay_icu", rendered)
+        self.assertNotIn("full/ambiguity", rendered)
 
     def test_eta_uses_arm_and_category_rolling_durations(self) -> None:
         work_items = (
@@ -74,6 +75,27 @@ class ProgressTest(unittest.TestCase):
             self.assertTrue(stream.getvalue().endswith("\n"))
             self.assertNotIn("\r", stream.getvalue())
 
+    def test_forced_interactive_mode_reuses_one_overall_progress_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            stream = StringIO()
+            progress = TerminalProgress(
+                observer,
+                stream=stream,
+                interval=60,
+                interactive=True,
+            )
+
+            progress.render_once()
+            progress.render_once()
+
+            self.assertEqual(2, stream.getvalue().count("\r"))
+            self.assertNotIn("\n", stream.getvalue())
+            self.assertEqual(
+                2,
+                stream.getvalue().count("Overall evaluation"),
+            )
+
     def test_interval_must_be_positive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             observer = CampaignObserver(Path(temporary), (), 3.75)
@@ -115,7 +137,10 @@ class ProgressTest(unittest.TestCase):
             progress.stop()
 
             self.assertLess(perf_counter() - started, 2)
-            self.assertIn("100.0% 1/1", stream.getvalue())
+            self.assertIn(
+                "Overall evaluation 100.0% | 1/1 tests complete",
+                stream.getvalue(),
+            )
             self.assertTrue(stream.getvalue().endswith("\n"))
             with self.assertRaisesRegex(RuntimeError, "stopped"):
                 progress.start()

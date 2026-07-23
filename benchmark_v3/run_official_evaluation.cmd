@@ -27,9 +27,9 @@ goto finish
 
 :launch
 if "%~1"=="" (
-  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5
+  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5 --interactive-progress
 ) else (
-  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5 --campaign-id "%~1"
+  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5 --interactive-progress --campaign-id "%~1"
 )
 set "EXIT_CODE=%ERRORLEVEL%"
 set "OPENROUTER_API_KEY="
