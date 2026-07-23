@@ -17,6 +17,8 @@ class EvaluationV3Test(unittest.TestCase):
             ARMS,
         )
         self.assertEqual("3", suite.version.split(".")[0])
+        self.assertEqual(3, suite.candidate_count)
+        self.assertEqual(64, len(suite.sha256))
         self.assertNotIn("join_path", {case.category for case in suite.cases})
         self.assertNotIn("join-path", {case.expected_mechanism for case in suite.cases})
 
