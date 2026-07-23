@@ -3,6 +3,8 @@ from __future__ import annotations
 from io import StringIO
 from pathlib import Path
 import tempfile
+from threading import Event, Thread
+from time import perf_counter
 import unittest
 
 from benchmark_v3.observability import CampaignObserver
@@ -71,6 +73,86 @@ class ProgressTest(unittest.TestCase):
             progress.render_once()
             self.assertTrue(stream.getvalue().endswith("\n"))
             self.assertNotIn("\r", stream.getvalue())
+
+    def test_interval_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            with self.assertRaisesRegex(ValueError, "positive"):
+                TerminalProgress(observer, stream=StringIO(), interval=0)
+
+    def test_stop_renders_fresh_interactive_snapshot_and_newline(self) -> None:
+        class InteractiveStream(StringIO):
+            def __init__(self) -> None:
+                super().__init__()
+                self.written = Event()
+
+            def isatty(self) -> bool:
+                return True
+
+            def write(self, value: str) -> int:
+                result = super().write(value)
+                self.written.set()
+                return result
+
+        work_item = type("Item", (), {
+            "key": "one", "repetition": 1, "case_id": "a",
+            "arm": "full", "category": "ambiguity",
+        })()
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (work_item,), 3.75)
+            stream = InteractiveStream()
+            progress = TerminalProgress(observer, stream=stream, interval=60)
+            progress.start()
+            self.assertTrue(stream.written.wait(2))
+            observer.complete_cell(
+                duration=1,
+                arm="full",
+                category="ambiguity",
+                passed=True,
+            )
+
+            started = perf_counter()
+            progress.stop()
+
+            self.assertLess(perf_counter() - started, 2)
+            self.assertIn("100.0% 1/1", stream.getvalue())
+            self.assertTrue(stream.getvalue().endswith("\n"))
+            with self.assertRaisesRegex(RuntimeError, "stopped"):
+                progress.start()
+
+    def test_stop_is_bounded_when_stream_write_stalls(self) -> None:
+        class StallingStream(StringIO):
+            def __init__(self) -> None:
+                super().__init__()
+                self.first_write = Event()
+                self.release = Event()
+                self.write_count = 0
+
+            def isatty(self) -> bool:
+                return True
+
+            def write(self, value: str) -> int:
+                self.write_count += 1
+                if self.write_count == 1:
+                    self.first_write.set()
+                else:
+                    self.release.wait(5)
+                return super().write(value)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            stream = StallingStream()
+            progress = TerminalProgress(observer, stream=stream, interval=60)
+            progress.start()
+            self.assertTrue(stream.first_write.wait(2))
+            stopper = Thread(target=progress.stop)
+            stopper.start()
+            stopper.join(1.5)
+            try:
+                self.assertFalse(stopper.is_alive())
+            finally:
+                stream.release.set()
+                stopper.join(2)
 
 
 if __name__ == "__main__":

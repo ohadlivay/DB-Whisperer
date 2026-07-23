@@ -4,11 +4,13 @@ import json
 from pathlib import Path
 import random
 import tempfile
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import requests
+from requests.structures import CaseInsensitiveDict
 
 from benchmark_v3.observability import (
     BudgetStop,
@@ -131,6 +133,52 @@ class CampaignObserverTest(unittest.TestCase):
                 session.post("https://example.invalid")
             self.assertEqual(0, observer.status["model_calls"])
 
+    def test_budget_admission_is_atomic_with_recorded_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 1.0)
+            cost_is_locked = Event()
+            release_cost = Event()
+            admission_started = Event()
+            errors: list[BaseException] = []
+            original_publish = observer._publish_locked
+
+            def controlled_publish(**changes: object) -> None:
+                if changes.get("cost_usd") == 1.0:
+                    cost_is_locked.set()
+                    self.assertTrue(release_cost.wait(2))
+                original_publish(**changes)
+
+            def record_cost() -> None:
+                observer.record_usage(
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    cost_usd=1.0,
+                )
+
+            def admit() -> None:
+                admission_started.set()
+                try:
+                    observer.admit_model_call()
+                except BaseException as error:
+                    errors.append(error)
+
+            with patch.object(observer, "_publish_locked", controlled_publish):
+                cost_thread = Thread(target=record_cost)
+                cost_thread.start()
+                self.assertTrue(cost_is_locked.wait(2))
+                admission_thread = Thread(target=admit)
+                admission_thread.start()
+                self.assertTrue(admission_started.wait(2))
+                release_cost.set()
+                cost_thread.join(2)
+                admission_thread.join(2)
+
+            self.assertFalse(cost_thread.is_alive())
+            self.assertFalse(admission_thread.is_alive())
+            self.assertEqual(1, len(errors))
+            self.assertIsInstance(errors[0], BudgetStop)
+            self.assertEqual(0, observer.status["model_calls"])
+
     def test_restart_reconciles_completed_cells_from_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -145,6 +193,33 @@ class CampaignObserverTest(unittest.TestCase):
             self.assertEqual(1, resumed.status["passed"])
             self.assertEqual(1, resumed.status["failed"])
 
+    def test_restart_ignores_unrelated_checkpoints_and_eta_counts_only_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            work_items = (
+                item("one"),
+                item("two"),
+                item("three"),
+            )
+            first = CampaignObserver(directory, work_items, 3.75)
+            first.checkpoint("one", {"score": {"passed": True}})
+            first.checkpoint("old-campaign-cell", {"score": {"passed": True}})
+
+            resumed = CampaignObserver(directory, work_items, 3.75)
+            resumed.complete_cell(
+                duration=10,
+                arm="full",
+                category="ambiguity",
+                passed=True,
+            )
+
+            self.assertEqual(2, resumed.status["completed_units"])
+            self.assertEqual(10, resumed.status["eta_seconds"])
+            self.assertEqual(
+                10,
+                resumed.status["eta_by_arm_category"]["full/ambiguity"],
+            )
+
     def test_instrumented_request_failure_updates_latest_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             observer = CampaignObserver(Path(temporary), (), 3.75)
@@ -158,6 +233,198 @@ class CampaignObserverTest(unittest.TestCase):
                 with self.assertRaises(requests.ConnectionError):
                     session.post("https://example.invalid")
             self.assertIn("network down", observer.status["latest_error"])
+
+    def test_final_http_error_updates_latest_error_without_response_body(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            observer = CampaignObserver(directory, (), 3.75)
+            session = InstrumentedSession(observer, attempts=1)
+            response = requests.Response()
+            response.status_code = 401
+            response._content = b'{"error":"body-secret"}'
+            transport = SimpleNamespace(post=lambda *args, **kwargs: response)
+
+            with patch.object(session, "_transport", return_value=transport):
+                returned = session.post("https://example.invalid")
+
+            self.assertIs(response, returned)
+            self.assertIn("HTTP 401", observer.status["latest_error"])
+            durable = (
+                observer.status_path.read_text(encoding="utf-8")
+                + observer.events_path.read_text(encoding="utf-8")
+            )
+            self.assertNotIn("body-secret", durable)
+
+    def test_prompt_failure_event_updates_latest_error_and_sanitizes_mappings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            observer = CampaignObserver(directory, (), 3.75)
+            headers = CaseInsensitiveDict({
+                "aUtHoRiZaTiOn": "Bearer mapping-secret",
+                "X-aPi-KeY": "header-secret",
+                "safe": "visible",
+            })
+
+            observer.event(
+                "diagnostic",
+                payload={"headers": headers},
+            )
+            observer.prompt_logger.log_prompt(
+                "querier",
+                "model",
+                "safe prompt",
+                {"nested": [{"headers": headers}]},
+            )
+            observer.prompt_logger.log_event(
+                event="response_validation_failed",
+                component="querier",
+                details={
+                    "error": "Authorization: Bearer status-secret",
+                    "headers": headers,
+                },
+            )
+
+            durable = "".join(
+                path.read_text(encoding="utf-8")
+                for path in (
+                    observer.events_path,
+                    observer.prompt_path,
+                    observer.status_path,
+                )
+            )
+            for secret in ("mapping-secret", "header-secret", "status-secret"):
+                self.assertNotIn(secret, durable)
+            self.assertIn("visible", durable)
+            self.assertIn("[REDACTED]", observer.status["latest_error"])
+
+    def test_concurrent_status_event_prompt_and_checkpoint_writes_are_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            work_items = tuple(item(f"cell-{index}") for index in range(8))
+            observer = CampaignObserver(directory, work_items, 3.75)
+            start = Event()
+            errors: list[BaseException] = []
+            errors_lock = Lock()
+
+            def write(index: int) -> None:
+                try:
+                    start.wait(2)
+                    current = work_items[index]
+                    observer.activate(current, "running")
+                    observer.event("worker_event", worker=index)
+                    observer.prompt_logger.log_prompt(
+                        "querier",
+                        "model",
+                        f"prompt-{index}",
+                    )
+                    observer.checkpoint(
+                        current.key,
+                        {"score": {"passed": index % 2 == 0}},
+                    )
+                except BaseException as error:
+                    with errors_lock:
+                        errors.append(error)
+
+            threads = [Thread(target=write, args=(index,)) for index in range(8)]
+            for thread in threads:
+                thread.start()
+            start.set()
+            for thread in threads:
+                thread.join(3)
+
+            self.assertFalse(any(thread.is_alive() for thread in threads))
+            self.assertEqual([], errors)
+            json.loads(observer.status_path.read_text(encoding="utf-8"))
+            for path in (observer.events_path, observer.prompt_path):
+                records = [
+                    json.loads(line)
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                ]
+                self.assertTrue(records)
+            self.assertEqual(8, len(tuple(observer.checkpoint_dir.glob("*.json"))))
+
+    def test_session_counts_retry_usage_and_closes_thread_transports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            session = InstrumentedSession(
+                observer,
+                attempts=2,
+                base_delay=0,
+                random_source=random.Random(0),
+            )
+            created: list[object] = []
+            create_lock = Lock()
+            start = Event()
+            all_transports_entered = Event()
+            first_call_count = 0
+            call_errors: list[BaseException] = []
+
+            class Transport:
+                def __init__(self) -> None:
+                    self.calls = 0
+                    self.closed = False
+
+                def post(self, *args: object, **kwargs: object) -> object:
+                    nonlocal first_call_count
+                    self.calls += 1
+                    if self.calls == 1:
+                        with create_lock:
+                            first_call_count += 1
+                            if first_call_count == 3:
+                                all_transports_entered.set()
+                        if not all_transports_entered.wait(2):
+                            raise AssertionError(
+                                "three model transports did not overlap"
+                            )
+                        return SimpleNamespace(status_code=429)
+                    return SimpleNamespace(
+                        status_code=200,
+                        json=lambda: {
+                            "model": "test",
+                            "usage": {
+                                "prompt_tokens": 3,
+                                "completion_tokens": 2,
+                                "cost": 0.25,
+                            },
+                        },
+                    )
+
+                def close(self) -> None:
+                    self.closed = True
+
+            def make_transport() -> object:
+                transport = Transport()
+                with create_lock:
+                    created.append(transport)
+                return transport
+
+            def call() -> None:
+                try:
+                    start.wait(2)
+                    session.post("https://example.invalid")
+                except BaseException as error:
+                    with create_lock:
+                        call_errors.append(error)
+
+            with patch("benchmark_v3.observability.requests.Session", make_transport):
+                threads = [Thread(target=call) for _ in range(3)]
+                for thread in threads:
+                    thread.start()
+                start.set()
+                for thread in threads:
+                    thread.join(3)
+                session.close()
+
+            self.assertFalse(any(thread.is_alive() for thread in threads))
+            self.assertEqual([], call_errors)
+            self.assertTrue(all_transports_entered.is_set())
+            self.assertEqual(6, observer.status["model_calls"])
+            self.assertEqual(3, observer.status["retries"])
+            self.assertEqual(9, observer.status["prompt_tokens"])
+            self.assertEqual(6, observer.status["completion_tokens"])
+            self.assertEqual(0.75, observer.status["cost_usd"])
+            self.assertEqual(3, len(created))
+            self.assertTrue(all(transport.closed for transport in created))
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from datetime import datetime, timezone
 import json
 import os
@@ -59,7 +60,7 @@ def utc_now() -> str:
 def _safe_value(value: Any) -> Any:
     """Recursively remove credentials from durable event and prompt records."""
 
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {
             str(key): _safe_value(item)
             for key, item in value.items()
@@ -162,34 +163,46 @@ def initial_status(
             pass
     status["total_units"] = len(work_items)
     status["budget_usd"] = float(budget_usd)
-    checkpoint_keys: set[str] = set()
-    checkpoint_passes = 0
+    checkpoint_results = _load_checkpoint_results(campaign_dir, work_items)
+    checkpoint_keys = set(checkpoint_results)
+    checkpoint_passes = sum(checkpoint_results.values())
+    completed = len(checkpoint_keys)
+    status["completed_units"] = completed
+    status["passed"] = checkpoint_passes
+    status["failed"] = completed - checkpoint_passes
+    active_by_key = dict(status.get("active_by_key", {}))
+    for key in checkpoint_keys:
+        active_by_key.pop(key, None)
+    status["active_by_key"] = active_by_key
+    status["active"] = list(active_by_key.values())
+    return status
+
+
+def _load_checkpoint_results(
+    campaign_dir: Path,
+    work_items: tuple[WorkItemLike, ...],
+) -> dict[str, bool]:
+    """Return pass/fail results only for checkpoints in the current work graph."""
+
+    expected_keys = {item.key for item in work_items}
+    results: dict[str, bool] = {}
     for checkpoint in (campaign_dir / "checkpoints").glob("*.json"):
+        if checkpoint.stem not in expected_keys:
+            continue
         try:
             payload = json.loads(checkpoint.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 continue
-            checkpoint_keys.add(checkpoint.stem)
             score = payload.get("score", {})
             passed = (
                 score.get("passed", payload.get("passed", False))
                 if isinstance(score, dict)
                 else payload.get("passed", False)
             )
-            checkpoint_passes += int(bool(passed))
+            results[checkpoint.stem] = bool(passed)
         except (OSError, json.JSONDecodeError):
             continue
-    if checkpoint_keys:
-        completed = min(len(checkpoint_keys), len(work_items))
-        status["completed_units"] = completed
-        status["passed"] = min(checkpoint_passes, completed)
-        status["failed"] = completed - int(status["passed"])
-        active_by_key = dict(status.get("active_by_key", {}))
-        for key in checkpoint_keys:
-            active_by_key.pop(key, None)
-        status["active_by_key"] = active_by_key
-        status["active"] = list(active_by_key.values())
-    return status
+    return results
 
 
 class _SafePromptLogger:
@@ -257,6 +270,9 @@ class _SafePromptLogger:
         if model:
             record["model"] = model.strip()
         self._observer._append_jsonl(self._observer.prompt_path, record)
+        if "fail" in event.casefold() or "error" in event.casefold():
+            latest_error = details.get("error", details.get("message", event))
+            self._observer.record_latest_error(latest_error)
 
 
 class CampaignObserver:
@@ -284,6 +300,13 @@ class CampaignObserver:
         self._remaining_by_bucket = Counter(
             (item.arm, item.category) for item in work_items
         )
+        checkpoint_keys = set(_load_checkpoint_results(campaign_dir, work_items))
+        for work_item in work_items:
+            if (
+                work_item.key in checkpoint_keys
+                and self._remaining_by_bucket[(work_item.arm, work_item.category)] > 0
+            ):
+                self._remaining_by_bucket[(work_item.arm, work_item.category)] -= 1
         self.prompt_logger = _SafePromptLogger(self)
         self.publish()
 
@@ -404,7 +427,17 @@ class CampaignObserver:
             **details,
         })
         if severity == "error":
-            self.publish(latest_error=str(_safe_value(details.get("message", event))))
+            self.record_latest_error(details.get("message", details.get("error", event)))
+
+    def record_latest_error(self, error: Any) -> None:
+        """Publish one sanitized operator-facing error without unsafe payloads."""
+
+        safe_error = _safe_value(error)
+        if isinstance(safe_error, (dict, list)):
+            rendered = json.dumps(safe_error, ensure_ascii=False, default=str)
+        else:
+            rendered = str(safe_error)
+        self.publish(latest_error=rendered)
 
     def console(self, message: str) -> None:
         safe = str(_safe_value(message)).replace("\r", " ")
@@ -423,15 +456,20 @@ class CampaignObserver:
         self.event("checkpoint_written", key=key, checkpoint=str(path))
         return path
 
-    def preflight_budget(self) -> None:
+    def admit_model_call(self) -> None:
+        """Atomically admit and count one transport attempt.
+
+        Provider cost is unknown until a response arrives. Calls admitted while
+        recorded cost is below the ceiling may therefore remain in flight and
+        report cost later; the network call itself is intentionally not
+        serialized so candidate generation keeps its K-way concurrency.
+        """
+
         with self._lock:
             if float(self.status.get("cost_usd", 0.0)) >= self.budget_usd:
                 raise BudgetStop(
                     "Campaign budget ceiling reached before paid request."
                 )
-
-    def record_model_call(self) -> None:
-        with self._lock:
             self._publish_locked(
                 model_calls=int(self.status.get("model_calls", 0)) + 1,
             )
@@ -499,7 +537,12 @@ def retry_transient(
 
 
 class InstrumentedSession(requests.Session):
-    """Thread-local OpenRouter transport with budget, retry, and usage evidence."""
+    """Thread-local concurrent transport with atomic budget admission.
+
+    An admitted request can report provider cost after another admitted
+    request has reached the recorded ceiling because cost is unavailable until
+    responses arrive. Admission is serialized; network I/O is not.
+    """
 
     def __init__(
         self,
@@ -515,20 +558,26 @@ class InstrumentedSession(requests.Session):
         self.base_delay = base_delay
         self.random_source = random_source or random.Random()
         self._thread_local = local()
+        self._transports_lock = Lock()
+        self._transports: list[requests.Session] = []
+        self._closed = False
 
     def _transport(self) -> requests.Session:
         transport = getattr(self._thread_local, "transport", None)
         if transport is None:
-            transport = requests.Session()
-            self._thread_local.transport = transport
+            with self._transports_lock:
+                if self._closed:
+                    raise RuntimeError("InstrumentedSession is closed.")
+                transport = requests.Session()
+                self._transports.append(transport)
+                self._thread_local.transport = transport
         return transport
 
     def post(self, url: str, *args: Any, **kwargs: Any) -> requests.Response:  # type: ignore[override]
         started = perf_counter()
 
         def operation() -> requests.Response:
-            self.observer.preflight_budget()
-            self.observer.record_model_call()
+            self.observer.admit_model_call()
             return self._transport().post(url, *args, **kwargs)
 
         self.observer.event("model_call_started")
@@ -547,6 +596,15 @@ class InstrumentedSession(requests.Session):
                 message=str(error),
             )
             raise
+        status_code = int(getattr(response, "status_code", 0))
+        if status_code >= 400:
+            self.observer.event(
+                "model_call_failed",
+                severity="error",
+                message=f"HTTP {status_code} from model transport.",
+                status_code=status_code,
+            )
+            return response
         usage: dict[str, Any] = {}
         model = ""
         try:
@@ -575,3 +633,16 @@ class InstrumentedSession(requests.Session):
             cost_usd=cost_usd,
         )
         return response
+
+    def close(self) -> None:
+        """Close every thread-local transport created by this session."""
+
+        with self._transports_lock:
+            self._closed = True
+            transports = tuple(self._transports)
+            self._transports.clear()
+        try:
+            for transport in transports:
+                transport.close()
+        finally:
+            super().close()

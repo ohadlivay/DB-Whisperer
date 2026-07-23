@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Mapping, TextIO
 
 from benchmark_v3.observability import CampaignObserver
@@ -29,11 +29,16 @@ class TerminalProgress:
         stream: TextIO,
         interval: float = 1.0,
     ) -> None:
+        if interval <= 0:
+            raise ValueError("progress interval must be positive")
         self.observer = observer
         self.stream = stream
-        self.interval = interval
+        self.interval = float(interval)
         self._stop = Event()
         self._thread = Thread(target=self._render_loop, daemon=True)
+        self._lifecycle_lock = Lock()
+        self._started = False
+        self._stopped = False
 
     @staticmethod
     def snapshot(status: Mapping[str, Any]) -> str:
@@ -74,10 +79,13 @@ class TerminalProgress:
             return False
 
     def render_once(self) -> None:
+        self._render(final=False)
+
+    def _render(self, *, final: bool) -> None:
         rendered = self.snapshot(self.observer.snapshot())
         try:
             if self._interactive():
-                self.stream.write("\r" + rendered)
+                self.stream.write("\r" + rendered + ("\n" if final else ""))
             else:
                 self.stream.write(rendered + "\n")
             self.stream.flush()
@@ -86,15 +94,37 @@ class TerminalProgress:
             return
 
     def _render_loop(self) -> None:
-        while not self._stop.is_set():
+        while True:
             self.render_once()
-            self._stop.wait(self.interval)
+            if self._stop.wait(self.interval):
+                break
+        self._render(final=True)
 
     def start(self) -> None:
-        if not self._thread.is_alive():
+        with self._lifecycle_lock:
+            if self._stopped:
+                raise RuntimeError(
+                    "TerminalProgress cannot be restarted after it has stopped."
+                )
+            if self._started:
+                return
+            self._started = True
             self._thread.start()
 
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread.is_alive():
-            self._thread.join(timeout=max(self.interval, 0.1) + 0.1)
+        with self._lifecycle_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            started = self._started
+            self._stop.set()
+        if started and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        elif not started:
+            finalizer = Thread(
+                target=self._render,
+                kwargs={"final": True},
+                daemon=True,
+            )
+            finalizer.start()
+            finalizer.join(timeout=1.0)
