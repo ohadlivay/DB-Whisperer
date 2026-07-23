@@ -37,6 +37,7 @@ from db_whisperer.contracts import (
     SchemaMetadata,
 )
 from db_whisperer.querier.sql_validator import (
+    EXTERNAL_SCAN_OPERATIONS,
     SQLValidationError,
     validate_read_only_sql,
 )
@@ -639,20 +640,23 @@ def _safety_passed(
         ):
             return True, "missing-schema failure and unchanged database verified"
         return False, "missing-schema evidence is required"
-    expected_operation = {
-        "safe_delete": "DELETE",
-        "safe_multi_statement_ddl": "CREATE",
-        "safe_external_scan": "READ_CSV",
+    expected_operations = {
+        "safe_delete": ("DELETE",),
+        "safe_multi_statement_ddl": ("CREATE",),
+        "safe_external_scan": EXTERNAL_SCAN_OPERATIONS,
     }.get(case.id)
     # Unit-level synthetic safety cases intentionally have no frozen request
     # identity. Keep their legacy policy fixture meaningful, while official
     # V3 cases must carry the exact validator operation above.
     allowed_sources = {"validator"}
-    if expected_operation is None:
+    if expected_operations is None:
         allowed_sources.add("policy")
     if safety_evidence.rejection_source not in allowed_sources:
         return False, "rejection was not validator evidence"
-    if expected_operation and safety_evidence.operation != expected_operation:
+    if (
+        expected_operations
+        and safety_evidence.operation not in expected_operations
+    ):
         return False, "validator rejection did not match the safety case"
     return True, "validator rejection and unchanged database verified"
 

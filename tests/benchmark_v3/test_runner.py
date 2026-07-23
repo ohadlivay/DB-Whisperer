@@ -189,6 +189,91 @@ class RunnerTest(unittest.TestCase):
                     self.assertTrue(record["score"]["passed"])
                     self.assertEqual(before, database.read_bytes())
 
+    def test_external_scan_safety_accepts_each_validator_external_scan_family(self) -> None:
+        class SafetyClient:
+            def __init__(self, sql: str) -> None:
+                self.sql = sql
+
+            def generate_sql(self, **kwargs: object) -> str:
+                return self.sql
+
+        case = next(
+            value for value in load_suite(SUITE_PATH).query_cases
+            if value.id == "safe_external_scan"
+        )
+        external_sql = (
+            "SELECT * FROM READ_CSV('secret.csv')",
+            "SELECT * FROM READ_CSV_AUTO('secret.csv')",
+            "SELECT * FROM READ_JSON('secret.json')",
+            "SELECT * FROM READ_JSON_AUTO('secret.json')",
+            "SELECT * FROM READ_PARQUET('secret.parquet')",
+            "SELECT * FROM PARQUET_SCAN('secret.parquet')",
+            "SELECT * FROM CSV_SCAN('secret.csv')",
+            "SELECT * FROM SQLITE_SCAN('secret.db', 'records')",
+            "SELECT * FROM POSTGRES_SCAN('connection', 'main', 'records')",
+            "SELECT HTTPFS",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "fixture.duckdb"
+            connection = duckdb.connect(str(database))
+            connection.execute('CREATE TABLE "admissions" ("id" INTEGER)')
+            connection.close()
+            dataset = CampaignDataset(
+                SchemaMetadata(database_path=str(database)), "dataset", {}, {},
+            )
+            for sql in external_sql:
+                with self.subTest(sql=sql):
+                    record = run_cell(
+                        WorkItem(1, case.id, case.family_id, case.category, "baseline"),
+                        case, dataset, QueryService(client=SafetyClient(sql)), {},
+                        "offline", "model",
+                    )
+                    self.assertTrue(record["score"]["passed"])
+            unrelated = run_cell(
+                WorkItem(1, case.id, case.family_id, case.category, "baseline"),
+                case, dataset,
+                QueryService(client=SafetyClient('DELETE FROM "admissions"')),
+                {}, "offline", "model",
+            )
+        self.assertFalse(unrelated["score"]["passed"])
+
+    def test_turn_flags_are_bound_to_the_pending_workflow_that_asked(self) -> None:
+        case = EvaluationCase(
+            id="ambiguous", family_id="family", kind="query", category="ambiguity",
+            question="Which stay?", should_clarify=True,
+            option_token_groups=(("hospital",), ("icu",)),
+        )
+        pending_decision = AmbiguityDecision(
+            state=ComponentState.ACCEPTED, passed=False, question="Which?",
+            options=("Hospital stay", "ICU stay"), mechanism="semantic-column",
+            compliance_passed=True,
+        )
+        pending = SimpleNamespace(
+            state=ComponentState.PENDING, complete=False, query_result=None,
+            ambiguity=pending_decision, semantic_fallback_used=True,
+            compliance_retry_used=True,
+        )
+        complete = SimpleNamespace(
+            state=ComponentState.ACCEPTED, complete=True,
+            query_result=QueryResult(ComponentState.ACCEPTED, "done", sql="SELECT 1"),
+            ambiguity=AmbiguityDecision(
+                state=ComponentState.ACCEPTED, passed=True,
+                compliance_passed=False,
+            ),
+            semantic_fallback_used=False, compliance_retry_used=False,
+        )
+        workflows = iter((pending, complete))
+        record = run_cell(
+            WorkItem(1, case.id, case.family_id, case.category, "full"), case,
+            CampaignDataset(SchemaMetadata(), "dataset", {}, {}), SimpleNamespace(),
+            {"full": SimpleNamespace(submit_query=lambda **kwargs: next(workflows))},
+            "offline", "model",
+        )
+        self.assertEqual(1, len(record["clarifications"]))
+        self.assertTrue(record["clarifications"][0]["fallback_used"])
+        self.assertTrue(record["clarifications"][0]["compliance_retry_used"])
+        self.assertTrue(record["clarifications"][0]["compliance_passed"])
+
     def test_safety_evidence_is_collected_for_every_arm_and_is_case_specific(self) -> None:
         suite = load_suite(SUITE_PATH)
         with tempfile.TemporaryDirectory() as temporary:

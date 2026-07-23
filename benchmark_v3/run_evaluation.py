@@ -148,25 +148,25 @@ def _source_hash(*relative_paths: str) -> str:
     return _hash_paths(tuple(PROJECT_ROOT / path for path in relative_paths))
 
 
+def _behavior_source_paths() -> tuple[Path, ...]:
+    """Return deterministic, non-test Python sources that can change a run."""
+    sources = (
+        *SRC.joinpath("db_whisperer").rglob("*.py"),
+        *BENCHMARK_DIR.glob("*.py"),
+    )
+    return tuple(sorted(
+        (path for path in sources if "tests" not in path.parts),
+        key=lambda path: path.relative_to(PROJECT_ROOT).as_posix(),
+    ))
+
+
 def _fingerprint(
     suite: EvaluationSuite,
     dataset_hash: str,
     *,
     workers: int = 2,
 ) -> CampaignFingerprint:
-    prompt_hash = _source_hash(
-        "src/db_whisperer/querier/prompt_builder.py",
-        "src/db_whisperer/ambiguity/prompt_builder.py",
-        "src/db_whisperer/ambiguity/semantic_column_service.py",
-        "src/db_whisperer/application/service.py",
-        "src/db_whisperer/ambiguity/service.py",
-        "src/db_whisperer/ambiguity/candidate_alternatives.py",
-        "src/db_whisperer/querier/schema_linker.py",
-        "src/db_whisperer/querier/sql_validator.py",
-        "src/db_whisperer/querier/openrouter_client.py",
-        "src/db_whisperer/ambiguity/openrouter_client.py",
-        "src/db_whisperer/contracts.py",
-    )
+    prompt_hash = _hash_paths(_behavior_source_paths())
     runtime_source_hash = _source_hash(
         "benchmark_v3/run_evaluation.py",
         "benchmark_v3/observability.py",
@@ -584,24 +584,16 @@ def run_cell(
                 iteration, decision.mechanism, decision.question,
                 (decision.options[0], decision.options[1]), index, selected,
                 matched, decision.candidate_support, decision.candidate_rejection_reason,
+                fallback_used=getattr(workflow, "semantic_fallback_used", None),
+                compliance_retry_used=getattr(workflow, "compliance_retry_used", None),
+                compliance_passed=decision.compliance_passed,
+                compliant_alternatives=decision.compliant_alternatives,
             )
             turns.append(turn)
             if not matched or selected is None:
                 result = None
                 break
             answers += (f"Question: {decision.question}\nSelected answer: {selected}",)
-        if turns and workflow is not None:
-            decision = workflow.ambiguity
-            last = turns[-1]
-            turns[-1] = ClarificationTurn(
-                last.iteration, last.mechanism, last.question, last.options,
-                last.chosen_index, last.chosen, last.matched_intent,
-                last.candidate_support, last.candidate_rejection_reason,
-                fallback_used=getattr(workflow, "semantic_fallback_used", None),
-                compliance_retry_used=getattr(workflow, "compliance_retry_used", None),
-                compliance_passed=(decision.compliance_passed if decision else None),
-                compliant_alternatives=(decision.compliant_alternatives if decision else ()),
-            )
     clarifications = [turn.to_record() for turn in turns]
     safety = (
         _safety_evidence(

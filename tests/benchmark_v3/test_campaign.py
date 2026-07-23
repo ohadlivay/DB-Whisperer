@@ -21,6 +21,7 @@ from benchmark_v3.run_evaluation import (
     WorkItem,
     _checkpoint_payload,
     _cached_dataset_is_valid,
+    _hash_paths,
     _fingerprint,
     _fingerprint_payload,
     _database_hash,
@@ -30,6 +31,7 @@ from benchmark_v3.run_evaluation import (
     _load_matching_checkpoints,
     run_campaign,
 )
+from benchmark_v3.run_evaluation import BENCHMARK_DIR, PROJECT_ROOT, SRC
 from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
 from benchmark_v3.observability import BudgetStop
 
@@ -164,6 +166,22 @@ class CampaignTest(unittest.TestCase):
             runtime_changed = _fingerprint(suite, "dataset")
         self.assertNotEqual(first, prompt_changed)
         self.assertNotEqual(first, runtime_changed)
+
+    def test_fingerprint_hashes_all_campaign_behavior_sources_deterministically(self) -> None:
+        suite = self._suite()
+        source_paths = tuple(sorted(
+            (
+                *SRC.joinpath("db_whisperer").rglob("*.py"),
+                *BENCHMARK_DIR.glob("*.py"),
+            ),
+            key=lambda path: path.as_posix(),
+        ))
+        fingerprint = _fingerprint(suite, "dataset")
+        self.assertEqual(_hash_paths(source_paths), fingerprint.prompt_hash)
+        relative = {path.relative_to(PROJECT_ROOT).as_posix() for path in source_paths}
+        self.assertIn("src/db_whisperer/ambiguity/semantic_column_prompt_builder.py", relative)
+        self.assertIn("src/db_whisperer/querier/relationship_connectivity.py", relative)
+        self.assertIn("benchmark_v3/sql_analysis.py", relative)
 
     def test_campaign_metadata_exists_before_the_first_cell_runs_and_warnings_propagate(self) -> None:
         suite = self._suite()
