@@ -12,6 +12,9 @@ COMPATIBILITY_FIELDS = (
     "scorer_version", "candidate_count", "arms", "runtime_hash",
 )
 UNRESOLVED_STATES = {"", "missing", "pending", "running", "resuming"}
+_DISTRIBUTION_FIELDS = {
+    "mean", "stddev", "min", "max", "confidence_interval_95",
+}
 
 
 def _metadata(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -46,11 +49,30 @@ def _finite(value: Any, path: str) -> None:
             _finite(item, f"{path}[{index}]")
 
 
-def _expected_items() -> set[tuple[str, str]]:
+def _published_distributions(value: Any, path: str) -> None:
+    if not isinstance(value, Mapping):
+        return
+    if "mean" in value or "confidence_interval_95" in value:
+        if not _DISTRIBUTION_FIELDS <= set(value):
+            raise ValueError(f"published distribution is missing fields: {path}")
+        interval = value["confidence_interval_95"]
+        if not isinstance(interval, list) or len(interval) != 2:
+            raise ValueError(f"published distribution interval is invalid: {path}")
+    for key, item in value.items():
+        _published_distributions(item, f"{path}.{key}")
+
+
+def _expected_graph() -> dict[tuple[str, str], tuple[str, str]]:
     suite = load_suite(DEFAULT_SUITE)
     return {
-        *((case.id, arm) for case in suite.query_cases for arm in ARMS),
-        *((case.id, "etl") for case in suite.etl_cases),
+        **{
+            (case.id, arm): (case.family_id, case.category)
+            for case in suite.query_cases for arm in ARMS
+        },
+        **{
+            (case.id, "etl"): (case.family_id, case.category)
+            for case in suite.etl_cases
+        },
     }
 
 
@@ -63,7 +85,7 @@ def validate_reports(
         raise ValueError("five complete compatible repetitions are required")
     if campaign is not None and campaign.get("complete") is not True:
         raise ValueError("campaign has unresolved incomplete state")
-    expected = _expected_items()
+    expected = _expected_graph()
     baseline: dict[str, Any] | None = None
     repetitions: set[int] = set()
     for report in reports:
@@ -80,6 +102,8 @@ def validate_reports(
             baseline = metadata
         elif any(metadata[field] != baseline[field] for field in COMPATIBILITY_FIELDS):
             raise ValueError("V3 reports have incompatible fingerprints")
+        if campaign is not None and campaign.get("fingerprint") != report.get("fingerprint"):
+            raise ValueError("campaign fingerprint is incompatible with run report")
         records = report.get("records")
         if not isinstance(records, list):
             raise ValueError("run report records are missing")
@@ -89,8 +113,12 @@ def validate_reports(
                 raise ValueError("run record is invalid")
             key = (record.get("case_id"), record.get("arm"))
             if key not in expected or key in seen:
-                raise ValueError("run report expected work items are missing or duplicated")
+                raise ValueError("run report expected work graph is missing or duplicated")
             seen.add(key)
+            if (
+                record.get("family_id"), record.get("category")
+            ) != expected[key]:
+                raise ValueError("run report expected work graph is incompatible")
             if record.get("run") != repetition:
                 raise ValueError("run record identity is incompatible")
             result = record.get("result")
@@ -103,8 +131,8 @@ def validate_reports(
                 raise ValueError("run record passed score is missing")
             _finite(score, "score")
             _finite(record.get("duration_seconds"), "duration_seconds")
-        if seen != expected:
-            raise ValueError("run report expected work items are missing")
+        if seen != set(expected):
+            raise ValueError("run report expected work graph is missing")
         _finite(report.get("usage", {}), "usage")
     if repetitions != {1, 2, 3, 4, 5}:
         raise ValueError("five complete compatible repetitions are required")
@@ -124,5 +152,12 @@ def validate_aggregate(payload: Mapping[str, Any]) -> None:
         raise ValueError("aggregate campaign evidence is missing")
     validate_reports(reports, campaign)
     _finite(payload.get("arms"), "arms")
+    _finite(payload.get("arm_deltas"), "arm_deltas")
+    _finite(payload.get("shared_etl"), "shared_etl")
     _finite(payload.get("usage"), "usage")
     _finite(payload.get("operational"), "operational")
+    if "shared_etl" not in payload or "arm_deltas" not in payload:
+        raise ValueError("published distribution is missing")
+    _published_distributions(payload["shared_etl"], "shared_etl")
+    _published_distributions(payload["arms"], "arms")
+    _published_distributions(payload["arm_deltas"], "arm_deltas")

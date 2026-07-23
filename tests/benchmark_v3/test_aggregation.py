@@ -8,6 +8,9 @@ import unittest
 import benchmark_v3.aggregate_results as aggregation
 from benchmark_v3.contracts import load_suite
 from benchmark_v3.run_evaluation import ARMS, DEFAULT_SUITE
+from benchmark_v3.scoring import summarize_arm
+from benchmark_v3.report_model import build_report_model
+from benchmark_v3.aggregate_results import bootstrap_ci
 
 
 def _score(*, passed: bool, recall: bool, oracle: bool = False) -> dict[str, object]:
@@ -51,6 +54,7 @@ def _report(repetition: int, *, macro_fixture: bool = False) -> dict[str, object
                 oracle=(case.id == "count_admissions" and arm == "full"),
             )
             score["ambiguity"]["applicable"] = applicable  # type: ignore[index]
+            score["ambiguity"]["expected"] = case.category == "ambiguity"  # type: ignore[index]
             records.append({
                 "run": repetition, "case_id": case.id, "family_id": case.family_id,
                 "category": case.category, "arm": arm, "clarifications": [],
@@ -80,6 +84,10 @@ def write_campaign(directory: Path, *, reports: int = 5, macro_fixture: bool = F
         "complete": reports == 5,
         "fingerprint": payloads[0]["fingerprint"],
         "records": [record for payload in payloads for record in payload["records"]],
+    }))
+    (directory / "status.json").write_text(json.dumps({
+        "model_calls": 20, "retries": 5, "prompt_tokens": 100,
+        "completion_tokens": 40, "cost_usd": 0.1, "elapsed_seconds": 12.0,
     }))
 
 
@@ -113,6 +121,44 @@ class AggregationTest(unittest.TestCase):
         self.assertTrue(aggregate["failures"])
         self.assertTrue(aggregate["oracle_reviews"])
         self.assertEqual(20, aggregate["usage"]["model_calls"])
+        self.assertEqual("campaign_global", aggregate["usage"]["scope"])
         self.assertIn("latency_seconds", aggregate["arms"]["full"])
-        self.assertEqual(0.02, aggregate["operational"]["cost_usd"]["mean"])
-        self.assertEqual(1.0, aggregate["operational"]["retries"]["mean"])
+        self.assertEqual(0.1, aggregate["operational"]["metrics"]["cost_usd"])
+        self.assertEqual(5, aggregate["operational"]["metrics"]["retries"])
+
+    def test_matches_frozen_summarize_arm_semantics_and_report_model_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            aggregate = self._aggregate(directory)
+        report = aggregate["run_reports"][0]
+        rows = [row for row in report["records"] if row["arm"] == "full"]
+        etl = [row["score"]["score"] for row in report["records"] if row["arm"] == "etl"]
+        summary = summarize_arm(rows, sum(etl) / len(etl))
+        self.assertEqual(
+            summary["composite"],
+            aggregate["arms"]["full"]["composite"]["mean"],
+        )
+        self.assertEqual(
+            summary["ambiguity_metrics"]["false_positive_rate"] * 100,
+            aggregate["arms"]["full"]["ambiguity_metrics"]["false_positive_rate"]["mean"],
+        )
+        model = build_report_model(aggregate)
+        self.assertTrue({"methodology", "headline_metrics", "arm_cards", "charts", "tables", "findings", "limitations", "cases", "evidence", "ambiguity_funnel", "operations", "warnings"} <= set(model))
+
+    def test_bootstrap_interval_uses_question_family_units_not_run_means(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            aggregate = self._aggregate(directory)
+        run_values = [
+            summarize_arm(
+                [row for row in report["records"] if row["arm"] == "full"],
+                1.0,
+            )["composite"]
+            for report in aggregate["run_reports"]
+        ]
+        self.assertNotEqual(
+            list(bootstrap_ci(run_values)),
+            aggregate["arms"]["full"]["composite"]["confidence_interval_95"],
+        )

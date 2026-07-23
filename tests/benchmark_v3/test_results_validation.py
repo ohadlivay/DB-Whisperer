@@ -48,6 +48,46 @@ class ResultsValidationTest(unittest.TestCase):
             directory = Path(temporary)
             write_campaign(directory)
             payload = self._aggregate(directory)
-        payload["operational"]["cost_usd"]["mean"] = float("inf")
+        payload["operational"]["metrics"]["cost_usd"] = float("inf")
         with self.assertRaisesRegex(ValueError, "finite"):
+            aggregation.validate_aggregate(payload)
+
+    def test_rejects_campaign_fingerprint_and_work_graph_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            campaign_path = directory / "campaign.json"
+            campaign = json.loads(campaign_path.read_text())
+            campaign["fingerprint"]["runtime_hash"] = "tampered"
+            campaign_path.write_text(json.dumps(campaign))
+            with self.assertRaisesRegex(ValueError, "fingerprint"):
+                self._aggregate(directory)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            report["records"][0]["family_id"] = "tampered"
+            report_path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "work graph"):
+                self._aggregate(directory)
+
+    def test_rejects_nonfinite_authoritative_status_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            status_path = directory / "status.json"
+            status = json.loads(status_path.read_text())
+            status["cost_usd"] = "not-a-number"
+            status_path.write_text(json.dumps(status))
+            with self.assertRaisesRegex(ValueError, "usage"):
+                self._aggregate(directory)
+
+    def test_rejects_missing_published_distribution_or_interval(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            payload = self._aggregate(directory)
+        del payload["shared_etl"]["confidence_interval_95"]
+        with self.assertRaisesRegex(ValueError, "distribution"):
             aggregation.validate_aggregate(payload)
