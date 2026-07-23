@@ -83,6 +83,15 @@ class ReportingTest(unittest.TestCase):
         ):
             self.assertIn(contract, rendered)
 
+    def test_report_layout_keeps_mobile_metrics_clear_and_tabs_scrollable(self) -> None:
+        rendered = render_one_page(fixture_model()) + render_full_report(fixture_model())
+        for contract in (
+            ".tablist{display:flex;min-width:0;flex:1 1 auto;overflow-x:auto",
+            ".numbers{margin:18px 0 30px}",
+            ".tablist{order:2;flex-basis:100%}",
+        ):
+            self.assertIn(contract, rendered)
+
     def test_model_evidence_is_escaped_and_rendering_does_not_mutate_it(self) -> None:
         model = fixture_model(); case = model["cases"][0]
         case.update({"question": "<script>alert(1)</script>", "expected_sql": "SELECT '<b>expected</b>'"})
