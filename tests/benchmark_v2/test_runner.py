@@ -5,10 +5,17 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from benchmark_v2.run_evaluation import load_env_file
+from benchmark_v2.run_evaluation import build_services, load_env_file
 
 
 class RunnerConfigurationTest(unittest.TestCase):
+    def test_build_services_reports_v2_runner_retirement(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "preserved historical experiment.*no longer runnable after join-path ambiguity removal.*benchmark_v3",
+        ):
+            build_services(observer=None, candidate_count=2)
+
     def test_load_env_supports_local_key_without_overriding_shell(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / ".env"

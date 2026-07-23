@@ -1,5 +1,9 @@
 # DBWhisperer Evaluation V2
 
+> **Retired:** Evaluation V2 is a preserved historical experiment and is no
+> longer runnable after join-path ambiguity removal. Use `benchmark_v3`
+> instead.
+
 Evaluation V2 is isolated from the historical `benchmark/` directory. It runs
 five deterministic-scoring repetitions of an 18-case MIMIC suite across the
 baseline, candidate-only, join-only, semantic-only, and full DBWhisperer arms.

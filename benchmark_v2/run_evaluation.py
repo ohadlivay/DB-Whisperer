@@ -21,12 +21,6 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from db_whisperer.ambiguity import (  # noqa: E402
-    AmbiguityService,
-    JoinPathAmbiguityService,
-    SemanticColumnAmbiguityService,
-)
-from db_whisperer.ambiguity.openrouter_client import AmbiguityOpenRouterClient  # noqa: E402
 from db_whisperer.application import ApplicationService  # noqa: E402
 from db_whisperer.contracts import (  # noqa: E402
     ComponentState,
@@ -42,7 +36,6 @@ from db_whisperer.querier.openrouter_client import OpenRouterClient  # noqa: E40
 from benchmark_v2.contracts import EvaluationCase, EvaluationSuite, load_suite  # noqa: E402
 from benchmark_v2.observability import (  # noqa: E402
     CampaignObserver,
-    InstrumentedSession,
     atomic_json,
     utc_now,
 )
@@ -63,6 +56,10 @@ ARMS = (
     "join_only",
     "semantic_only",
     "full",
+)
+V2_RETIRED_MESSAGE = (
+    "Evaluation V2 is a preserved historical experiment and is no longer runnable "
+    "after join-path ambiguity removal. Use benchmark_v3 instead."
 )
 
 
@@ -114,31 +111,7 @@ def expected_result(case: EvaluationCase, query: QueryService, database_path: st
 
 
 def build_services(observer: CampaignObserver, candidate_count: int) -> tuple[QueryService, dict[str, ApplicationService]]:
-    session = InstrumentedSession(observer)
-    prompt_logger = observer.prompt_logger
-    query_client = OpenRouterClient(session=session, prompt_logger=prompt_logger)
-    query = QueryService(client=query_client, max_result_rows=1000)
-    ambiguity_client = AmbiguityOpenRouterClient(session=session, prompt_logger=prompt_logger)
-
-    def application(join: bool, semantic: bool) -> ApplicationService:
-        return ApplicationService(
-            querier=query,
-            ambiguity=AmbiguityService(client=ambiguity_client),
-            join_path=JoinPathAmbiguityService(client=ambiguity_client),
-            semantic_column=SemanticColumnAmbiguityService(client=ambiguity_client),
-            event_logger=prompt_logger,
-            candidates_per_iteration=candidate_count,
-            max_parallel_candidates=candidate_count,
-            enable_join_path_detection=join,
-            enable_semantic_column_detection=semantic,
-        )
-
-    return query, {
-        "candidate_only": application(False, False),
-        "join_only": application(True, False),
-        "semantic_only": application(False, True),
-        "full": application(True, True),
-    }
+    raise RuntimeError(V2_RETIRED_MESSAGE)
 
 
 def run_baseline(case: EvaluationCase, schema: Any, query: QueryService, api_key: str, model: str) -> QueryResult:
