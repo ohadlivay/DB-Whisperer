@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import random
 import re
+import shutil
 import stat
 import sys
 from threading import Lock, local
@@ -134,6 +135,7 @@ class CampaignResult:
     completed_keys: frozenset[str]
     records: tuple[dict[str, Any], ...]
     stopped_for_budget: bool = False
+    published: bool = False
 
 
 def _hash_paths(paths: tuple[Path, ...]) -> str:
@@ -837,10 +839,41 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
             "relationship_warnings": warnings,
         })
     atomic_json(campaign_path, payload)
+    published = False
     if payload["complete"] and config.suite.repetitions == OFFICIAL_REPETITIONS and len(records) == OFFICIAL_RECORD_COUNT:
-        if not publish_campaign(config.campaign_dir):
+        published = publish_campaign(config.campaign_dir)
+        if not published:
             stopped = True
-    return CampaignResult(fingerprint, frozenset(completed), tuple(records), stopped)
+    return CampaignResult(fingerprint, frozenset(completed), tuple(records), stopped, published)
+
+
+def _replace_staged(source: Path, target: Path) -> Path:
+    """Promotion seam kept separate from rollback for injected-failure tests."""
+    return source.replace(target)
+
+
+def _promote_publication(staged: tuple[Path, Path, Path], targets: tuple[Path, Path, Path], stage_dir: Path) -> None:
+    backups = stage_dir / "backups"
+    backups.mkdir()
+    backup_paths: dict[Path, Path | None] = {}
+    for index, target in enumerate(targets):
+        if target.exists():
+            backup = backups / f"{index}-{target.name}"
+            shutil.copy2(target, backup)
+            backup_paths[target] = backup
+        else:
+            backup_paths[target] = None
+    try:
+        for source, target in zip(staged, targets, strict=True):
+            _replace_staged(source, target)
+    except Exception:
+        for target in targets:
+            backup = backup_paths[target]
+            if backup is not None and backup.exists():
+                os.replace(backup, target)
+            elif target.exists():
+                target.unlink()
+        raise
 
 
 def publish_campaign(
@@ -863,6 +896,7 @@ def publish_campaign(
         return False
     one_page_path = one_page_path or PROJECT_ROOT / "docs" / "evaluation_method_one_page.html"
     full_report_path = full_report_path or PROJECT_ROOT / "docs" / "evaluation_report.html"
+    stage_dir = campaign_dir / f".publication-{os.getpid()}-{datetime.now(timezone.utc).strftime('%f')}"
     try:
         from benchmark_v3.aggregate_results import aggregate_campaign, validate_aggregate
         from benchmark_v3.render_report import write_reports
@@ -870,14 +904,28 @@ def publish_campaign(
         aggregate = aggregate_campaign(campaign_dir)
         validate_aggregate(aggregate)
         aggregate_path = campaign_dir / "aggregate.json"
-        atomic_json(aggregate_path, aggregate)
-        write_reports(aggregate_path, one_page_path, full_report_path)
+        stage_dir.mkdir(parents=True, exist_ok=False)
+        staged_aggregate = stage_dir / "aggregate.json"
+        staged_one_page = stage_dir / one_page_path.name
+        staged_full_report = stage_dir / full_report_path.name
+        atomic_json(staged_aggregate, aggregate)
+        write_reports(staged_aggregate, staged_one_page, staged_full_report)
+        _promote_publication(
+            (staged_aggregate, staged_one_page, staged_full_report),
+            (aggregate_path, one_page_path, full_report_path),
+            stage_dir,
+        )
+        campaign["published"] = True
+        campaign.pop("latest_error", None)
+        atomic_json(campaign_path, campaign)
         return True
     except Exception as error:
         campaign["complete"] = False
         campaign["latest_error"] = f"publication failed: {error}"
         atomic_json(campaign_path, campaign)
         return False
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
 
 
 def _campaign_directory(campaign_id: str | None) -> Path:
@@ -904,7 +952,9 @@ def main() -> None:
     except ValueError as error:
         raise SystemExit(str(error)) from error
     suite = replace(load_suite(args.suite), repetitions=args.repetitions)
-    run_campaign(CampaignConfig(suite, campaign_dir, api_key, args.workers))
+    result = run_campaign(CampaignConfig(suite, campaign_dir, api_key, args.workers))
+    if args.repetitions != OFFICIAL_REPETITIONS or not result.published or result.stopped_for_budget:
+        raise SystemExit("Campaign did not complete and publish the official five-repetition result.")
 
 
 if __name__ == "__main__":

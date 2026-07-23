@@ -18,6 +18,7 @@ from benchmark_v3.run_evaluation import (
     CampaignConfig,
     CampaignDataset,
     CampaignFingerprint,
+    CampaignResult,
     WorkItem,
     _checkpoint_payload,
     _cached_dataset_is_valid,
@@ -31,6 +32,8 @@ from benchmark_v3.run_evaluation import (
     _load_matching_checkpoints,
     run_campaign,
     publish_campaign,
+    main,
+    _replace_staged,
     _campaign_directory,
 )
 from benchmark_v3.run_evaluation import BENCHMARK_DIR, DEFAULT_OUTPUT, PROJECT_ROOT, SRC
@@ -131,10 +134,34 @@ class CampaignTest(unittest.TestCase):
             directory = Path(temporary); public = directory / "public"; public.mkdir()
             (directory / "campaign.json").write_text(json.dumps({"complete": True, "repetitions": 5, "records": [{}] * 450}))
             aggregate = {"validated": True}
-            with patch("benchmark_v3.aggregate_results.aggregate_campaign", return_value=aggregate), patch("benchmark_v3.aggregate_results.validate_aggregate") as validate, patch("benchmark_v3.render_report.write_reports", return_value=(public / "evaluation_method_one_page.html", public / "evaluation_report.html")) as write:
+            def render_staged(_: Path, staged_one: Path, staged_full: Path) -> tuple[Path, Path]:
+                staged_one.write_text("new one"); staged_full.write_text("new full")
+                return staged_one, staged_full
+            with patch("benchmark_v3.aggregate_results.aggregate_campaign", return_value=aggregate), patch("benchmark_v3.aggregate_results.validate_aggregate") as validate, patch("benchmark_v3.render_report.write_reports", side_effect=render_staged) as write:
                 self.assertTrue(publish_campaign(directory, one_page_path=public / "evaluation_method_one_page.html", full_report_path=public / "evaluation_report.html"))
             self.assertEqual(aggregate, json.loads((directory / "aggregate.json").read_text()))
             validate.assert_called_once_with(aggregate); write.assert_called_once()
+
+    def test_publication_rolls_back_every_artifact_when_second_or_third_promotion_fails(self) -> None:
+        for failed_promotion in (2, 3):
+            with self.subTest(failed_promotion=failed_promotion), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary); public = directory / "public"; public.mkdir()
+                aggregate_path = directory / "aggregate.json"; one_page = public / "evaluation_method_one_page.html"; full = public / "evaluation_report.html"
+                aggregate_path.write_bytes(b"old aggregate"); one_page.write_bytes(b"old one"); full.write_bytes(b"old full")
+                before = tuple(path.read_bytes() for path in (aggregate_path, one_page, full))
+                (directory / "campaign.json").write_text(json.dumps({"complete": True, "repetitions": 5, "records": [{}] * 450}))
+                calls = 0
+                def render_staged(_: Path, staged_one: Path, staged_full: Path) -> tuple[Path, Path]:
+                    staged_one.write_text("new one"); staged_full.write_text("new full")
+                    return staged_one, staged_full
+                def replace(source: Path, target: Path) -> Path:
+                    nonlocal calls
+                    calls += 1
+                    if calls == failed_promotion: raise OSError("injected promotion failure")
+                    return source.replace(target)
+                with patch("benchmark_v3.aggregate_results.aggregate_campaign", return_value={"new": True}), patch("benchmark_v3.aggregate_results.validate_aggregate"), patch("benchmark_v3.render_report.write_reports", side_effect=render_staged), patch("benchmark_v3.run_evaluation._replace_staged", side_effect=replace):
+                    self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
+                self.assertEqual(before, tuple(path.read_bytes() for path in (aggregate_path, one_page, full)))
 
     def test_publication_error_preserves_public_reports_and_marks_campaign_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -152,6 +179,18 @@ class CampaignTest(unittest.TestCase):
         self.assertEqual(DEFAULT_OUTPUT / "official-20260723", _campaign_directory("official-20260723"))
         with self.assertRaises(ValueError):
             _campaign_directory("../unsafe")
+
+    def test_main_exits_nonzero_when_campaign_is_not_published(self) -> None:
+        result = CampaignResult(CampaignFingerprint("suite", "data", "model", "prompt", "scorer", 3, (), "runtime"), frozenset(), (), published=False)
+        with patch("benchmark_v3.run_evaluation.run_campaign", return_value=result), patch("benchmark_v3.run_evaluation.os.getenv", return_value="key"), patch("sys.argv", ["run_evaluation", "--campaign-id", "smoke"]):
+            with self.assertRaisesRegex(SystemExit, "did not complete"):
+                main()
+
+    def test_external_launcher_uses_only_project_virtualenv_python(self) -> None:
+        launcher = (BENCHMARK_DIR / "run_official_evaluation.cmd").read_text(encoding="utf-8")
+        self.assertIn(".venv\\Scripts\\python.exe", launcher)
+        self.assertNotIn("\n  python -m", launcher)
+        self.assertIn("No project virtualenv Python", launcher)
 
     def test_budget_stop_drains_admitted_cells_without_new_submissions(self) -> None:
         suite = self._suite(repetitions=2)

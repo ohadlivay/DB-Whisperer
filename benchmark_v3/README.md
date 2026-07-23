@@ -53,9 +53,11 @@ python -m benchmark_v3.run_evaluation --campaign-id official-20260723 --workers 
 Campaigns live under `benchmark_v3/results/runs/<campaign-id>`. Checkpoints
 and raw run reports are retained. Only a complete, valid five-repetition
 official campaign (450 records: 440 query cells and 10 ETL observations)
-publishes `aggregate.json` and atomically replaces the two public V3 HTML
-reports. Incomplete, budget-stopped, or errored campaigns never replace the
-public reports; the campaign records `latest_error` if publication fails.
+stages `aggregate.json` and both HTML files, then promotes all three with
+backups and rollback. Incomplete, budget-stopped, or errored campaigns never
+replace the public reports; a failed promotion restores the prior aggregate and
+report bytes and records `latest_error`. Runs with fewer than five repetitions
+are nonpublishing validation/smoke artifacts and the CLI exits nonzero.
 
 The campaign runner uses the four arms `baseline`, `candidate_only`,
 `semantic_only`, and `full`. Baseline generates one candidate; the ambiguity
