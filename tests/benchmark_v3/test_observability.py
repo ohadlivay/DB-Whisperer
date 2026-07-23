@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import random
 import tempfile
@@ -267,6 +268,52 @@ class CampaignObserverTest(unittest.TestCase):
                         observer.status["latest_error"],
                     )
                     self.assertIn("invalid provider usage", observer.status["latest_error"])
+
+    def test_huge_provider_usage_fails_closed_with_secret_safe_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            session = InstrumentedSession(observer, attempts=1)
+            response = SimpleNamespace(
+                status_code=200,
+                text="Authorization: Bearer provider-body-secret",
+                json=lambda: {
+                    "usage": {
+                        "prompt_tokens": 10 ** 10000,
+                        "completion_tokens": 0,
+                        "cost": 0.1,
+                    },
+                    "model": "model",
+                },
+            )
+            transport = SimpleNamespace(post=lambda *args, **kwargs: response)
+
+            with patch.object(session, "_transport", return_value=transport):
+                with self.assertRaises(UsageValidationError):
+                    session.post("https://example.invalid")
+
+            self.assertEqual(0.0, observer.status["cost_usd"])
+            self.assertEqual("invalid provider usage", observer.status["latest_error"])
+            self.assertNotIn("provider-body-secret", observer.status["latest_error"])
+
+    def test_usage_total_overflow_fails_without_mutating_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            observer.record_usage(
+                prompt_tokens=1,
+                completion_tokens=1,
+                cost_usd=1e308,
+            )
+            before = observer.snapshot()
+
+            with self.assertRaises(UsageValidationError):
+                observer.record_usage(
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    cost_usd=1e308,
+                )
+
+            self.assertEqual(before, observer.status)
+            self.assertTrue(math.isfinite(observer.status["cost_usd"]))
 
     def test_resume_clears_stale_active_cells(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -213,22 +213,29 @@ def _load_checkpoint_results(
     return results
 
 
-def _nonnegative_token_count(value: Any, field: str) -> int:
+def _validated_nonnegative_number(value: Any, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise UsageValidationError(f"invalid provider usage: {field}")
-    numeric = float(value)
-    if not math.isfinite(numeric) or numeric < 0 or not numeric.is_integer():
+    try:
+        numeric = float(value)
+    except (OverflowError, TypeError, ValueError) as error:
+        raise UsageValidationError(
+            f"invalid provider usage: {field}"
+        ) from error
+    if not math.isfinite(numeric) or numeric < 0:
+        raise UsageValidationError(f"invalid provider usage: {field}")
+    return numeric
+
+
+def _nonnegative_token_count(value: Any, field: str) -> int:
+    numeric = _validated_nonnegative_number(value, field)
+    if not numeric.is_integer():
         raise UsageValidationError(f"invalid provider usage: {field}")
     return int(numeric)
 
 
 def _nonnegative_cost(value: Any) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise UsageValidationError("invalid provider usage: cost_usd")
-    numeric = float(value)
-    if not math.isfinite(numeric) or numeric < 0:
-        raise UsageValidationError("invalid provider usage: cost_usd")
-    return numeric
+    return _validated_nonnegative_number(value, "cost_usd")
 
 
 def _provider_usage(response: requests.Response) -> tuple[int, int, float, str]:
@@ -556,19 +563,23 @@ class CampaignObserver:
         )
         validated_cost = _nonnegative_cost(cost_usd)
         with self._lock:
+            total_prompt_tokens = _nonnegative_token_count(
+                int(self.status.get("prompt_tokens", 0))
+                + validated_prompt_tokens,
+                "prompt_tokens total",
+            )
+            total_completion_tokens = _nonnegative_token_count(
+                int(self.status.get("completion_tokens", 0))
+                + validated_completion_tokens,
+                "completion_tokens total",
+            )
+            total_cost = _nonnegative_cost(
+                float(self.status.get("cost_usd", 0.0)) + validated_cost
+            )
             self._publish_locked(
-                prompt_tokens=(
-                    int(self.status.get("prompt_tokens", 0))
-                    + validated_prompt_tokens
-                ),
-                completion_tokens=(
-                    int(self.status.get("completion_tokens", 0))
-                    + validated_completion_tokens
-                ),
-                cost_usd=round(
-                    float(self.status.get("cost_usd", 0.0)) + validated_cost,
-                    8,
-                ),
+                prompt_tokens=total_prompt_tokens,
+                completion_tokens=total_completion_tokens,
+                cost_usd=round(total_cost, 8),
             )
 
 
