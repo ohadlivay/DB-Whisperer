@@ -27,6 +27,20 @@ class SQLAnalysisTest(unittest.TestCase):
         self.assertTrue(analysis.has_order)
         self.assertEqual(5, analysis.limit)
 
+    def test_normalizes_outer_order_expressions_directions_and_offset(
+        self,
+    ) -> None:
+        analysis = analyze_sql(
+            "SELECT subject_id AS patient FROM admissions "
+            "ORDER BY patient, admittime DESC LIMIT 5 OFFSET 3"
+        )
+
+        self.assertEqual(
+            (("subject_id", "asc"), ("admittime", "desc")),
+            analysis.order_by,
+        )
+        self.assertEqual(3, analysis.offset)
+
     def test_excludes_cte_aliases_and_preserves_first_seen_identifier_order(
         self,
     ) -> None:

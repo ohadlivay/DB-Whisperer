@@ -18,23 +18,61 @@ class SQLAnalysis:
     join_count: int
     has_order: bool
     limit: int | None
+    order_by: tuple[tuple[str, str], ...] = ()
+    offset: int | None = None
 
 
 def _first_seen(values: object) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))  # type: ignore[arg-type]
 
 
-def _outer_limit(tree: exp.Expression) -> int | None:
-    limit = tree.args.get("limit")
-    if not isinstance(limit, exp.Limit):
+def _outer_integer(
+    tree: exp.Expression,
+    name: str,
+    expected_type: type[exp.Expression],
+) -> int | None:
+    clause = tree.args.get(name)
+    if not isinstance(clause, expected_type):
         return None
-    expression = limit.expression
+    expression = clause.args.get("expression")
     if not isinstance(expression, exp.Literal) or expression.is_string:
         return None
     try:
         return int(expression.this)
     except (TypeError, ValueError):
         return None
+
+
+def _normalized_expression(expression: exp.Expression) -> str:
+    copied = expression.copy()
+    for column in copied.find_all(exp.Column):
+        column.set("catalog", None)
+        column.set("db", None)
+        column.set("table", None)
+    return copied.sql(dialect="duckdb", normalize=True).casefold()
+
+
+def _outer_order_by(tree: exp.Expression) -> tuple[tuple[str, str], ...]:
+    order = tree.args.get("order")
+    if not isinstance(order, exp.Order):
+        return ()
+    aliases = {
+        expression.alias.casefold(): expression.this
+        for expression in tree.expressions
+        if isinstance(expression, exp.Alias) and expression.alias
+    }
+    normalized: list[tuple[str, str]] = []
+    for ordered in order.expressions:
+        expression = ordered.this
+        if isinstance(expression, exp.Column) and not expression.table:
+            expression = aliases.get(expression.name.casefold(), expression)
+        normalized.append(
+            (
+                _normalized_expression(expression),
+                "desc" if ordered.args.get("desc") else "asc",
+            )
+        )
+    return tuple(normalized)
 
 
 def _has_cte_ancestor(expression: exp.Expression) -> bool:
@@ -90,5 +128,7 @@ def analyze_sql(sql: str) -> SQLAnalysis:
         aliases=aliases,
         join_count=sum(1 for _ in tree.find_all(exp.Join)),
         has_order=tree.args.get("order") is not None,
-        limit=_outer_limit(tree),
+        limit=_outer_integer(tree, "limit", exp.Limit),
+        order_by=_outer_order_by(tree),
+        offset=_outer_integer(tree, "offset", exp.Offset),
     )
