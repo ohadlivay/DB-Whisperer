@@ -13,7 +13,7 @@
       "kind": "query",
       "category": "ambiguity",
       "capabilities": ["date_arithmetic", "ordering"],
-      "question": "Show me the patients from 2024.",
+      "question": "Show me patients from the year 2112.",
       "ambiguous": true,
       "should_clarify": true,
       "expected_mechanism": "semantic-column",
@@ -22,10 +22,10 @@
       "required_tables": ["patients"],
       "forbidden_tables": ["admissions"],
       "required_column_groups": [["subject_id"], ["dob"]],
-      "expected_sql": "SELECT subject_id, dob FROM patients WHERE EXTRACT(YEAR FROM dob) = 2024 ORDER BY subject_id",
+      "expected_sql": "SELECT subject_id, dob FROM patients WHERE EXTRACT(YEAR FROM dob) = 2112 ORDER BY subject_id",
       "reference": {
         "comparison_mode": "ordered",
-        "required_filters": ["EXTRACT(YEAR FROM dob) = 2024"],
+        "required_filters": ["EXTRACT(YEAR FROM dob) = 2112"],
         "ordered": true
       }
     },
@@ -35,7 +35,7 @@
       "kind": "query",
       "category": "ambiguity",
       "capabilities": ["date_arithmetic", "ordering"],
-      "question": "Show me the patients from 2024.",
+      "question": "Show me patients from the year 2112.",
       "ambiguous": true,
       "should_clarify": true,
       "expected_mechanism": "semantic-column",
@@ -44,10 +44,10 @@
       "required_tables": ["admissions"],
       "forbidden_tables": ["patients"],
       "required_column_groups": [["subject_id"], ["admittime"]],
-      "expected_sql": "SELECT subject_id, hadm_id, admittime FROM admissions WHERE EXTRACT(YEAR FROM admittime) = 2024 ORDER BY subject_id, hadm_id",
+      "expected_sql": "SELECT subject_id, hadm_id, admittime FROM admissions WHERE EXTRACT(YEAR FROM admittime) = 2112 ORDER BY subject_id, hadm_id",
       "reference": {
         "comparison_mode": "ordered",
-        "required_filters": ["EXTRACT(YEAR FROM admittime) = 2024"],
+        "required_filters": ["EXTRACT(YEAR FROM admittime) = 2112"],
         "ordered": true
       }
     },
@@ -57,15 +57,15 @@
       "kind": "query",
       "category": "control",
       "capabilities": ["date_arithmetic", "ordering"],
-      "question": "Show patients whose birth year is 2024.",
+      "question": "Show patients born in the year 2112.",
       "intent_id": "birth_year",
       "required_tables": ["patients"],
       "forbidden_tables": ["admissions"],
       "required_column_groups": [["subject_id"], ["dob"]],
-      "expected_sql": "SELECT subject_id, dob FROM patients WHERE EXTRACT(YEAR FROM dob) = 2024 ORDER BY subject_id",
+      "expected_sql": "SELECT subject_id, dob FROM patients WHERE EXTRACT(YEAR FROM dob) = 2112 ORDER BY subject_id",
       "reference": {
         "comparison_mode": "ordered",
-        "required_filters": ["EXTRACT(YEAR FROM dob) = 2024"],
+        "required_filters": ["EXTRACT(YEAR FROM dob) = 2112"],
         "ordered": true
       }
     },
@@ -75,15 +75,15 @@
       "kind": "query",
       "category": "control",
       "capabilities": ["date_arithmetic", "ordering"],
-      "question": "Show patients admitted during 2024.",
+      "question": "Show patients admitted in the year 2112.",
       "intent_id": "admission_year",
       "required_tables": ["admissions"],
       "forbidden_tables": ["patients"],
       "required_column_groups": [["subject_id"], ["admittime"]],
-      "expected_sql": "SELECT subject_id, hadm_id, admittime FROM admissions WHERE EXTRACT(YEAR FROM admittime) = 2024 ORDER BY subject_id, hadm_id",
+      "expected_sql": "SELECT subject_id, hadm_id, admittime FROM admissions WHERE EXTRACT(YEAR FROM admittime) = 2112 ORDER BY subject_id, hadm_id",
       "reference": {
         "comparison_mode": "ordered",
-        "required_filters": ["EXTRACT(YEAR FROM admittime) = 2024"],
+        "required_filters": ["EXTRACT(YEAR FROM admittime) = 2112"],
         "ordered": true
       }
     },
@@ -280,12 +280,12 @@
       "family_id": "lab_frequency_with_labels",
       "kind": "query",
       "category": "correctness",
-      "capabilities": ["dictionary_join", "multi_table_filter", "grouping", "having", "ordering", "top_n"],
+      "capabilities": ["dictionary_join", "multi_table_filter", "grouping", "ordering", "top_n"],
       "question": "What are the 10 most frequent numeric lab tests, with their labels?",
       "intent_id": "top_labs",
       "required_tables": ["labevents", "d_labitems"],
       "required_column_groups": [["itemid"], ["label"], ["measurement_count", "count"]],
-      "expected_sql": "SELECT l.itemid, d.label, COUNT(*) AS measurement_count FROM labevents AS l JOIN d_labitems AS d ON d.itemid = l.itemid WHERE l.valuenum IS NOT NULL GROUP BY l.itemid, d.label HAVING COUNT(*) > 1 ORDER BY measurement_count DESC, l.itemid LIMIT 10",
+      "expected_sql": "SELECT l.itemid, d.label, COUNT(*) AS measurement_count FROM labevents AS l JOIN d_labitems AS d ON d.itemid = l.itemid WHERE l.valuenum IS NOT NULL GROUP BY l.itemid, d.label ORDER BY measurement_count DESC, l.itemid LIMIT 10",
       "reference": {
         "comparison_mode": "ordered",
         "required_filters": ["l.valuenum IS NOT NULL"],
@@ -299,15 +299,14 @@
       "family_id": "icu_mortality_by_first_careunit",
       "kind": "query",
       "category": "correctness",
-      "capabilities": ["multi_table_filter", "grouping", "ordering"],
+      "capabilities": ["grouping", "ordering"],
       "question": "Show hospital mortality rate by first ICU care unit for ICU stays with an admission.",
       "intent_id": "icu_mortality",
       "required_tables": ["icustays", "admissions"],
       "required_column_groups": [["first_careunit"], ["mortality_rate"]],
-      "expected_sql": "SELECT i.first_careunit, AVG(a.hospital_expire_flag) AS mortality_rate FROM icustays AS i JOIN admissions AS a ON a.hadm_id = i.hadm_id WHERE i.hadm_id IS NOT NULL GROUP BY i.first_careunit ORDER BY i.first_careunit",
+      "expected_sql": "SELECT i.first_careunit, AVG(a.hospital_expire_flag) AS mortality_rate FROM icustays AS i JOIN admissions AS a ON a.hadm_id = i.hadm_id GROUP BY i.first_careunit ORDER BY i.first_careunit",
       "reference": {
         "comparison_mode": "ordered",
-        "required_filters": ["i.hadm_id IS NOT NULL"],
         "required_grouping": ["i.first_careunit"],
         "ordered": true
       }

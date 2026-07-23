@@ -6,9 +6,10 @@ from dataclasses import dataclass, fields, is_dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
-import re
 import sys
 from typing import Any
+
+from sqlglot import exp, parse_one
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC = PROJECT_ROOT / "src"
@@ -29,6 +30,13 @@ from db_whisperer.querier.sql_validator import (
 
 QUERY_CATEGORIES = {"ambiguity", "control", "correctness", "safety"}
 ALLOWED_MECHANISMS = {"none", "candidate-comparison", "semantic-column"}
+ALLOWED_COMPARISON_MODES = {
+    "scalar",
+    "multiset",
+    "ordered",
+    "top_n",
+    "compatible_subset",
+}
 REQUIRED_CAPABILITIES = {
     "scalar",
     "grouping",
@@ -175,6 +183,11 @@ def load_suite(path: str | Path) -> EvaluationSuite:
     suite_path = Path(path).resolve()
     raw = suite_path.read_bytes()
     payload = json.loads(raw)
+    if _contains_retired_contract(payload.get("cases", ())):
+        raise ValueError(
+            "Invalid Evaluation V3 suite: retired join-path/jp_ "
+            "contract values are forbidden"
+        )
     base = suite_path.parent
     cases = tuple(
         EvaluationCase(
@@ -338,6 +351,13 @@ def validate_suite_shape(suite: EvaluationSuite) -> None:
                     errors.append(
                         f"{case.id}: reference comparison mode is required"
                     )
+                elif (
+                    case.reference.comparison_mode
+                    not in ALLOWED_COMPARISON_MODES
+                ):
+                    errors.append(
+                        f"{case.id}: unsupported reference comparison mode"
+                    )
         if case.should_clarify != case.ambiguous:
             errors.append(
                 f"{case.id}: ambiguous and should_clarify must agree"
@@ -383,6 +403,16 @@ def validate_suite_shape(suite: EvaluationSuite) -> None:
             errors.append(
                 f"{family}: ambiguity family must have two matching controls"
             )
+        ambiguous_questions = {
+            case.question.casefold() for case in intentions
+        }
+        if any(
+            case.question.casefold() in ambiguous_questions
+            for case in controls
+        ):
+            errors.append(
+                f"{family}: control wording must resolve the ambiguity"
+            )
 
     missing_fixtures = [
         str(path)
@@ -409,7 +439,8 @@ def _serialize_value(value: Any) -> Any:
 
 def _parsed_join_count(sql: str) -> int:
     validated = validate_read_only_sql(sql)
-    return len(re.findall(r"\bjoin\b", validated, flags=re.IGNORECASE))
+    tree = parse_one(validated, read="duckdb")
+    return sum(1 for _ in tree.find_all(exp.Join))
 
 
 def validate_reference_suite(

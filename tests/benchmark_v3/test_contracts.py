@@ -1,6 +1,11 @@
 from dataclasses import replace
 from datetime import datetime
+import json
+from pathlib import Path
+import tempfile
 import unittest
+
+import duckdb
 
 from benchmark_v3.contracts import (
     EvaluationCase,
@@ -78,6 +83,50 @@ class EvaluationV3ContractTest(unittest.TestCase):
             "missing_schema",
         } <= capabilities)
 
+    def test_reference_sql_is_least_sufficient_for_requested_results(
+        self,
+    ) -> None:
+        suite = load_suite(DEFAULT_SUITE)
+        by_id = {case.id: case for case in suite.cases}
+        lab_sql = by_id["lab_frequency_with_labels"].expected_sql or ""
+        mortality_sql = (
+            by_id["icu_mortality_by_first_careunit"].expected_sql or ""
+        )
+
+        self.assertNotIn("having", lab_sql.casefold())
+        self.assertNotIn(
+            "having",
+            by_id["lab_frequency_with_labels"].capabilities,
+        )
+        self.assertNotIn("where", mortality_sql.casefold())
+        self.assertNotIn(
+            "multi_table_filter",
+            by_id["icu_mortality_by_first_careunit"].capabilities,
+        )
+        self.assertIn(
+            "having",
+            by_id["patients_with_multiple_admissions_ranked"].capabilities,
+        )
+
+    def test_shifted_year_interpretations_are_nonempty_offline(self) -> None:
+        suite = load_suite(DEFAULT_SUITE)
+        by_id = {case.id: case for case in suite.cases}
+        connection = duckdb.connect()
+        try:
+            connection.read_csv(
+                str(suite.dataset_path / "PATIENTS.csv")
+            ).create_view("patients")
+            connection.read_csv(
+                str(suite.dataset_path / "ADMISSIONS.csv")
+            ).create_view("admissions")
+            for case_id in ("from_2024_birth", "from_2024_admission"):
+                sql = by_id[case_id].expected_sql
+                self.assertIsNotNone(sql)
+                rows = connection.execute(sql).fetchall()
+                self.assertTrue(rows, f"{case_id} reference must be nonempty")
+        finally:
+            connection.close()
+
     def test_suite_contains_three_paired_ambiguity_families_and_two_controls_each(
         self,
     ) -> None:
@@ -105,6 +154,26 @@ class EvaluationV3ContractTest(unittest.TestCase):
         self.assertNotIn('"join_path"', serialized)
         self.assertNotIn('"join-path"', serialized)
         self.assertFalse(any(case.id.startswith("jp_") for case in suite.cases))
+
+    def test_load_rejects_retired_unknown_case_fields(self) -> None:
+        payload = json.loads(DEFAULT_SUITE.read_text(encoding="utf-8"))
+        payload["cases"][0]["join_path"] = {
+            "minimum_joins": 2,
+        }
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            dir=DEFAULT_SUITE.parent,
+            delete=False,
+            encoding="utf-8",
+        )
+        path = Path(handle.name)
+        self.addCleanup(path.unlink, missing_ok=True)
+        with handle:
+            json.dump(payload, handle)
+
+        with self.assertRaisesRegex(ValueError, "retired"):
+            load_suite(path)
 
     def test_shape_rejects_exact_campaign_setting_changes(self) -> None:
         suite = load_suite(DEFAULT_SUITE)
@@ -189,6 +258,47 @@ class EvaluationV3ContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "forbidden"):
             validate_suite_shape(retired_reference)
 
+    def test_shape_rejects_unsupported_comparison_modes(self) -> None:
+        suite = load_suite(DEFAULT_SUITE)
+        changed = replace(
+            suite,
+            cases=tuple(
+                replace(
+                    case,
+                    reference=replace(
+                        case.reference,
+                        comparison_mode="approximate",
+                    ),
+                )
+                if case.id == "count_admissions"
+                else case
+                for case in suite.cases
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "comparison mode"):
+            validate_suite_shape(changed)
+
+    def test_controls_cannot_repeat_the_ambiguous_question(self) -> None:
+        suite = load_suite(DEFAULT_SUITE)
+        ambiguous_question = next(
+            case.question
+            for case in suite.cases
+            if case.id == "stay_hospital"
+        )
+        changed = replace(
+            suite,
+            cases=tuple(
+                replace(case, question=ambiguous_question)
+                if case.id == "ctl_stay_hospital"
+                else case
+                for case in suite.cases
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "control"):
+            validate_suite_shape(changed)
+
     def test_shape_rejects_missing_capability_and_unsafe_reference(self) -> None:
         suite = load_suite(DEFAULT_SUITE)
         without_scalar = replace(
@@ -262,6 +372,85 @@ class EvaluationV3ContractTest(unittest.TestCase):
             1,
             evidence["lab_frequency_with_labels"]["join_count"],
         )
+
+    def test_reference_join_count_ignores_comments_and_string_literals(
+        self,
+    ) -> None:
+        class AcceptingQuery:
+            def execute_candidate(
+                self,
+                candidate: QueryCandidate,
+                database_path: str | None,
+            ) -> QueryResult:
+                return QueryResult(
+                    state=ComponentState.ACCEPTED,
+                    message="ok",
+                    sql=candidate.sql,
+                )
+
+        suite = load_suite(DEFAULT_SUITE)
+        changed = replace(
+            suite,
+            cases=tuple(
+                replace(
+                    case,
+                    expected_sql=(
+                        "SELECT 'join' AS note "
+                        "/* JOIN in a comment is not logical */"
+                    ),
+                )
+                if case.id == "count_admissions"
+                else case
+                for case in suite.cases
+            ),
+        )
+
+        evidence = validate_reference_suite(
+            changed,
+            SchemaMetadata(database_path="reference.duckdb"),
+            AcceptingQuery(),  # type: ignore[arg-type]
+        )
+        self.assertEqual(0, evidence["count_admissions"]["join_count"])
+
+    def test_reference_join_count_includes_nested_logical_joins(self) -> None:
+        class AcceptingQuery:
+            def execute_candidate(
+                self,
+                candidate: QueryCandidate,
+                database_path: str | None,
+            ) -> QueryResult:
+                return QueryResult(
+                    state=ComponentState.ACCEPTED,
+                    message="ok",
+                    sql=candidate.sql,
+                )
+
+        suite = load_suite(DEFAULT_SUITE)
+        changed = replace(
+            suite,
+            cases=tuple(
+                replace(
+                    case,
+                    expected_sql=(
+                        "WITH paired AS ("
+                        "SELECT a.hadm_id FROM admissions AS a "
+                        "JOIN patients AS p ON p.subject_id = a.subject_id"
+                        ") SELECT paired.hadm_id FROM paired "
+                        "JOIN icustays AS i ON i.hadm_id = paired.hadm_id"
+                    ),
+                )
+                if case.id == "count_admissions"
+                else case
+                for case in suite.cases
+            ),
+        )
+
+        evidence = validate_reference_suite(
+            changed,
+            SchemaMetadata(database_path="reference.duckdb"),
+            AcceptingQuery(),  # type: ignore[arg-type]
+        )
+        self.assertEqual(2, evidence["count_admissions"]["join_count"])
 
     def test_reference_validation_rejects_execution_failures(self) -> None:
         class RejectingQuery:
