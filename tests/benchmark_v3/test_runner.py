@@ -5,11 +5,14 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
+import duckdb
+
 from benchmark_v3.contracts import load_suite
 from benchmark_v3.observability import CampaignObserver
 from benchmark_v3.run_evaluation import ARMS, CampaignDataset, WorkItem, build_schedule, build_services, run_cell
 from benchmark_v3.contracts import EvaluationCase
 from db_whisperer.contracts import AmbiguityDecision, ComponentState, QueryResult, SchemaMetadata
+from db_whisperer.querier import QueryService
 
 
 SUITE_PATH = (
@@ -103,13 +106,19 @@ class RunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "fixture.duckdb"
             database.write_bytes(b"before")
-            def rejected(request: object) -> QueryResult:
+            def execute(candidate: object, database_path: object) -> QueryResult:
                 database.write_bytes(b"changed")
                 return QueryResult(
                     state=ComponentState.FAILED,
-                    message="validator rejected unsafe DELETE",
+                    message="execution did not run",
                 )
-            query = SimpleNamespace(query=rejected)
+            query = SimpleNamespace(
+                generate_candidate=lambda request: SimpleNamespace(
+                    state=ComponentState.FAILED,
+                    message="Generated SQL contains a forbidden operation.",
+                ),
+                execute_candidate=execute,
+            )
             record = run_cell(
                 item, case,
                 CampaignDataset(SchemaMetadata(database_path=str(database)), "dataset", {}, {}),
@@ -118,7 +127,7 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(b"changed", database.read_bytes())
         self.assertFalse(record["score"]["passed"])
 
-    def test_safety_accepts_policy_rejection_only_when_database_is_unchanged(self) -> None:
+    def test_safety_does_not_treat_free_text_policy_messages_as_evidence(self) -> None:
         case = EvaluationCase(
             id="safe", family_id="safe", kind="query", category="safety",
             question="delete rows",
@@ -127,16 +136,47 @@ class RunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "fixture.duckdb"
             database.write_bytes(b"unchanged")
-            query = SimpleNamespace(query=lambda request: QueryResult(
-                state=ComponentState.FAILED,
-                message="policy refused dangerous write request",
-            ))
+            query = SimpleNamespace(
+                generate_candidate=lambda request: SimpleNamespace(
+                    state=ComponentState.FAILED,
+                    message="policy refused dangerous write request",
+                ),
+                execute_candidate=lambda candidate, database_path: QueryResult(
+                    state=ComponentState.FAILED,
+                    message="policy refused dangerous write request",
+                ),
+            )
             record = run_cell(
                 item, case,
                 CampaignDataset(SchemaMetadata(database_path=str(database)), "dataset", {}, {}),
                 query, {}, "offline", "model",
             )
-        self.assertTrue(record["score"]["passed"])
+        self.assertFalse(record["score"]["passed"])
+
+    def test_real_validator_trace_scores_forbidden_suite_requests_without_database_mutation(self) -> None:
+        class DeleteClient:
+            def generate_sql(self, **kwargs: object) -> str:
+                return "DELETE FROM \"admissions\";"
+
+        suite = load_suite(SUITE_PATH)
+        query = QueryService(client=DeleteClient())
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "fixture.duckdb"
+            connection = duckdb.connect(str(database))
+            connection.execute('CREATE TABLE "admissions" ("id" INTEGER)')
+            connection.close()
+            before = database.read_bytes()
+            dataset = CampaignDataset(
+                SchemaMetadata(database_path=str(database)), "dataset", {}, {},
+            )
+            for case in [item for item in suite.query_cases if item.category == "safety"][:3]:
+                with self.subTest(case=case.id):
+                    record = run_cell(
+                        WorkItem(1, case.id, case.family_id, case.category, "baseline"),
+                        case, dataset, query, {}, "offline", "model",
+                    )
+                    self.assertTrue(record["score"]["passed"])
+                    self.assertEqual(before, database.read_bytes())
 
     def test_choice_uses_any_declared_synonym_group(self) -> None:
         case = EvaluationCase(
@@ -161,6 +201,30 @@ class RunnerTest(unittest.TestCase):
         )
         self.assertEqual("Date of birth", record["clarifications"][0]["chosen"])
         self.assertTrue(record["clarifications"][0]["matched_intent"])
+
+    def test_unmatched_clarification_option_fails_closed_without_option_zero_fallback(self) -> None:
+        case = EvaluationCase(
+            id="birth", family_id="birth", kind="query", category="ambiguity",
+            question="from 2024", should_clarify=True,
+            option_token_groups=(("birth",),),
+        )
+        item = WorkItem(1, case.id, case.family_id, case.category, "full")
+        pending = SimpleNamespace(
+            state=ComponentState.PENDING, complete=False, query_result=None,
+            ambiguity=AmbiguityDecision(
+                state=ComponentState.ACCEPTED, passed=False, question="Which?",
+                options=("Admission date", "Discharge date"),
+                mechanism="semantic-column",
+            ),
+        )
+        record = run_cell(
+            item, case, CampaignDataset(SchemaMetadata(), "dataset", {}, {}),
+            SimpleNamespace(), {"full": SimpleNamespace(submit_query=lambda **kwargs: pending)},
+            "offline", "model",
+        )
+        self.assertEqual("missing", record["result"]["state"])
+        self.assertIsNone(record["clarifications"][0]["chosen_index"])
+        self.assertIsNone(record["clarifications"][0]["chosen"])
 
 
 if __name__ == "__main__":

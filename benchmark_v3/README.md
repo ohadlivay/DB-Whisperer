@@ -36,9 +36,13 @@ python -m benchmark_v3.run_evaluation
 The campaign runner uses the four arms `baseline`, `candidate_only`,
 `semantic_only`, and `full`. Baseline generates one candidate; the ambiguity
 arms generate three. Its deterministic five-repetition schedule rotates arm
-order, runs at most two case/arm cells concurrently, writes atomic checkpoints
-and `campaign.json`, and resumes only when the campaign fingerprint matches
-the suite, dataset, model, prompt/runtime configuration, scorer, and arms.
+order, runs at most two case/arm cells concurrently, and additionally executes
+the two shared ETL fixtures once per repetition. It writes atomic checkpoints
+and `campaign.json` before admitting work, then resumes only when campaign and
+checkpoint fingerprints match the suite, dataset, model, actual prompt/runtime
+sources, scorer, and arms. Dataset/reference artifacts are fingerprinted and
+cached in the campaign directory; relationship-discovery warnings are carried
+into each report. Terminal progress reports percent, elapsed time, and ETA.
 Use `--workers 1` for a conservative serial live run.
 
 Outputs under `benchmark_v3/results/` are ignored by git. Do not commit API
