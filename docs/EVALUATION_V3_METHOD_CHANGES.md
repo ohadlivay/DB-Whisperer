@@ -20,6 +20,12 @@ The funnel reports whether ambiguity was present, whether an interruption was ju
 
 Correctness is scored from the expected result and executable SQL evidence. Multi-table queries are assessed for least-sufficient joins: only the relationships needed to answer the request should be introduced. Direct relationship metadata can help SQL generation, but alternate graph routes never independently create ambiguity.
 
+Required SQL filters are compared as parsed expressions after removing table
+qualification and identifier-quoting differences. Thus `subject_id`,
+`"subject_id"`, and `i."subject_id"` are equivalent evidence for a declared
+filter. Publication rejects any stored “required filter is missing” reason
+that contradicts the parsed generated SQL.
+
 ## K=3, five repetitions, and budget control
 
 Baseline is a single-pass K=1 comparison. Candidate Only, Semantic Only, and Full System each produce K=3 SQL candidates; the complete compatible campaign is repeated five times. The planned campaign ceiling is $3.75; usage and retries are retained as campaign-global operational evidence when they cannot be attributed safely to an individual repetition.
@@ -48,6 +54,15 @@ which the terminal reports explicitly along with any blocking reason.
 If all observations are complete but report publication fails, the campaign
 retains its complete processing state and reports that publication alone must
 be retried.
+
+Clarification-question metadata is recorded when the question is asked, while
+compliance is recorded only after the selected answer is evaluated in the next
+workflow iteration. An accepted matched clarification cannot publish with
+unknown compliance evidence.
+
+Before another official paid campaign, the validator is replayed against the
+previous production records without model calls, followed by a one-repetition
+live canary. The five-repetition run is admitted only after both gates pass.
 
 ## Aggregation and publication
 

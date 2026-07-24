@@ -354,6 +354,8 @@ class _SafePromptLogger:
                 provider_failure_message = str(
                     choice_error.get("message") or "provider response failed"
                 )
+            elif choice_error:
+                provider_failure_message = str(choice_error)
             elif (
                 str(details.get("finish_reason", "")).casefold() == "error"
                 or str(details.get("native_finish_reason", "")).casefold()

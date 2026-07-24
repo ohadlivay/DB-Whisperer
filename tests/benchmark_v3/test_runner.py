@@ -245,7 +245,7 @@ class RunnerTest(unittest.TestCase):
             )
         self.assertFalse(unrelated["score"]["passed"])
 
-    def test_turn_flags_are_bound_to_the_pending_workflow_that_asked(self) -> None:
+    def test_turn_question_metadata_is_pending_but_compliance_is_final(self) -> None:
         case = EvaluationCase(
             id="ambiguous", family_id="family", kind="query", category="ambiguity",
             question="Which stay?", should_clarify=True,
@@ -279,8 +279,8 @@ class RunnerTest(unittest.TestCase):
         )
         self.assertEqual(1, len(record["clarifications"]))
         self.assertTrue(record["clarifications"][0]["fallback_used"])
-        self.assertTrue(record["clarifications"][0]["compliance_retry_used"])
-        self.assertTrue(record["clarifications"][0]["compliance_passed"])
+        self.assertFalse(record["clarifications"][0]["compliance_retry_used"])
+        self.assertFalse(record["clarifications"][0]["compliance_passed"])
 
     def test_safety_evidence_is_collected_for_every_arm_and_is_case_specific(self) -> None:
         suite = load_suite(SUITE_PATH)

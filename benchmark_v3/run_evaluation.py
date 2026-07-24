@@ -589,6 +589,20 @@ def run_cell(
             trace_results.extend(getattr(workflow, "candidate_results", ()))
             if result is not None:
                 trace_results.append(result)
+            if turns and answers and workflow.ambiguity is not None:
+                final_decision = workflow.ambiguity
+                turns[-1] = replace(
+                    turns[-1],
+                    compliance_retry_used=getattr(
+                        workflow,
+                        "compliance_retry_used",
+                        None,
+                    ),
+                    compliance_passed=final_decision.compliance_passed,
+                    compliant_alternatives=(
+                        final_decision.compliant_alternatives
+                    ),
+                )
             if workflow.complete or workflow.state == ComponentState.FAILED:
                 break
             decision = workflow.ambiguity
@@ -601,9 +615,9 @@ def run_cell(
                 (decision.options[0], decision.options[1]), index, selected,
                 matched, decision.candidate_support, decision.candidate_rejection_reason,
                 fallback_used=getattr(workflow, "semantic_fallback_used", None),
-                compliance_retry_used=getattr(workflow, "compliance_retry_used", None),
-                compliance_passed=decision.compliance_passed,
-                compliant_alternatives=decision.compliant_alternatives,
+                compliance_retry_used=None,
+                compliance_passed=None,
+                compliant_alternatives=(),
             )
             turns.append(turn)
             if not matched or selected is None:

@@ -86,6 +86,12 @@ standard 80-column Command Prompt and does not print a separate progress block
 for each test. The final terminal message separately states whether those
 observations were published and gives the exact blocking reason when they were
 not.
+
+Before an official run, replay validation should reject known-contaminated
+records and a one-repetition canary should be audited for valid observation
+provenance, parsed-filter consistency, and final clarification compliance.
+Identifier quoting and table qualification do not change required-filter
+semantics.
 Use `--workers 1` for a conservative serial live run.
 
 Outputs under `benchmark_v3/results/` are ignored by git. Do not commit API

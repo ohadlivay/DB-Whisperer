@@ -456,6 +456,8 @@ def results_compatible(
 
 def _canonical_expression(expression: exp.Expression) -> str:
     copied = expression.copy()
+    for identifier in copied.find_all(exp.Identifier):
+        identifier.set("quoted", False)
     for column in copied.find_all(exp.Column):
         column.set("catalog", None)
         column.set("db", None)
@@ -471,6 +473,21 @@ def _required_filter_expression(text: str) -> exp.Expression:
     return where.this
 
 
+def required_filter_present(sql: str, required: str) -> bool:
+    """Return whether parsed SQL contains the required filter expression."""
+
+    tree = sqlglot.parse_one(sql, read="duckdb")
+    actual_filter_signatures = {
+        _canonical_expression(node)
+        for where in tree.find_all(exp.Where)
+        for node in where.this.walk()
+    }
+    return (
+        _canonical_expression(_required_filter_expression(required))
+        in actual_filter_signatures
+    )
+
+
 def _required_sql_contract(
     sql: str,
     case: EvaluationCase,
@@ -479,19 +496,8 @@ def _required_sql_contract(
     if reference is None:
         return False, "missing reference contract"
     tree = sqlglot.parse_one(sql, read="duckdb")
-    actual_filter_nodes = tuple(
-        node
-        for where in tree.find_all(exp.Where)
-        for node in where.this.walk()
-    )
-    actual_filter_signatures = {
-        _canonical_expression(node) for node in actual_filter_nodes
-    }
     for required in reference.required_filters:
-        required_signature = _canonical_expression(
-            _required_filter_expression(required)
-        )
-        if required_signature not in actual_filter_signatures:
+        if not required_filter_present(sql, required):
             return False, f"required filter is missing: {required}"
 
     grouped_columns = {

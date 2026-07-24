@@ -79,6 +79,47 @@ class ResultsValidationTest(unittest.TestCase):
 
         self.assertTrue(payload["failures"])
 
+    def test_rejects_unknown_compliance_after_matched_clarification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            record = report["records"][0]
+            record["clarifications"] = [{
+                "matched_intent": True,
+                "compliance_passed": None,
+            }]
+            report_path.write_text(json.dumps(report))
+
+            with self.assertRaisesRegex(ValueError, "compliance evidence"):
+                self._aggregate(directory)
+
+    def test_rejects_score_reason_contradicted_by_parsed_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            record = next(
+                row
+                for row in report["records"]
+                if row["case_id"] == "ctl_from_2024_birth"
+            )
+            record["result"]["sql"] = (
+                'SELECT "subject_id" FROM "patients" '
+                'WHERE EXTRACT(YEAR FROM "dob") = 2112'
+            )
+            record["score"]["passed"] = False
+            record["score"]["reason"] = (
+                "required filter is missing: "
+                "EXTRACT(YEAR FROM dob) = 2112"
+            )
+            report_path.write_text(json.dumps(report))
+
+            with self.assertRaisesRegex(ValueError, "contradicts parsed SQL"):
+                self._aggregate(directory)
+
     def test_rejects_nonfinite_aggregate_metric(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

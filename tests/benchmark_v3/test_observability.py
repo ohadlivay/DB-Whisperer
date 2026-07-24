@@ -456,6 +456,25 @@ class CampaignObserverTest(unittest.TestCase):
             self.assertEqual("response", failure["kind"])
             self.assertIn("upstream generation failed", failure["message"])
 
+    def test_non_mapping_choice_error_in_validation_event_blocks_run(self) -> None:
+        for choice_error in ("upstream provider failed", ["provider failed"]):
+            with (
+                self.subTest(choice_error=choice_error),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                observer = CampaignObserver(Path(temporary), (), 3.75)
+                observer.prompt_logger.log_event(
+                    event="response_validation_failed",
+                    component="ambiguity",
+                    details={
+                        "finish_reason": None,
+                        "choice_error": choice_error,
+                    },
+                )
+                self.assertIsNotNone(
+                    observer.current_infrastructure_failure()
+                )
+
     def test_malformed_model_output_remains_a_system_observation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             observer = CampaignObserver(Path(temporary), (), 3.75)

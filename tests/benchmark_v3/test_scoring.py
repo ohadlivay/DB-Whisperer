@@ -670,6 +670,73 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(0.0, score["correctness"])
         self.assertIn("filter", score["reason"])
 
+    def test_required_filters_ignore_identifier_quoting_and_qualification(self) -> None:
+        fixtures = (
+            (
+                case(
+                    expected_sql=(
+                        "SELECT dob FROM patients "
+                        "WHERE EXTRACT(YEAR FROM dob) = 2112"
+                    ),
+                    required_tables=("patients",),
+                    required_column_groups=(("dob",),),
+                    required_filters=("EXTRACT(YEAR FROM dob) = 2112",),
+                ),
+                result(
+                    'SELECT p."dob" FROM "patients" AS p '
+                    'WHERE EXTRACT(YEAR FROM p."dob") = 2112',
+                    ("dob",),
+                    ((date(2112, 1, 1),),),
+                ),
+                result(
+                    "SELECT dob FROM patients "
+                    "WHERE EXTRACT(YEAR FROM dob) = 2112",
+                    ("dob",),
+                    ((date(2112, 1, 1),),),
+                ),
+            ),
+            (
+                case(
+                    expected_sql=(
+                        "SELECT subject_id FROM icustays "
+                        "WHERE subject_id = 10006"
+                    ),
+                    required_tables=("icustays",),
+                    required_filters=("subject_id = 10006",),
+                ),
+                result(
+                    'SELECT i."subject_id" FROM "icustays" AS i '
+                    'WHERE i."subject_id" = 10006',
+                    ("subject_id",),
+                    ((10006,),),
+                ),
+                result(
+                    "SELECT subject_id FROM icustays "
+                    "WHERE subject_id = 10006",
+                    ("subject_id",),
+                    ((10006,),),
+                ),
+            ),
+        )
+        schema = SchemaMetadata(
+            table_names=("patients", "icustays"),
+            columns=(
+                ColumnMetadata("dob", "DATE"),
+                ColumnMetadata("subject_id", "INTEGER"),
+            ),
+        )
+
+        for evaluation_case, actual, expected in fixtures:
+            with self.subTest(case=evaluation_case.expected_sql):
+                score = score_query_case(
+                    evaluation_case,
+                    actual,
+                    expected,
+                    schema,
+                    [],
+                )
+                self.assertNotIn("required filter is missing", score["reason"])
+
     def test_ambiguous_success_requires_compliance_and_final_alignment(
         self,
     ) -> None:

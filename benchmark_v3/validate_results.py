@@ -6,12 +6,14 @@ from typing import Any, Mapping, Sequence
 
 from benchmark_v3.contracts import load_suite
 from benchmark_v3.run_evaluation import ARMS, DEFAULT_SUITE
+from benchmark_v3.scoring import required_filter_present
 
 COMPATIBILITY_FIELDS = (
     "suite_version", "suite_hash", "dataset_hash", "model", "prompt_hash",
     "scorer_version", "candidate_count", "arms", "runtime_hash",
 )
 UNRESOLVED_STATES = {"", "missing", "pending", "running", "resuming"}
+_MISSING_FILTER_PREFIX = "required filter is missing: "
 _DISTRIBUTION_FIELDS = {
     "mean", "stddev", "min", "max", "confidence_interval_95",
 }
@@ -160,6 +162,40 @@ def validate_reports(
                 raise ValueError("run report contains unresolved incomplete state")
             if not isinstance(score.get("passed"), bool):
                 raise ValueError("run record passed score is missing")
+            clarifications = record.get("clarifications", [])
+            if not isinstance(clarifications, list):
+                raise ValueError("run record clarifications are invalid")
+            if (
+                str(result.get("state", "")).casefold() == "accepted"
+                and clarifications
+                and all(
+                    isinstance(turn, Mapping)
+                    and turn.get("matched_intent") is True
+                    for turn in clarifications
+                )
+                and not isinstance(
+                    clarifications[-1].get("compliance_passed"),
+                    bool,
+                )
+            ):
+                raise ValueError(
+                    "matched clarification is missing final compliance evidence"
+                )
+            reason = str(score.get("reason", ""))
+            sql = result.get("sql")
+            if (
+                reason.startswith(_MISSING_FILTER_PREFIX)
+                and isinstance(sql, str)
+            ):
+                required = reason.removeprefix(_MISSING_FILTER_PREFIX)
+                try:
+                    contradicted = required_filter_present(sql, required)
+                except Exception:
+                    contradicted = False
+                if contradicted:
+                    raise ValueError(
+                        "stored score reason contradicts parsed SQL filter"
+                    )
             _finite(score, "score")
             _finite(record.get("duration_seconds"), "duration_seconds")
         if seen != set(expected):
