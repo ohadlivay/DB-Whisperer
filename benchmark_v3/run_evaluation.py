@@ -458,7 +458,11 @@ def _prepare_dataset(
     schema = ingest_dataset(suite.dataset_path, database)
     query, _ = build_services(suite.candidate_count)
     try:
-        evidence = validate_reference_suite(suite, schema, query)
+        evidence = validate_reference_suite(
+            replace(suite, repetitions=OFFICIAL_REPETITIONS),
+            schema,
+            query,
+        )
     finally:
         _close_services((query, {}))
     refs = {

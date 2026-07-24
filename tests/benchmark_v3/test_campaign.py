@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 from threading import Lock
@@ -531,6 +532,43 @@ class CampaignTest(unittest.TestCase):
             with patch("benchmark_v3.run_evaluation.ingest_dataset", side_effect=AssertionError("cache miss")):
                 dataset = _prepare_dataset(suite, directory, "dataset")
         self.assertEqual(("cached relationship warning",), dataset.schema.discovery_notes)
+
+    def test_canary_preparation_validates_frozen_official_suite_shape(self) -> None:
+        suite = replace(load_suite(DEFAULT_SUITE), repetitions=1)
+        received: list[int] = []
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+
+            def ingest(dataset_path: Path, database: Path) -> SchemaMetadata:
+                return SchemaMetadata(database_path=str(database.resolve()))
+
+            def validate(reference_suite, schema, query):
+                received.append(reference_suite.repetitions)
+                return {}
+
+            query = SimpleNamespace(client=SimpleNamespace(session=None))
+            with (
+                patch(
+                    "benchmark_v3.run_evaluation.ingest_dataset",
+                    side_effect=ingest,
+                ),
+                patch(
+                    "benchmark_v3.run_evaluation.build_services",
+                    return_value=(query, {}),
+                ),
+                patch(
+                    "benchmark_v3.run_evaluation.validate_reference_suite",
+                    side_effect=validate,
+                ),
+                patch(
+                    "benchmark_v3.run_evaluation._database_hash",
+                    return_value="database-hash",
+                ),
+            ):
+                _prepare_dataset(suite, directory, "dataset")
+
+        self.assertEqual([5], received)
 
     def test_official_campaign_executes_ten_shared_etl_observations(self) -> None:
         full_suite = load_suite(SUITE_PATH)
