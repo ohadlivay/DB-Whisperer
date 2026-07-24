@@ -30,11 +30,29 @@ Campaigns use two workers while generating the three candidates for a request in
 
 ## Progress, checkpoints, and resume
 
-The runner records progress and writes a checkpoint after every campaign cell, with immutable suite, model, and scoring fingerprints. Resume is permitted only when those fingerprints match; incomplete or incompatible runs are excluded from aggregation.
+The runner records campaign-wide progress and writes a checkpoint only after a
+valid system observation, with immutable suite, model, runtime, and scoring
+fingerprints. A wrong result, rejected SQL, or unresolved clarification under
+healthy evaluation conditions is a valid DB Whisperer failure and scores zero.
+Provider, transport, credential, and harness failures are evaluation
+infrastructure failures: they are retained in status and event evidence, stop
+new work, and never enter correctness scoring. Their affected cells remain
+uncheckpointed so a compatible resumed campaign still obtains five valid
+observations per test. Resume is permitted only when fingerprints match;
+incomplete or incompatible runs are excluded from aggregation.
+
+Accordingly, `450/450` means that all 440 query cells and 10 shared ETL cells
+have valid observations. It is distinct from the final publication state,
+which the terminal reports explicitly along with any blocking reason.
 
 ## Aggregation and publication
 
-Aggregation uses only complete compatible repetitions, reports uncertainty from question-family bootstrap resampling, and keeps case-level SQL, results, scores, transcripts, candidate support, compliance, failures, and provenance. Publication produces exactly a one-page method summary and an eight-tab evidence report.
+Aggregation uses only complete compatible repetitions containing valid system
+observations. It reports uncertainty from question-family bootstrap resampling
+and keeps case-level SQL, results, scores, transcripts, candidate support,
+compliance, system failures, and provenance. Infrastructure failures remain
+separate operational evidence. Publication produces exactly a one-page method
+summary and an eight-tab evidence report.
 
 ## Interpretation limits
 

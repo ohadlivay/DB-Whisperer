@@ -236,7 +236,7 @@ Retain reliability and sample size while reducing wall-clock time:
 - Provide `--workers 1` for conservative serial execution.
 - Retry only transient provider failures with bounded exponential backoff and
   jitter.
-- Atomically checkpoint every completed arm/case/repetition cell.
+- Atomically checkpoint every valid system observation.
 
 The normal maximum candidate-generation burst is six requests: two outer cells
 times three candidates. Increasing the default beyond two workers is out of
@@ -263,9 +263,13 @@ visible during long model calls. Plain non-interactive output remains available
 for redirected logs and CI.
 
 Resume requires matching suite, dataset, model, prompt/configuration, arm,
-scorer, and runtime fingerprints. Ordinary case failures are recorded and the
-campaign continues. Dataset, suite, fingerprint, or aggregation failures stop
-the run.
+scorer, and runtime fingerprints. Genuine DB Whisperer failures under healthy
+evaluation conditions are valid observations, are recorded, and score zero.
+Provider, credential, exhausted transport-retry, and harness failures are
+infrastructure failures: they stop new work, remain operational evidence, and
+leave affected cells uncheckpointed so they cannot affect system scores.
+Dataset, suite, fingerprint, infrastructure, or aggregation failures stop the
+run.
 
 A budget stop happens before launching a new paid operation, creates an
 explicitly incomplete resumable campaign, and cannot publish or enter an
@@ -273,7 +277,8 @@ official aggregate.
 
 ## Aggregation and Reliability
 
-Aggregate exactly five compatible completed repetitions. Reject mismatched
+Aggregate exactly five compatible completed repetitions containing one valid
+system observation per scheduled cell. Reject infrastructure observations and mismatched
 suite, dataset, scorer, prompt, model, candidate-count, arm, and runtime
 fingerprints.
 

@@ -28,7 +28,13 @@ for path in (PROJECT_ROOT, SRC):
         sys.path.insert(0, str(path))
 
 from benchmark_v3.contracts import EvaluationCase, EvaluationSuite, load_suite, validate_reference_suite
-from benchmark_v3.observability import BudgetStop, CampaignObserver, InstrumentedSession, atomic_json
+from benchmark_v3.observability import (
+    BudgetStop,
+    CampaignObserver,
+    InfrastructureStop,
+    InstrumentedSession,
+    atomic_json,
+)
 from benchmark_v3.progress import TerminalProgress
 from benchmark_v3.scoring import SafetyEvidence, score_etl_manifest, score_query_case
 from db_whisperer.ambiguity import AmbiguityPromptBuilder, AmbiguityService, SemanticColumnAmbiguityService
@@ -136,6 +142,8 @@ class CampaignResult:
     records: tuple[dict[str, Any], ...]
     stopped_for_budget: bool = False
     published: bool = False
+    stopped_for_infrastructure: bool = False
+    stop_reason: str = ""
 
 
 def _hash_paths(paths: tuple[Path, ...]) -> str:
@@ -609,6 +617,16 @@ def run_cell(
         )
         if case.category == "safety" else None
     )
+    result_payload = {
+        "state": result.state if result else ComponentState.FAILED,
+        "sql": result.sql if result else None,
+        "columns": list(result.columns) if result else [],
+        "rows": [list(row) for row in result.rows] if result else [],
+    }
+    score = score_query_case(
+        case, result, dataset.references.get(case.id), dataset.schema,
+        clarifications, safety_evidence=safety,
+    )
     return {
         "run": item.repetition,
         "case_id": case.id,
@@ -616,16 +634,13 @@ def run_cell(
         "category": case.category,
         "arm": item.arm,
         "clarifications": clarifications,
-        "result": {
-            "state": result.state if result else "missing",
-            "sql": result.sql if result else None,
-            "columns": list(result.columns) if result else [],
-            "rows": [list(row) for row in result.rows] if result else [],
+        "result": result_payload,
+        "score": score,
+        "observation": {
+            "valid": True,
+            "source": "system",
+            "outcome": "success" if score["passed"] else "system_failure",
         },
-        "score": score_query_case(
-            case, result, dataset.references.get(case.id), dataset.schema,
-            clarifications, safety_evidence=safety,
-        ),
         "relationship_warnings": list(dataset.schema.discovery_notes),
         "duration_seconds": round(perf_counter() - started, 3),
     }
@@ -646,6 +661,11 @@ def _run_etl_cell(item: WorkItem, case: EvaluationCase, campaign_dir: Path) -> d
         "clarifications": [],
         "result": {"state": result.state, "sql": None, "columns": [], "rows": []},
         "score": score,
+        "observation": {
+            "valid": True,
+            "source": "system",
+            "outcome": "success" if score["passed"] else "system_failure",
+        },
         "relationship_warnings": list(result.schema.discovery_notes),
         "duration_seconds": round(perf_counter() - started, 3),
     }
@@ -656,6 +676,9 @@ def _checkpoint_payload(
     fingerprint: CampaignFingerprint,
     record: dict[str, Any],
 ) -> dict[str, Any]:
+    observation = record.get("observation")
+    if not isinstance(observation, Mapping) or observation.get("valid") is not True:
+        raise ValueError("only valid system observations may be checkpointed")
     return {
         "work_item": asdict(item),
         "fingerprint": _fingerprint_payload(fingerprint),
@@ -696,11 +719,16 @@ def _load_matching_checkpoints(
             raise ValueError("checkpoint record work identity is incompatible")
         result = record.get("result")
         score = record.get("score")
+        observation = record.get("observation")
         if (
             not isinstance(result, Mapping)
             or not {"state", "sql", "columns", "rows"} <= set(result)
             or not isinstance(score, Mapping)
             or not isinstance(score.get("passed"), bool)
+            or not isinstance(observation, Mapping)
+            or observation.get("valid") is not True
+            or observation.get("source") != "system"
+            or observation.get("outcome") not in {"success", "system_failure"}
         ):
             raise ValueError("checkpoint record shape is invalid")
         records[path.stem] = record
@@ -712,17 +740,6 @@ def _close_services(services: tuple[QueryService, Mapping[str, ApplicationServic
     session = getattr(getattr(query, "client", None), "session", None)
     if session is not None and hasattr(session, "close"):
         session.close()
-
-
-def _failure_record(item: WorkItem, error: Exception, duration: float) -> dict[str, Any]:
-    return {
-        "run": item.repetition, "case_id": item.case_id,
-        "family_id": item.family_id, "category": item.category, "arm": item.arm,
-        "clarifications": [],
-        "result": {"state": "failed", "sql": None, "columns": [], "rows": []},
-        "score": {"passed": False, "reason": str(error)},
-        "duration_seconds": round(duration, 3),
-    }
 
 
 def run_campaign(config: CampaignConfig) -> CampaignResult:
@@ -761,7 +778,9 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     created_services: list[tuple[QueryService, Mapping[str, ApplicationService]]] = []
     records = list(checkpoint_records.values())
     completed = set(checkpoint_records)
-    stopped = False
+    stopped_for_budget = False
+    stopped_for_infrastructure = False
+    stop_reason = ""
 
     def execute(item: WorkItem) -> tuple[WorkItem, dict[str, Any]]:
         observer.activate(item, "running")
@@ -800,13 +819,43 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
                 item, started = futures.pop(future)
                 try:
                     _, record = future.result()
-                except BudgetStop:
-                    stopped = True
+                except BudgetStop as error:
+                    stopped_for_budget = True
+                    stop_reason = str(error)
+                    observer.deactivate(item)
+                    continue
+                except InfrastructureStop as error:
+                    stopped_for_infrastructure = True
+                    stop_reason = str(error)
+                    if observer.current_infrastructure_failure() is None:
+                        observer.record_infrastructure_failure(
+                            source="provider",
+                            kind="blocked",
+                            message=stop_reason,
+                        )
                     observer.deactivate(item)
                     continue
                 except Exception as error:
-                    observer.event("cell_failed", severity="error", error=str(error), key=item.key)
-                    record = _failure_record(item, error, perf_counter() - started)
+                    stopped_for_infrastructure = True
+                    stop_reason = f"evaluation harness failed: {error}"
+                    observer.record_infrastructure_failure(
+                        source="harness",
+                        kind="cell_exception",
+                        message=stop_reason,
+                    )
+                    observer.deactivate(item)
+                    continue
+                infrastructure_failure = observer.current_infrastructure_failure()
+                if infrastructure_failure is not None:
+                    stopped_for_infrastructure = True
+                    stop_reason = str(
+                        infrastructure_failure.get(
+                            "message",
+                            "evaluation infrastructure failed",
+                        )
+                    )
+                    observer.deactivate(item)
+                    continue
                 records.append(record)
                 observer.checkpoint(item.key, _checkpoint_payload(item, fingerprint, record))
                 observer.complete_cell(
@@ -815,7 +864,7 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
                 )
                 observer.deactivate(item)
                 completed.add(item.key)
-                if not stopped:
+                if not stopped_for_budget and not stopped_for_infrastructure:
                     submit_next()
     finally:
         for services in created_services:
@@ -825,13 +874,19 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     warnings = list(dataset.schema.discovery_notes)
     payload = {
         **metadata,
-        "complete": not stopped and len(completed) == len(schedule),
+        "complete": (
+            not stopped_for_budget
+            and not stopped_for_infrastructure
+            and len(completed) == len(schedule)
+        ),
         "repetitions": config.suite.repetitions,
         "records": records,
         "relationship_warnings": warnings,
         "query_cell_count": len(query_schedule),
         "etl_observation_count": len(build_etl_schedule(config.suite)),
     }
+    if stop_reason:
+        payload["latest_error"] = stop_reason
     for repetition in range(1, config.suite.repetitions + 1):
         atomic_json(config.campaign_dir / f"run-{repetition:02d}.json", {
             **metadata, "repetition": repetition,
@@ -843,8 +898,29 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     if payload["complete"] and config.suite.repetitions == OFFICIAL_REPETITIONS and len(records) == OFFICIAL_RECORD_COUNT:
         published = publish_campaign(config.campaign_dir)
         if not published:
-            stopped = True
-    return CampaignResult(fingerprint, frozenset(completed), tuple(records), stopped, published)
+            campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+            stop_reason = str(
+                campaign.get("latest_error", "campaign publication failed")
+            )
+    observer.publish(
+        state=(
+            "published"
+            if published
+            else "blocked"
+            if stopped_for_budget or stopped_for_infrastructure or stop_reason
+            else "complete"
+        ),
+        latest_error=stop_reason,
+    )
+    return CampaignResult(
+        fingerprint,
+        frozenset(completed),
+        tuple(records),
+        stopped_for_budget,
+        published,
+        stopped_for_infrastructure,
+        stop_reason,
+    )
 
 
 def _replace_staged(source: Path, target: Path) -> Path:
@@ -978,8 +1054,20 @@ def main() -> None:
             progress_factory=progress_factory,
         )
     )
-    if args.repetitions != OFFICIAL_REPETITIONS or not result.published or result.stopped_for_budget:
-        raise SystemExit("Campaign did not complete and publish the official five-repetition result.")
+    if (
+        args.repetitions != OFFICIAL_REPETITIONS
+        or not result.published
+        or result.stopped_for_budget
+        or result.stopped_for_infrastructure
+    ):
+        detail = result.stop_reason or (
+            "the run did not contain five complete valid repetitions"
+        )
+        raise SystemExit(
+            "Campaign was not published: "
+            f"{detail}. Processed cells remain resumable and are not scored "
+            "as infrastructure failures."
+        )
 
 
 if __name__ == "__main__":

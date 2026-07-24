@@ -117,6 +117,17 @@ class ReportingTest(unittest.TestCase):
             "Progress, checkpoints, and resume", "Aggregation and publication", "Interpretation limits",
         ):
             self.assertIn(heading, document)
-        for decision in ("$3.75", "two workers", "K=1", "K=3", "22 query cases", "checkpoint after every campaign cell", "birth date", "admission date"):
+        for decision in (
+            "$3.75",
+            "two workers",
+            "K=1",
+            "K=3",
+            "22 query cases",
+            "checkpoint only after a",
+            "never enter correctness scoring",
+            "five valid",
+            "birth date",
+            "admission date",
+        ):
             self.assertIn(decision, document)
         self.assertNotIn("join-path ambiguity", document.casefold())

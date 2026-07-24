@@ -54,7 +54,8 @@ python -m benchmark_v3.run_evaluation --campaign-id official-20260723 --workers 
 
 Campaigns live under `benchmark_v3/results/runs/<campaign-id>`. Checkpoints
 and raw run reports are retained. Only a complete, valid five-repetition
-official campaign (450 records: 440 query cells and 10 ETL observations)
+official campaign (450 valid system observations: 440 query cells and 10 ETL
+observations)
 stages `aggregate.json` and both HTML files, then promotes all three with
 backups and rollback. Incomplete, budget-stopped, or errored campaigns never
 replace the public reports; a failed promotion restores the prior aggregate and
@@ -69,15 +70,21 @@ The campaign runner uses the four arms `baseline`, `candidate_only`,
 arms generate three. Its deterministic five-repetition schedule rotates arm
 order, runs at most two case/arm cells concurrently, and additionally executes
 the two shared ETL fixtures once per repetition. It writes atomic checkpoints
-and `campaign.json` before admitting work, then resumes only when campaign and
-checkpoint fingerprints match the suite, dataset, model, actual prompt/runtime
+only for valid system observations and writes `campaign.json` before admitting
+work. Wrong answers and other genuine DB Whisperer failures are checkpointed
+and scored; provider, credential, transport, and harness failures halt new
+work, remain operational evidence, and leave affected cells pending for
+resume. The runner resumes only when campaign and checkpoint fingerprints
+match the suite, dataset, model, actual prompt/runtime
 sources, scorer, and arms. Dataset/reference artifacts are fingerprinted and
 cached in the campaign directory; relationship-discovery warnings are carried
-into each report. The Windows launcher keeps one in-place `Overall evaluation`
+into each report. The Windows launcher keeps one in-place `Overall`
 line showing completed tests out of all 450 tests, overall percentage,
 campaign elapsed time, and campaign ETA. The compact line stays within a
 standard 80-column Command Prompt and does not print a separate progress block
-for each test.
+for each test. The final terminal message separately states whether those
+observations were published and gives the exact blocking reason when they were
+not.
 Use `--workers 1` for a conservative serial live run.
 
 Outputs under `benchmark_v3/results/` are ignored by git. Do not commit API

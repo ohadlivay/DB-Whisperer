@@ -43,6 +43,42 @@ class ResultsValidationTest(unittest.TestCase):
             payload = self._aggregate(directory)
         aggregation.validate_aggregate(payload)
 
+    def test_rejects_infrastructure_observation_from_official_scoring(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            report["records"][0]["observation"] = {
+                "valid": False,
+                "source": "provider",
+                "outcome": "infrastructure_failure",
+            }
+            report_path.write_text(json.dumps(report))
+
+            with self.assertRaisesRegex(ValueError, "valid system observation"):
+                self._aggregate(directory)
+
+    def test_accepts_valid_terminal_system_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            record = report["records"][0]
+            record["result"]["state"] = "failed"
+            record["score"]["passed"] = False
+            record["observation"] = {
+                "valid": True,
+                "source": "system",
+                "outcome": "system_failure",
+            }
+            report_path.write_text(json.dumps(report))
+
+            payload = self._aggregate(directory)
+
+        self.assertTrue(payload["failures"])
+
     def test_rejects_nonfinite_aggregate_metric(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

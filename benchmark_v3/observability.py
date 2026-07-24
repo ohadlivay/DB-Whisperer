@@ -54,6 +54,10 @@ class BudgetStop(RuntimeError):
     """Raised before a request when the recorded campaign cost is exhausted."""
 
 
+class InfrastructureStop(RuntimeError):
+    """Raised when evaluation infrastructure cannot produce a valid observation."""
+
+
 class UsageValidationError(ValueError):
     """Raised when provider usage cannot safely affect campaign budget."""
 
@@ -162,6 +166,7 @@ def initial_status(
         "active_by_key": {},
         "active": [],
         "latest_error": "",
+        "infrastructure_failure": None,
     }
     if status_path.exists():
         try:
@@ -183,6 +188,9 @@ def initial_status(
     # Work from a previous process is no longer active after initialization.
     status["active_by_key"] = {}
     status["active"] = []
+    # A new process may resume after credentials or provider availability were
+    # repaired. Historical failures remain durable in events.jsonl.
+    status["infrastructure_failure"] = None
     return status
 
 
@@ -507,6 +515,41 @@ class CampaignObserver:
             rendered = str(safe_error)
         self.publish(latest_error=rendered)
 
+    def record_infrastructure_failure(
+        self,
+        *,
+        source: str,
+        kind: str,
+        message: str,
+        status_code: int | None = None,
+    ) -> None:
+        """Block new model calls without turning an outage into a system score."""
+
+        failure = {
+            "source": source,
+            "kind": kind,
+            "message": str(_safe_value(message)),
+            "status_code": status_code,
+            "timestamp": utc_now(),
+        }
+        with self._lock:
+            if self.status.get("infrastructure_failure") is None:
+                self._publish_locked(
+                    state="blocked",
+                    infrastructure_failure=failure,
+                    latest_error=failure["message"],
+                )
+        self.event(
+            "infrastructure_failure",
+            severity="error",
+            **failure,
+        )
+
+    def current_infrastructure_failure(self) -> dict[str, Any] | None:
+        with self._lock:
+            failure = self.status.get("infrastructure_failure")
+            return dict(failure) if isinstance(failure, Mapping) else None
+
     def console(self, message: str) -> None:
         safe = str(_safe_value(message)).replace("\r", " ")
         try:
@@ -534,6 +577,9 @@ class CampaignObserver:
         """
 
         with self._lock:
+            failure = self.status.get("infrastructure_failure")
+            if isinstance(failure, Mapping):
+                raise InfrastructureStop(str(failure.get("message", "infrastructure failure")))
             if float(self.status.get("cost_usd", 0.0)) >= self.budget_usd:
                 raise BudgetStop(
                     "Campaign budget ceiling reached before paid request."
@@ -674,6 +720,11 @@ class InstrumentedSession(requests.Session):
                 on_retry=self.observer.record_retry,
             )
         except requests.RequestException as error:
+            self.observer.record_infrastructure_failure(
+                source="provider",
+                kind="transport",
+                message=str(error),
+            )
             self.observer.event(
                 "model_call_failed",
                 severity="error",
@@ -682,6 +733,12 @@ class InstrumentedSession(requests.Session):
             raise
         status_code = int(getattr(response, "status_code", 0))
         if status_code >= 400:
+            self.observer.record_infrastructure_failure(
+                source="provider",
+                kind="http",
+                message=f"HTTP {status_code} from model transport.",
+                status_code=status_code,
+            )
             self.observer.event(
                 "model_call_failed",
                 severity="error",
@@ -699,6 +756,11 @@ class InstrumentedSession(requests.Session):
                 cost_usd=cost_usd,
             )
         except UsageValidationError:
+            self.observer.record_infrastructure_failure(
+                source="provider",
+                kind="usage",
+                message="invalid provider usage",
+            )
             self.observer.event(
                 "model_call_failed",
                 severity="error",

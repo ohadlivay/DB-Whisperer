@@ -38,7 +38,7 @@ from benchmark_v3.run_evaluation import (
 )
 from benchmark_v3.run_evaluation import BENCHMARK_DIR, DEFAULT_OUTPUT, DEFAULT_SUITE, PROJECT_ROOT, SRC
 from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
-from benchmark_v3.observability import BudgetStop
+from benchmark_v3.observability import BudgetStop, InfrastructureStop
 
 
 SUITE_PATH = (
@@ -72,6 +72,11 @@ class CampaignTest(unittest.TestCase):
             "arm": item.arm, "clarifications": [],
             "result": {"state": ComponentState.FAILED, "sql": None, "columns": [], "rows": []},
             "score": {"passed": passed}, "duration_seconds": 0.01,
+            "observation": {
+                "valid": True,
+                "source": "system",
+                "outcome": "success" if passed else "system_failure",
+            },
         }
 
     def test_compatible_checkpoint_skips_exactly_that_cell(self) -> None:
@@ -193,9 +198,17 @@ class CampaignTest(unittest.TestCase):
             _campaign_directory("../unsafe")
 
     def test_main_exits_nonzero_when_campaign_is_not_published(self) -> None:
-        result = CampaignResult(CampaignFingerprint("suite", "data", "model", "prompt", "scorer", 3, (), "runtime"), frozenset(), (), published=False)
+        result = CampaignResult(
+            CampaignFingerprint(
+                "suite", "data", "model", "prompt", "scorer", 3, (), "runtime"
+            ),
+            frozenset(),
+            (),
+            published=False,
+            stop_reason="provider authorization failed",
+        )
         with patch("benchmark_v3.run_evaluation.run_campaign", return_value=result), patch("benchmark_v3.run_evaluation.os.getenv", return_value="key"), patch("sys.argv", ["run_evaluation", "--campaign-id", "smoke"]):
-            with self.assertRaisesRegex(SystemExit, "did not complete"):
+            with self.assertRaisesRegex(SystemExit, "provider authorization failed"):
                 main()
 
     def test_main_forces_single_line_progress_when_requested(self) -> None:
@@ -252,21 +265,52 @@ class CampaignTest(unittest.TestCase):
         self.assertTrue(result.stopped_for_budget)
         self.assertLessEqual(len(calls), 2)
 
-    def test_ordinary_failure_is_checkpointed_and_campaign_continues(self) -> None:
+    def test_harness_failure_is_not_checkpointed_or_scored(self) -> None:
         suite = self._suite()
         calls: list[str] = []
         def runner(item: WorkItem, *args: object) -> dict[str, object]:
             calls.append(item.key)
-            if item.arm == "baseline": raise RuntimeError("ordinary failure")
+            if len(calls) == 1:
+                raise RuntimeError("ordinary failure")
             return self._record(item)
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             result = run_campaign(CampaignConfig(suite, directory, "offline", 1, self._dataset(), cell_runner=runner))
-            failed = WorkItem(1, "case", "family", "correctness", "baseline")
-            checkpoint = json.loads((directory / "checkpoints" / f"{failed.key}.json").read_text())
-        self.assertEqual(4, len(calls))
-        self.assertIn(failed.key, result.completed_keys)
-        self.assertFalse(checkpoint["score"]["passed"])
+            failed_key = calls[0]
+            status = json.loads((directory / "status.json").read_text())
+            checkpoint_exists = (
+                directory / "checkpoints" / f"{failed_key}.json"
+            ).exists()
+        self.assertEqual(1, len(calls))
+        self.assertNotIn(failed_key, result.completed_keys)
+        self.assertFalse(checkpoint_exists)
+        self.assertTrue(result.stopped_for_infrastructure)
+        self.assertEqual("harness", status["infrastructure_failure"]["source"])
+
+    def test_provider_stop_leaves_cell_uncheckpointed_for_resume(self) -> None:
+        suite = self._suite()
+        calls: list[str] = []
+
+        def runner(item: WorkItem, *args: object) -> dict[str, object]:
+            calls.append(item.key)
+            raise InfrastructureStop("provider authorization failed")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result = run_campaign(
+                CampaignConfig(
+                    suite,
+                    Path(temporary),
+                    "offline",
+                    1,
+                    self._dataset(),
+                    cell_runner=runner,
+                )
+            )
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual(frozenset(), result.completed_keys)
+        self.assertTrue(result.stopped_for_infrastructure)
+        self.assertEqual(0, len(result.records))
 
     def test_fingerprint_changes_when_runtime_configuration_changes(self) -> None:
         suite = self._suite()

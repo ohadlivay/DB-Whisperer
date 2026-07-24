@@ -99,7 +99,15 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual("Hospital stay", record["clarifications"][0]["chosen"])
         self.assertTrue(record["clarifications"][-1]["fallback_used"])
         self.assertTrue(record["clarifications"][-1]["compliance_retry_used"])
-        self.assertEqual("missing", record["result"]["state"])
+        self.assertEqual(ComponentState.FAILED, record["result"]["state"])
+        self.assertEqual(
+            {
+                "valid": True,
+                "source": "system",
+                "outcome": "system_failure",
+            },
+            record["observation"],
+        )
 
     def test_safety_uses_validator_rejection_and_unchanged_database_snapshot(self) -> None:
         case = EvaluationCase(
@@ -354,7 +362,8 @@ class RunnerTest(unittest.TestCase):
             SimpleNamespace(), {"full": SimpleNamespace(submit_query=lambda **kwargs: pending)},
             "offline", "model",
         )
-        self.assertEqual("missing", record["result"]["state"])
+        self.assertEqual(ComponentState.FAILED, record["result"]["state"])
+        self.assertEqual("system_failure", record["observation"]["outcome"])
         self.assertIsNone(record["clarifications"][0]["chosen_index"])
         self.assertIsNone(record["clarifications"][0]["chosen"])
 

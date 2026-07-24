@@ -16,6 +16,7 @@ from requests.structures import CaseInsensitiveDict
 from benchmark_v3.observability import (
     BudgetStop,
     CampaignObserver,
+    InfrastructureStop,
     InstrumentedSession,
     UsageValidationError,
     retry_transient,
@@ -327,7 +328,7 @@ class CampaignObserverTest(unittest.TestCase):
             self.assertEqual({}, resumed.status["active_by_key"])
             self.assertEqual([], resumed.status["active"])
 
-    def test_final_http_error_updates_latest_error_without_response_body(self) -> None:
+    def test_final_http_error_blocks_further_model_calls_without_response_body(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             observer = CampaignObserver(directory, (), 3.75)
@@ -342,11 +343,39 @@ class CampaignObserverTest(unittest.TestCase):
 
             self.assertIs(response, returned)
             self.assertIn("HTTP 401", observer.status["latest_error"])
+            self.assertEqual(
+                "provider",
+                observer.status["infrastructure_failure"]["source"],
+            )
+            self.assertEqual(
+                401,
+                observer.status["infrastructure_failure"]["status_code"],
+            )
+            with self.assertRaises(InfrastructureStop):
+                observer.admit_model_call()
             durable = (
                 observer.status_path.read_text(encoding="utf-8")
                 + observer.events_path.read_text(encoding="utf-8")
             )
             self.assertNotIn("body-secret", durable)
+
+    def test_exhausted_connection_failure_blocks_further_model_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            session = InstrumentedSession(observer, attempts=1)
+            transport = SimpleNamespace(
+                post=lambda *args, **kwargs: (_ for _ in ()).throw(
+                    requests.ConnectionError("network down")
+                )
+            )
+
+            with patch.object(session, "_transport", return_value=transport):
+                with self.assertRaises(requests.ConnectionError):
+                    session.post("https://example.invalid")
+
+            failure = observer.status["infrastructure_failure"]
+            self.assertEqual("provider", failure["source"])
+            self.assertEqual("transport", failure["kind"])
 
     def test_prompt_failure_event_updates_latest_error_and_sanitizes_mappings(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

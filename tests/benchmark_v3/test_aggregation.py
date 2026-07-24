@@ -60,6 +60,13 @@ def _report(repetition: int, *, macro_fixture: bool = False) -> dict[str, object
                 "category": case.category, "arm": arm, "clarifications": [],
                 "result": {"state": "accepted", "sql": "SELECT 1", "columns": [], "rows": []},
                 "score": score, "duration_seconds": 0.5,
+                "observation": {
+                    "valid": True,
+                    "source": "system",
+                    "outcome": (
+                        "success" if score["passed"] else "system_failure"
+                    ),
+                },
             })
     for case in suite.etl_cases:
         records.append({
@@ -67,6 +74,11 @@ def _report(repetition: int, *, macro_fixture: bool = False) -> dict[str, object
             "category": case.category, "arm": "etl", "clarifications": [],
             "result": {"state": "accepted", "sql": None, "columns": [], "rows": []},
             "score": {"passed": True, "score": 1.0}, "duration_seconds": 0.25,
+            "observation": {
+                "valid": True,
+                "source": "system",
+                "outcome": "success",
+            },
         })
     return {
         "report_type": "dbwhisperer_v3_run", "suite_version": suite.version,

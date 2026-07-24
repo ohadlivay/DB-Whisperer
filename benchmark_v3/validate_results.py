@@ -143,8 +143,19 @@ def validate_reports(
                 raise ValueError("run record identity is incompatible")
             result = record.get("result")
             score = record.get("score")
+            observation = record.get("observation")
             if not isinstance(result, Mapping) or not isinstance(score, Mapping):
                 raise ValueError("run record result or score is missing")
+            if (
+                not isinstance(observation, Mapping)
+                or observation.get("valid") is not True
+                or observation.get("source") != "system"
+                or observation.get("outcome")
+                not in {"success", "system_failure"}
+            ):
+                raise ValueError(
+                    "run report requires a valid system observation for every cell"
+                )
             if str(result.get("state", "")).casefold() in UNRESOLVED_STATES:
                 raise ValueError("run report contains unresolved incomplete state")
             if not isinstance(score.get("passed"), bool):
