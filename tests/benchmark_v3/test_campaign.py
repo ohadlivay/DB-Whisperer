@@ -347,6 +347,8 @@ class CampaignTest(unittest.TestCase):
         self.assertIn("ZeroFreeBSTR", launcher)
         self.assertNotIn("set /p OPENROUTER_API_KEY", launcher)
         self.assertIn("--interactive-progress", launcher)
+        self.assertIn('if "%~2"=="1" set "REPETITIONS=1"', launcher)
+        self.assertIn("--repetitions %REPETITIONS%", launcher)
 
     def test_budget_stop_drains_admitted_cells_without_new_submissions(self) -> None:
         suite = self._suite(repetitions=2)

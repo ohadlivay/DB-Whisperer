@@ -26,10 +26,12 @@ set "EXIT_CODE=1"
 goto finish
 
 :launch
+set "REPETITIONS=5"
+if "%~2"=="1" set "REPETITIONS=1"
 if "%~1"=="" (
-  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5 --interactive-progress
+  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions %REPETITIONS% --interactive-progress
 ) else (
-  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions 5 --interactive-progress --campaign-id "%~1"
+  "%PYTHON_EXE%" -m benchmark_v3.run_evaluation --workers 2 --repetitions %REPETITIONS% --interactive-progress --campaign-id "%~1"
 )
 set "EXIT_CODE=%ERRORLEVEL%"
 set "OPENROUTER_API_KEY="
