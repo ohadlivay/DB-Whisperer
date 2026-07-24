@@ -21,6 +21,7 @@ from benchmark_v3.run_evaluation import (
     CampaignResult,
     WorkItem,
     _checkpoint_payload,
+    _run_etl_cell,
     _cached_dataset_is_valid,
     _hash_paths,
     _fingerprint,
@@ -143,7 +144,7 @@ class CampaignTest(unittest.TestCase):
             with patch("benchmark_v3.aggregate_results.aggregate_campaign", side_effect=AssertionError("aggregate")), patch("benchmark_v3.render_report.write_reports", side_effect=AssertionError("render")):
                 self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
             campaign = json.loads((directory / "campaign.json").read_text())
-            self.assertFalse(campaign["complete"]); self.assertIn("frozen default suite", campaign["latest_error"])
+            self.assertTrue(campaign["complete"]); self.assertIn("frozen default suite", campaign["latest_error"])
             self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
 
     def test_publication_writes_aggregate_then_exactly_two_reports(self) -> None:
@@ -189,8 +190,77 @@ class CampaignTest(unittest.TestCase):
             with patch("benchmark_v3.aggregate_results.aggregate_campaign", side_effect=RuntimeError("broken aggregate")):
                 self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
             campaign = json.loads((directory / "campaign.json").read_text())
-            self.assertFalse(campaign["complete"]); self.assertIn("publication failed", campaign["latest_error"])
+            self.assertTrue(campaign["complete"]); self.assertIn("publication failed", campaign["latest_error"])
             self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
+
+    def test_checkpoint_rejects_non_system_observation_even_when_marked_valid(self) -> None:
+        item = WorkItem(1, "case", "family", "correctness", "baseline")
+        record = self._record(item)
+        record["observation"] = {
+            "valid": True,
+            "source": "provider",
+            "outcome": "infrastructure_failure",
+        }
+
+        with self.assertRaisesRegex(ValueError, "valid system observation"):
+            _checkpoint_payload(item, _fingerprint(self._suite(), "dataset"), record)
+
+    def test_failed_etl_observation_receives_zero_credit(self) -> None:
+        item = WorkItem(1, "etl_case", "etl_family", "etl", "etl")
+        case = EvaluationCase(
+            id="etl_case",
+            family_id="etl_family",
+            kind="etl",
+            category="etl",
+            question="",
+            fixture_files=(),
+            manifest={},
+        )
+        failed_ingestion = SimpleNamespace(
+            state=ComponentState.FAILED,
+            schema=SchemaMetadata(),
+        )
+        service = SimpleNamespace(ingest=lambda uploads: failed_ingestion)
+
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("benchmark_v3.run_evaluation.ETLService", return_value=service),
+            patch(
+                "benchmark_v3.run_evaluation.score_etl_manifest",
+                return_value={"score": 0.75},
+            ),
+        ):
+            record = _run_etl_cell(item, case, Path(temporary))
+
+        self.assertFalse(record["score"]["passed"])
+        self.assertEqual(0.0, record["score"]["score"])
+        self.assertEqual("system_failure", record["observation"]["outcome"])
+
+    def test_dataset_preparation_failure_is_resumable_infrastructure_stop(self) -> None:
+        suite = self._suite()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch(
+                "benchmark_v3.run_evaluation._prepare_dataset",
+                side_effect=RuntimeError("dataset preparation broke"),
+            ):
+                result = run_campaign(
+                    CampaignConfig(
+                        suite,
+                        directory,
+                        "offline",
+                        1,
+                        dataset=None,
+                    )
+                )
+            status = json.loads((directory / "status.json").read_text())
+            campaign = json.loads((directory / "campaign.json").read_text())
+
+        self.assertTrue(result.stopped_for_infrastructure)
+        self.assertIn("dataset preparation broke", result.stop_reason)
+        self.assertEqual("harness", status["infrastructure_failure"]["source"])
+        self.assertFalse(campaign["complete"])
+        self.assertIn("dataset preparation broke", campaign["latest_error"])
 
     def test_campaign_directory_uses_safe_unique_slug_shape(self) -> None:
         self.assertEqual(DEFAULT_OUTPUT / "official-20260723", _campaign_directory("official-20260723"))
@@ -209,6 +279,31 @@ class CampaignTest(unittest.TestCase):
         )
         with patch("benchmark_v3.run_evaluation.run_campaign", return_value=result), patch("benchmark_v3.run_evaluation.os.getenv", return_value="key"), patch("sys.argv", ["run_evaluation", "--campaign-id", "smoke"]):
             with self.assertRaisesRegex(SystemExit, "provider authorization failed"):
+                main()
+
+    def test_main_distinguishes_complete_processing_from_publication_failure(self) -> None:
+        result = CampaignResult(
+            CampaignFingerprint(
+                "suite", "data", "model", "prompt", "scorer", 3, (), "runtime"
+            ),
+            frozenset(f"cell-{index}" for index in range(450)),
+            (),
+            published=False,
+            stop_reason="publication failed: renderer broke",
+            publication_failed=True,
+        )
+        with (
+            patch("benchmark_v3.run_evaluation.run_campaign", return_value=result),
+            patch("benchmark_v3.run_evaluation.os.getenv", return_value="key"),
+            patch(
+                "sys.argv",
+                ["run_evaluation", "--campaign-id", "official"],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "Processing completed.*publication failed.*No evaluation cells need rerun",
+            ):
                 main()
 
     def test_main_forces_single_line_progress_when_requested(self) -> None:

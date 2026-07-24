@@ -72,11 +72,12 @@ order, runs at most two case/arm cells concurrently, and additionally executes
 the two shared ETL fixtures once per repetition. It writes atomic checkpoints
 only for valid system observations and writes `campaign.json` before admitting
 work. Wrong answers and other genuine DB Whisperer failures are checkpointed
-and scored; provider, credential, transport, and harness failures halt new
-work, remain operational evidence, and leave affected cells pending for
-resume. The runner resumes only when campaign and checkpoint fingerprints
-match the suite, dataset, model, actual prompt/runtime
-sources, scorer, and arms. Dataset/reference artifacts are fingerprinted and
+and scored; provider error envelopes, credential, transport, dataset
+preparation, and harness failures halt new work, remain operational evidence,
+and leave affected cells pending for resume. Failed ETL observations are valid
+system failures but receive zero ETL credit. The runner resumes only when
+campaign and checkpoint fingerprints match the suite, dataset, model, actual
+prompt/runtime sources, scorer, and arms. Dataset/reference artifacts are fingerprinted and
 cached in the campaign directory; relationship-discovery warnings are carried
 into each report. The Windows launcher keeps one in-place `Overall`
 line showing completed tests out of all 450 tests, overall percentage,

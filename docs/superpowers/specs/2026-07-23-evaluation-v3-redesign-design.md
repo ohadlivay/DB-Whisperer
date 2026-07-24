@@ -265,11 +265,13 @@ for redirected logs and CI.
 Resume requires matching suite, dataset, model, prompt/configuration, arm,
 scorer, and runtime fingerprints. Genuine DB Whisperer failures under healthy
 evaluation conditions are valid observations, are recorded, and score zero.
-Provider, credential, exhausted transport-retry, and harness failures are
-infrastructure failures: they stop new work, remain operational evidence, and
-leave affected cells uncheckpointed so they cannot affect system scores.
-Dataset, suite, fingerprint, infrastructure, or aggregation failures stop the
-run.
+Provider error envelopes, credential, exhausted transport-retry,
+dataset-preparation, and harness failures are infrastructure failures: they
+stop new work, remain operational evidence, and leave affected cells
+uncheckpointed so they cannot affect system scores. Dataset, suite,
+fingerprint, or infrastructure failures stop processing. A completed campaign
+retains its processing-complete state if aggregation or report publication
+fails, allowing publication to be retried without rerunning cells.
 
 A budget stop happens before launching a new paid operation, creates an
 explicitly incomplete resumable campaign, and cannot publish or enter an

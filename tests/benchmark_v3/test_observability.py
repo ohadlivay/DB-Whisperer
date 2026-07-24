@@ -419,6 +419,58 @@ class CampaignObserverTest(unittest.TestCase):
             self.assertIn("visible", durable)
             self.assertIn("[REDACTED]", observer.status["latest_error"])
 
+    def test_successful_http_envelope_with_provider_request_failure_blocks_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+
+            observer.prompt_logger.log_event(
+                event="request_failed",
+                component="querier",
+                details={"error": "response contained provider error envelope"},
+            )
+
+            failure = observer.current_infrastructure_failure()
+            self.assertIsNotNone(failure)
+            self.assertEqual("provider", failure["source"])
+            self.assertEqual("response", failure["kind"])
+
+    def test_explicit_provider_error_in_validation_event_blocks_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+
+            observer.prompt_logger.log_event(
+                event="response_validation_failed",
+                component="ambiguity",
+                details={
+                    "finish_reason": "error",
+                    "choice_error": {
+                        "code": "provider_error",
+                        "message": "upstream generation failed",
+                    },
+                },
+            )
+
+            failure = observer.current_infrastructure_failure()
+            self.assertIsNotNone(failure)
+            self.assertEqual("provider", failure["source"])
+            self.assertEqual("response", failure["kind"])
+            self.assertIn("upstream generation failed", failure["message"])
+
+    def test_malformed_model_output_remains_a_system_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+
+            observer.prompt_logger.log_event(
+                event="response_validation_failed",
+                component="querier",
+                details={
+                    "error": "JSON response did not contain an SQL field",
+                    "expected": "SQL object",
+                },
+            )
+
+            self.assertIsNone(observer.current_infrastructure_failure())
+
     def test_concurrent_status_event_prompt_and_checkpoint_writes_are_valid(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

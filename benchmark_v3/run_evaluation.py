@@ -144,6 +144,7 @@ class CampaignResult:
     published: bool = False
     stopped_for_infrastructure: bool = False
     stop_reason: str = ""
+    publication_failed: bool = False
 
 
 def _hash_paths(paths: tuple[Path, ...]) -> str:
@@ -652,6 +653,8 @@ def _run_etl_cell(item: WorkItem, case: EvaluationCase, campaign_dir: Path) -> d
     result = ETLService(database_path=fixture_db).ingest(_uploads(case.fixture_files))
     score = score_etl_manifest(result.schema, case.manifest or {})
     score["passed"] = bool(result.state == ComponentState.ACCEPTED and score["score"] == 1.0)
+    if not score["passed"]:
+        score["score"] = 0.0
     return {
         "run": item.repetition,
         "case_id": case.id,
@@ -677,7 +680,12 @@ def _checkpoint_payload(
     record: dict[str, Any],
 ) -> dict[str, Any]:
     observation = record.get("observation")
-    if not isinstance(observation, Mapping) or observation.get("valid") is not True:
+    if (
+        not isinstance(observation, Mapping)
+        or observation.get("valid") is not True
+        or observation.get("source") != "system"
+        or observation.get("outcome") not in {"success", "system_failure"}
+    ):
         raise ValueError("only valid system observations may be checkpointed")
     return {
         "work_item": asdict(item),
@@ -768,9 +776,32 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
         dataset = config.dataset or _prepare_dataset(
             config.suite, config.campaign_dir, dataset_hash,
         )
-    except Exception:
+    except Exception as error:
+        stop_reason = f"dataset preparation failed: {error}"
+        observer.record_infrastructure_failure(
+            source="harness",
+            kind="dataset_preparation",
+            message=stop_reason,
+        )
         progress.stop()
-        raise
+        atomic_json(
+            campaign_path,
+            {
+                **metadata,
+                "complete": False,
+                "repetitions": config.suite.repetitions,
+                "records": list(checkpoint_records.values()),
+                "latest_error": stop_reason,
+            },
+        )
+        observer.publish(state="blocked", latest_error=stop_reason)
+        return CampaignResult(
+            fingerprint,
+            frozenset(checkpoint_records),
+            tuple(checkpoint_records.values()),
+            stopped_for_infrastructure=True,
+            stop_reason=stop_reason,
+        )
     query_cases = {case.id: case for case in config.suite.query_cases}
     etl_cases = {case.id: case for case in config.suite.etl_cases}
     services_by_thread = local()
@@ -895,9 +926,11 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
         })
     atomic_json(campaign_path, payload)
     published = False
+    publication_failed = False
     if payload["complete"] and config.suite.repetitions == OFFICIAL_REPETITIONS and len(records) == OFFICIAL_RECORD_COUNT:
         published = publish_campaign(config.campaign_dir)
         if not published:
+            publication_failed = True
             campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
             stop_reason = str(
                 campaign.get("latest_error", "campaign publication failed")
@@ -906,6 +939,8 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
         state=(
             "published"
             if published
+            else "publication_failed"
+            if publication_failed
             else "blocked"
             if stopped_for_budget or stopped_for_infrastructure or stop_reason
             else "complete"
@@ -920,6 +955,7 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
         published,
         stopped_for_infrastructure,
         stop_reason,
+        publication_failed,
     )
 
 
@@ -971,7 +1007,6 @@ def publish_campaign(
     ):
         return False
     if campaign.get("suite_hash") != load_suite(DEFAULT_SUITE).sha256:
-        campaign["complete"] = False
         campaign["latest_error"] = "official publication requires the frozen default suite hash"
         atomic_json(campaign_path, campaign)
         return False
@@ -1001,7 +1036,6 @@ def publish_campaign(
         atomic_json(campaign_path, campaign)
         return True
     except Exception as error:
-        campaign["complete"] = False
         campaign["latest_error"] = f"publication failed: {error}"
         atomic_json(campaign_path, campaign)
         return False
@@ -1054,6 +1088,13 @@ def main() -> None:
             progress_factory=progress_factory,
         )
     )
+    if result.publication_failed:
+        detail = result.stop_reason or "publication failed"
+        raise SystemExit(
+            "Processing completed with all 450 valid observations, but "
+            f"publication failed: {detail}. No evaluation cells need rerun; "
+            "publication can be retried."
+        )
     if (
         args.repetitions != OFFICIAL_REPETITIONS
         or not result.published

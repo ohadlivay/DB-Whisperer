@@ -34,16 +34,20 @@ The runner records campaign-wide progress and writes a checkpoint only after a
 valid system observation, with immutable suite, model, runtime, and scoring
 fingerprints. A wrong result, rejected SQL, or unresolved clarification under
 healthy evaluation conditions is a valid DB Whisperer failure and scores zero.
-Provider, transport, credential, and harness failures are evaluation
-infrastructure failures: they are retained in status and event evidence, stop
-new work, and never enter correctness scoring. Their affected cells remain
-uncheckpointed so a compatible resumed campaign still obtains five valid
-observations per test. Resume is permitted only when fingerprints match;
-incomplete or incompatible runs are excluded from aggregation.
+Provider error envelopes, transport, credential, dataset-preparation, and
+harness failures are evaluation infrastructure failures: they are retained in
+status and event evidence, stop new work, and never enter correctness scoring.
+Their affected cells remain uncheckpointed so a compatible resumed campaign
+still obtains five valid observations per test. Resume is permitted only when
+fingerprints match; incomplete or incompatible runs are excluded from
+aggregation.
 
 Accordingly, `450/450` means that all 440 query cells and 10 shared ETL cells
 have valid observations. It is distinct from the final publication state,
 which the terminal reports explicitly along with any blocking reason.
+If all observations are complete but report publication fails, the campaign
+retains its complete processing state and reports that publication alone must
+be retried.
 
 ## Aggregation and publication
 

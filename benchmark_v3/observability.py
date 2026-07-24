@@ -339,6 +339,35 @@ class _SafePromptLogger:
         if model:
             record["model"] = model.strip()
         self._observer._append_jsonl(self._observer.prompt_path, record)
+        normalized_event = event.casefold()
+        provider_failure_message: str | None = None
+        if normalized_event == "request_failed":
+            provider_failure_message = str(
+                details.get(
+                    "error",
+                    "provider response could not produce a valid API result",
+                )
+            )
+        elif normalized_event == "response_validation_failed":
+            choice_error = details.get("choice_error")
+            if isinstance(choice_error, Mapping) and choice_error:
+                provider_failure_message = str(
+                    choice_error.get("message") or "provider response failed"
+                )
+            elif (
+                str(details.get("finish_reason", "")).casefold() == "error"
+                or str(details.get("native_finish_reason", "")).casefold()
+                == "error"
+            ):
+                provider_failure_message = (
+                    "OpenRouter reported a provider generation error."
+                )
+        if provider_failure_message is not None:
+            self._observer.record_infrastructure_failure(
+                source="provider",
+                kind="response",
+                message=provider_failure_message,
+            )
         if "fail" in event.casefold() or "error" in event.casefold():
             latest_error = details.get("error", details.get("message", event))
             self._observer.record_latest_error(latest_error)
