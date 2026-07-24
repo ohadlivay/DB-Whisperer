@@ -455,7 +455,16 @@ def results_compatible(
 
 
 def _canonical_expression(expression: exp.Expression) -> str:
-    copied = expression.copy()
+    copied = expression.copy().transform(
+        lambda node: (
+            exp.Year(this=node.expression.copy())
+            if (
+                isinstance(node, exp.Extract)
+                and str(node.this).casefold() == "year"
+            )
+            else node
+        )
+    )
     for identifier in copied.find_all(exp.Identifier):
         identifier.set("quoted", False)
     for column in copied.find_all(exp.Column):

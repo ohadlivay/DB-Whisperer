@@ -23,8 +23,10 @@ Correctness is scored from the expected result and executable SQL evidence. Mult
 Required SQL filters are compared as parsed expressions after removing table
 qualification and identifier-quoting differences. Thus `subject_id`,
 `"subject_id"`, and `i."subject_id"` are equivalent evidence for a declared
-filter. Publication rejects any stored “required filter is missing” reason
-that contradicts the parsed generated SQL.
+filter. DuckDB's equivalent `YEAR(column)` and
+`EXTRACT(YEAR FROM column)` forms are normalized as well. Publication rejects
+any stored “required filter is missing” reason that contradicts the parsed
+generated SQL.
 
 ## K=3, five repetitions, and budget control
 

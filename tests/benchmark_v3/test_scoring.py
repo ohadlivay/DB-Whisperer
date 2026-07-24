@@ -737,6 +737,37 @@ class ScoringTest(unittest.TestCase):
                 )
                 self.assertNotIn("required filter is missing", score["reason"])
 
+    def test_required_filter_treats_year_and_extract_year_as_equivalent(self) -> None:
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT dob FROM patients "
+                "WHERE EXTRACT(YEAR FROM dob) = 2112"
+            ),
+            required_tables=("patients",),
+            required_column_groups=(("dob",),),
+            required_filters=("EXTRACT(YEAR FROM dob) = 2112",),
+        )
+        actual = result(
+            'SELECT "dob" FROM "patients" WHERE YEAR("dob") = 2112',
+            ("dob",),
+            ((date(2112, 1, 1),),),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("dob",),
+            ((date(2112, 1, 1),),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertNotIn("required filter is missing", score["reason"])
+
     def test_ambiguous_success_requires_compliance_and_final_alignment(
         self,
     ) -> None:
