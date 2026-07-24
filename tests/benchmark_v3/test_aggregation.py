@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections import Counter
+from copy import deepcopy
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import benchmark_v3.aggregate_results as aggregation
 from benchmark_v3.contracts import load_suite
@@ -157,6 +160,21 @@ class AggregationTest(unittest.TestCase):
         )
         model = build_report_model(aggregate)
         self.assertTrue({"methodology", "headline_metrics", "arm_cards", "charts", "tables", "findings", "limitations", "cases", "evidence", "ambiguity_funnel", "operations", "warnings"} <= set(model))
+        self.assertIn("paired, stratified", model["methodology"]["bootstrap"])
+        self.assertIn("2,000-replicate", model["methodology"]["bootstrap"])
+        self.assertIn("repetitions", model["methodology"]["bootstrap"])
+        self.assertIn("question families", model["methodology"]["bootstrap"])
+        self.assertIn(
+            "repetition-only",
+            model["methodology"]["shared_etl_uncertainty"],
+        )
+        self.assertEqual(3, len(model["findings"]))
+        self.assertTrue(
+            any("paired difference" in item for item in model["findings"])
+        )
+        self.assertTrue(
+            any("final alignment" in item for item in model["findings"])
+        )
         query_case = next(row for row in model["cases"] if row["arm"] == "full")
         self.assertNotEqual("Not recorded", query_case.get("question"))
         self.assertTrue(query_case.get("expected_sql"))
@@ -178,6 +196,98 @@ class AggregationTest(unittest.TestCase):
             list(bootstrap_ci(run_values)),
             aggregate["arms"]["full"]["composite"]["confidence_interval_95"],
         )
+
+    def test_family_bootstrap_recomputes_the_campaign_statistic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            aggregate = self._aggregate(directory)
+
+        full = aggregate["arms"]["full"]
+        distributions = [
+            full["pass_rate"],
+            full["composite"],
+            *full["components"].values(),
+            *full["ambiguity_metrics"].values(),
+        ]
+        for metric in distributions:
+            with self.subTest(metric=metric):
+                lower, upper = metric["confidence_interval_95"]
+                self.assertLessEqual(lower, metric["mean"])
+                self.assertGreaterEqual(upper, metric["mean"])
+
+    def test_family_bootstrap_is_paired_and_deterministic(self) -> None:
+        reports = [_report(index) for index in range(1, 6)]
+        for report in reports:
+            baseline_scores = {
+                row["case_id"]: row["score"]
+                for row in report["records"]
+                if row["arm"] == "baseline"
+            }
+            for row in report["records"]:
+                if row["arm"] in ARMS:
+                    row["score"] = deepcopy(
+                        baseline_scores[row["case_id"]]
+                    )
+
+        first = aggregation._bootstrap_campaign_estimates(
+            reports,
+            [100.0] * 5,
+            samples=25,
+        )
+        second = aggregation._bootstrap_campaign_estimates(
+            reports,
+            [100.0] * 5,
+            samples=25,
+        )
+
+        self.assertEqual(first, second)
+        _, deltas = first
+        for arm in deltas.values():
+            for estimates in arm.values():
+                self.assertEqual({0.0}, set(estimates))
+
+    def test_family_bootstrap_preserves_strata_and_cluster_occurrences(
+        self,
+    ) -> None:
+        reports = [_report(index) for index in range(1, 6)]
+        calls: list[tuple[int, Counter[str], int]] = []
+        real_summarize = summarize_arm
+
+        def recording_summary(
+            rows: list[dict[str, object]],
+            etl_score: float,
+        ) -> dict[str, object]:
+            calls.append((
+                len(rows),
+                Counter(str(row["category"]) for row in rows),
+                len({str(row["family_id"]) for row in rows}),
+            ))
+            return real_summarize(rows, etl_score)
+
+        with patch(
+            "benchmark_v3.aggregate_results.summarize_arm",
+            side_effect=recording_summary,
+        ):
+            aggregation._bootstrap_campaign_estimates(
+                reports,
+                [100.0] * 5,
+                samples=3,
+            )
+
+        self.assertEqual(12, len(calls))
+        for row_count, categories, family_count in calls:
+            self.assertEqual(110, row_count)
+            self.assertEqual(
+                Counter({
+                    "ambiguity": 30,
+                    "control": 30,
+                    "correctness": 30,
+                    "safety": 20,
+                }),
+                categories,
+            )
+            self.assertEqual(13, family_count)
 
     def test_includes_frozen_ambiguity_etl_components_and_shared_etl_per_repetition(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

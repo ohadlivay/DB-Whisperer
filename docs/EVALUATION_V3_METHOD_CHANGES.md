@@ -69,11 +69,17 @@ live canary. The five-repetition run is admitted only after both gates pass.
 ## Aggregation and publication
 
 Aggregation uses only complete compatible repetitions containing valid system
-observations. It reports uncertainty from question-family bootstrap resampling
-and keeps case-level SQL, results, scores, transcripts, candidate support,
-compliance, system failures, and provenance. Infrastructure failures remain
-separate operational evidence. Publication produces exactly a one-page method
-summary and an eight-tab evidence report.
+observations. Arm metrics and deltas report uncertainty with 2,000 paired,
+stratified percentile-bootstrap replicates: repetitions and question families
+are resampled, ambiguity/control, correctness, and safety strata retain their
+designed sizes, and the complete campaign statistic is recomputed for every
+replicate. The same resample is used across arms so arm deltas remain paired.
+Shared ETL instead uses a 2,000-replicate repetition-only percentile bootstrap.
+This avoids mixing a complete-run point estimate with independently averaged
+family summaries. Case-level SQL, results, scores, transcripts, candidate
+support, compliance, system failures, and provenance remain available.
+Infrastructure failures remain separate operational evidence. Publication
+produces exactly a one-page method summary and an eight-tab evidence report.
 
 ## Interpretation limits
 

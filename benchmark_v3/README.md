@@ -91,7 +91,16 @@ Before an official run, replay validation should reject known-contaminated
 records and a one-repetition canary should be audited for valid observation
 provenance, parsed-filter consistency, and final clarification compliance.
 Identifier quoting and table qualification do not change required-filter
-semantics.
+semantics, and DuckDB's `YEAR(column)` and
+`EXTRACT(YEAR FROM column)` forms are treated as equivalent.
+
+Arm-metric and arm-delta 95% confidence intervals use 2,000 paired,
+stratified percentile-bootstrap replicates over both repetitions and question
+families. Each replicate preserves the designed ambiguity/control,
+correctness, and safety family counts, recomputes the complete score, and
+applies the same resample to every arm. Shared-ETL intervals use 2,000
+repetition-only percentile-bootstrap replicates because ETL is not an arm or
+question-family observation.
 Use `--workers 1` for a conservative serial live run.
 
 Outputs under `benchmark_v3/results/` are ignored by git. Do not commit API

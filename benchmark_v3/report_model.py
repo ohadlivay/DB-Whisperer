@@ -28,12 +28,46 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
                 "forbidden_tables": list(case.forbidden_tables),
             })
         records.append(evidence)
+    baseline = arms["baseline"]
+    full = arms["full"]
+    full_delta = aggregate["arm_deltas"]["full"]["composite"]
+    delta_lower, delta_upper = full_delta["confidence_interval_95"]
+    findings = [
+        (
+            f"Full System composite was {full['composite']['mean']:.2f}/100 "
+            f"versus Baseline {baseline['composite']['mean']:.2f}/100 "
+            f"(paired difference {full_delta['mean']:+.2f}; 95% CI "
+            f"{delta_lower:+.2f} to {delta_upper:+.2f})."
+        ),
+        (
+            "Full System ambiguity recall was "
+            f"{full['ambiguity_metrics']['recall']['mean']:.2f}% with "
+            f"{full['ambiguity_metrics']['specificity']['mean']:.2f}% "
+            "specificity, but final alignment was "
+            f"{full['ambiguity_metrics']['final_alignment']['mean']:.2f}%."
+        ),
+        (
+            "Strict query pass rates remained low: Full System "
+            f"{full['pass_rate']['mean']:.2f}% and Baseline "
+            f"{baseline['pass_rate']['mean']:.2f}%; correctness was "
+            f"{full['components']['correctness']['mean']:.2f}% and "
+            f"{baseline['components']['correctness']['mean']:.2f}%, "
+            "respectively."
+        ),
+    ]
     return {
         "title": "DB Whisperer Evaluation V3",
         "methodology": {
             "design": "five complete compatible repetitions",
             "ambiguity": "family-macro recall/specificity with frozen scoring weights",
-            "bootstrap": "question-family resampling, seed 20260723",
+            "bootstrap": (
+                "arm metrics/deltas: 2,000-replicate paired, stratified "
+                "percentile resampling of repetitions and question families, "
+                "seed 20260723"
+            ),
+            "shared_etl_uncertainty": (
+                "2,000-replicate repetition-only percentile bootstrap"
+            ),
         },
         "provenance": {
             "suite_version": aggregate["suite_version"],
@@ -55,7 +89,7 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
         "cases": records, "evidence": {
             "failures": aggregate["failures"], "oracle_reviews": aggregate["oracle_reviews"],
         },
-        "findings": [], "limitations": [
+        "findings": findings, "limitations": [
             "Operational usage is campaign-global when per-repetition attribution is unavailable."
         ], "warnings": aggregate.get("relationship_warnings", []),
         "records": records,

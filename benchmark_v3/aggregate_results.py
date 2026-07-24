@@ -29,12 +29,25 @@ COMPONENTS = (
 
 def bootstrap_ci(values: Sequence[float], *, samples: int = 2000) -> tuple[float, float]:
     rng = random.Random(BOOTSTRAP_SEED)
-    estimates = sorted(mean(rng.choices(tuple(values), k=len(values))) for _ in range(samples))
+    estimates = [
+        mean(rng.choices(tuple(values), k=len(values)))
+        for _ in range(samples)
+    ]
+    return _percentile_interval(estimates)
+
+
+def _percentile_interval(
+    estimates: Sequence[float],
+) -> tuple[float, float]:
+    estimates = sorted(estimates)
+    samples = len(estimates)
     return round(estimates[int(samples * 0.025)], 4), round(estimates[min(samples - 1, int(samples * 0.975))], 4)
 
 
 def distribution(
-    values: Sequence[float], *, bootstrap_units: Sequence[float] | None = None,
+    values: Sequence[float],
+    *,
+    bootstrap_estimates: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     if not values:
         return {"mean": None, "stddev": None, "min": None, "max": None, "confidence_interval_95": None}
@@ -42,7 +55,11 @@ def distribution(
         "mean": round(mean(values), 4),
         "stddev": round(pstdev(values), 4) if len(values) > 1 else 0.0,
         "min": round(min(values), 4), "max": round(max(values), 4),
-        "confidence_interval_95": list(bootstrap_ci(bootstrap_units or values)),
+        "confidence_interval_95": list(
+            _percentile_interval(bootstrap_estimates)
+            if bootstrap_estimates is not None
+            else bootstrap_ci(values)
+        ),
     }
 
 
@@ -68,29 +85,103 @@ def _per_run_arm(
     return output
 
 
-def _family_units(
-    records: Sequence[Mapping[str, Any]], arm: str, etl_score: float,
-) -> dict[str, list[float]]:
-    """Return bootstrap units: per-question-family frozen summaries."""
-    grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
-    for record in records:
-        if record["arm"] == arm:
-            grouped[str(record["family_id"])].append(record)
-    units: dict[str, list[float]] = defaultdict(list)
-    for rows in grouped.values():
-        summary = summarize_arm(list(rows), etl_score)
-        units["composite"].append(float(summary["composite"]))
-        for component in COMPONENTS:
-            units[component].append(100 * float(summary["components"][component]))
-        for label, value in summary["ambiguity_metrics"].items():
-            units[f"ambiguity.{label}"].append(100 * float(value))
-        units["pass_rate"].append(
-            100 * float(summary["passed_cases"]) / float(summary["case_count"])
+def _bootstrap_campaign_estimates(
+    reports: Sequence[Mapping[str, Any]],
+    etl_scores: Sequence[float],
+    *,
+    samples: int = 2000,
+) -> tuple[
+    dict[str, dict[str, list[float]]],
+    dict[str, dict[str, list[float]]],
+]:
+    """Recompute paired statistics after stratified run/family resampling."""
+
+    rows: dict[int, dict[str, dict[str, list[Mapping[str, Any]]]]] = {
+        index: {
+            arm: defaultdict(list)
+            for arm in ARMS
+        }
+        for index in range(len(reports))
+    }
+    family_categories: dict[str, set[str]] = defaultdict(set)
+    for index, report in enumerate(reports):
+        for record in report["records"]:
+            arm = str(record["arm"])
+            if arm not in ARMS:
+                continue
+            family = str(record["family_id"])
+            rows[index][arm][family].append(record)
+            family_categories[family].add(str(record["category"]))
+
+    strata: dict[str, list[str]] = defaultdict(list)
+    for family, categories in family_categories.items():
+        if categories <= {"ambiguity", "control"}:
+            stratum = "ambiguity"
+        elif len(categories) == 1:
+            stratum = next(iter(categories))
+        else:
+            raise ValueError(
+                f"question family crosses incompatible strata: {family}"
+            )
+        strata[stratum].append(family)
+    for families in strata.values():
+        families.sort()
+
+    rng = random.Random(BOOTSTRAP_SEED)
+    arm_estimates: dict[str, dict[str, list[float]]] = {
+        arm: defaultdict(list) for arm in ARMS
+    }
+    delta_estimates: dict[str, dict[str, list[float]]] = {
+        arm: defaultdict(list) for arm in ARMS if arm != "baseline"
+    }
+    for _ in range(samples):
+        sampled_runs = rng.choices(
+            range(len(reports)),
+            k=len(reports),
         )
-        units["latency_seconds"].append(
-            mean(float(record["duration_seconds"]) for record in rows)
+        sampled_families: list[tuple[str, str, int]] = []
+        for stratum in sorted(strata):
+            families = strata[stratum]
+            for occurrence, family in enumerate(
+                rng.choices(families, k=len(families))
+            ):
+                sampled_families.append((stratum, family, occurrence))
+
+        sampled_metrics: dict[str, dict[str, float | None]] = {}
+        sampled_etl = mean(
+            etl_scores[index] / 100.0
+            for index in sampled_runs
         )
-    return units
+        for arm in ARMS:
+            sampled_rows: list[Mapping[str, Any]] = []
+            for stratum, family, occurrence in sampled_families:
+                synthetic_family = (
+                    f"{family}#bootstrap-{stratum}-{occurrence}"
+                )
+                for index in sampled_runs:
+                    sampled_rows.extend(
+                        {
+                            **record,
+                            "family_id": synthetic_family,
+                        }
+                        for record in rows[index][arm][family]
+                    )
+            metrics = _per_run_arm(sampled_rows, arm, sampled_etl)
+            sampled_metrics[arm] = metrics
+            for name, value in metrics.items():
+                if value is not None:
+                    arm_estimates[arm][name].append(value)
+
+        baseline = sampled_metrics["baseline"]
+        for arm in ARMS:
+            if arm == "baseline":
+                continue
+            for name in ("composite", *COMPONENTS):
+                value = sampled_metrics[arm][name]
+                base = baseline[name]
+                if value is not None and base is not None:
+                    delta_estimates[arm][name].append(value - base)
+    return arm_estimates, delta_estimates
 
 
 def _usage(report: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -124,7 +215,6 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
     ):
         raise ValueError("authoritative campaign status usage must be finite")
     per_arm: dict[str, dict[str, list[float]]] = {arm: defaultdict(list) for arm in ARMS}
-    family_units: dict[str, dict[str, list[float]]] = {arm: defaultdict(list) for arm in ARMS}
     etl_scores: list[float] = []
     failures: list[dict[str, Any]] = []
     oracle_reviews: list[dict[str, Any]] = []
@@ -139,33 +229,30 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
             for name, value in _per_run_arm(records, arm, etl_score).items():
                 if value is not None:
                     per_arm[arm][name].append(value)
-            for name, values in _family_units(records, arm, etl_score).items():
-                family_units[arm][name].extend(values)
         for record in records:
             if record["score"]["passed"] is False:
                 failures.append(dict(record))
             if record["score"].get("oracle_review") is True:
                 oracle_reviews.append(dict(record))
+    bootstrap_estimates, bootstrap_deltas = (
+        _bootstrap_campaign_estimates(reports, etl_scores)
+    )
     arms: dict[str, dict[str, Any]] = {}
     for arm in ARMS:
         metrics = per_arm[arm]
         arms[arm] = {
-            "pass_rate": distribution(metrics["pass_rate"], bootstrap_units=family_units[arm]["pass_rate"]),
-            "composite": distribution(metrics["composite"], bootstrap_units=family_units[arm]["composite"]),
-            "components": {name: distribution(metrics[name], bootstrap_units=family_units[arm][name]) for name in COMPONENTS},
-            "ambiguity_metrics": {name.replace("ambiguity.", ""): distribution(metrics[name], bootstrap_units=family_units[arm][name]) for name in metrics if name.startswith("ambiguity.")},
-            "latency_seconds": distribution(metrics["latency_seconds"], bootstrap_units=family_units[arm]["latency_seconds"]),
+            "pass_rate": distribution(metrics["pass_rate"], bootstrap_estimates=bootstrap_estimates[arm]["pass_rate"]),
+            "composite": distribution(metrics["composite"], bootstrap_estimates=bootstrap_estimates[arm]["composite"]),
+            "components": {name: distribution(metrics[name], bootstrap_estimates=bootstrap_estimates[arm][name]) for name in COMPONENTS},
+            "ambiguity_metrics": {name.replace("ambiguity.", ""): distribution(metrics[name], bootstrap_estimates=bootstrap_estimates[arm][name]) for name in metrics if name.startswith("ambiguity.")},
+            "latency_seconds": distribution(metrics["latency_seconds"], bootstrap_estimates=bootstrap_estimates[arm]["latency_seconds"]),
         }
     baseline = per_arm["baseline"]
     arm_deltas = {
         arm: {
             name: distribution(
                 [value - base for value, base in zip(per_arm[arm][name], baseline[name])],
-                bootstrap_units=[
-                    value - base for value, base in zip(
-                        family_units[arm][name], family_units["baseline"][name],
-                    )
-                ],
+                bootstrap_estimates=bootstrap_deltas[arm][name],
             )
             for name in ("composite", *COMPONENTS)
         }

@@ -1,0 +1,408 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DB Whisperer Evaluation V3</title><style>:root{--ink:#182338;--muted:#5d697b;--paper:#f5f7f3;--card:#fff;--line:#dce2dc;--navy:#143149;--teal:#087a72;--amber:#c88716;--shadow:0 14px 38px #152a3914}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:var(--paper);font:15px/1.58 Inter,Segoe UI,Arial,sans-serif}body.dark{--ink:#edf2f7;--muted:#aeb9c8;--paper:#0d1722;--card:#152333;--line:#2b3d4e;--navy:#e7f4f7;--teal:#67d7cc;--shadow:0 14px 38px #0004}h1,h2,h3{font-family:Georgia,serif}.skip{position:absolute;left:-999px}.skip:focus{left:16px;top:12px;z-index:100}.hero{padding:58px max(24px,calc((100vw - 1080px)/2)) 76px;color:#fff;background:linear-gradient(135deg,#102a41,#174d59 62%,#08776f)}.eyebrow{color:#a6e9e1;font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}.hero h1{margin:0;font-size:clamp(38px,6vw,68px)}.toolbar{position:sticky;top:0;z-index:20;padding:10px 18px;background:color-mix(in srgb,var(--paper) 92%,transparent);border-bottom:1px solid var(--line)}.toolbar-inner{max-width:1180px;min-width:0;margin:auto;display:flex;gap:9px;align-items:center}.context{margin-right:auto;color:var(--muted);font-weight:700;font-size:13px}.button,.tab-button{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);cursor:pointer}.button{padding:8px 11px;border-radius:10px;font-weight:750;flex:0 0 auto}.tablist{display:flex;min-width:0;flex:1 1 auto;overflow-x:auto;scrollbar-width:thin}.tab-button{padding:11px 8px;border-width:0 0 3px;white-space:nowrap;font-size:13px;font-weight:700}.tab-button[aria-selected=true]{color:var(--teal);border-color:var(--teal)}main{max-width:1180px;margin:auto;padding:0 22px 68px}.numbers{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:-36px 0 30px;position:relative}.number,.card,.panel,details{border:1px solid var(--line);background:var(--card);box-shadow:var(--shadow);border-radius:15px}.number{padding:17px 18px}.number strong{display:block;color:var(--teal);font:700 31px Georgia,serif}.number span{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase}.card,.panel{padding:20px}.cards,.steps,.versions{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.arm strong{display:block;color:var(--teal);font:700 28px Georgia,serif}.question-card,.takeaway{padding:25px;border-left:6px solid var(--teal);border-radius:17px;background:var(--card);box-shadow:var(--shadow);font:700 23px/1.35 Georgia,serif}.takeaway{border-color:var(--amber);font:inherit}.two,.evidence-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}section{margin-top:30px}.tab-panel[hidden]{display:none}table{width:100%;border-collapse:collapse;background:var(--card)}th,td{padding:10px;border:1px solid var(--line);text-align:left;vertical-align:top}pre{padding:12px;overflow:auto;white-space:pre-wrap;color:#eaf4f3;background:#182338;border-radius:8px}details{margin:10px 0;padding:12px}@media(max-width:760px){.hero{padding:44px 24px 64px}.hero p{overflow-wrap:anywhere}.toolbar-inner{flex-wrap:wrap}.numbers{margin:18px 0 30px}.numbers,.cards,.steps,.versions,.two,.evidence-grid{grid-template-columns:1fr}.context{display:none}.tablist{order:2;flex-basis:100%}}@media print{.toolbar{display:none}.tab-panel[hidden]{display:block}.hero{color:#111;background:#fff;border-bottom:2px solid #111}}</style></head><body><a class="skip" href="#main">Skip to content</a><header class="hero"><p class="eyebrow">Campaign publication · Evaluation V3</p><h1>DB Whisperer Evaluation V3</h1><p>A plain-language overview of the V3 method and evidence.</p></header><nav class="toolbar" aria-label="Page tools"><div class="toolbar-inner"><span class="context">Evaluation V3 overview</span><button class="button" id="theme">Theme</button><button class="button" id="print">Print</button></div></nav><main id="main"><div class="numbers"><div class="number"><strong>24</strong><span>Cases</span></div><div class="number"><strong>4</strong><span>Arms</span></div><div class="number"><strong>5×</strong><span>Repetitions</span></div><div class="number"><strong>K=3</strong><span>Candidate arms</span></div></div><section><h2>The question we tested</h2><div class="question-card">Can targeted clarification improve schema-aware text-to-SQL while preserving correct and safe answers?</div></section><section><h2>How the test worked</h2><div class="steps"><article class="card">22 query cases</article><article class="card">2 ETL fixtures</article><article class="card">Frozen deterministic scoring</article><article class="card">Checkpoint each cell</article></div></section><section><h2>What the four arms did</h2><div class="cards"><article class="card arm"><p>Baseline</p><strong>19.7778</strong><span>Composite score</span><small>Pass rate: 5.4545</small></article><article class="card arm"><p>Candidate Only</p><strong>22.0444</strong><span>Composite score</span><small>Pass rate: 8.1818</small></article><article class="card arm"><p>Semantic Only</p><strong>32.7776</strong><span>Composite score</span><small>Pass rate: 7.2727</small></article><article class="card arm"><p>Full System</p><strong>34.6668</strong><span>Composite score</span><small>Pass rate: 8.1818</small></article></div></section><section><h2>What the aggregate shows</h2><div class="two"><article class="panel"><h3>Ambiguity funnel</h3><pre>{
+  &quot;baseline&quot;: {
+    &quot;compliance&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;false_negative_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        100.0,
+        100.0
+      ],
+      &quot;max&quot;: 100.0,
+      &quot;mean&quot;: 100.0,
+      &quot;min&quot;: 100.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;false_positive_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;final_alignment&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;mechanism_accuracy&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;option_match&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;recall&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;resolution&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;specificity&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        100.0,
+        100.0
+      ],
+      &quot;max&quot;: 100.0,
+      &quot;mean&quot;: 100.0,
+      &quot;min&quot;: 100.0,
+      &quot;stddev&quot;: 0.0
+    }
+  },
+  &quot;candidate_only&quot;: {
+    &quot;compliance&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        13.3333
+      ],
+      &quot;max&quot;: 16.6667,
+      &quot;mean&quot;: 3.3333,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;false_negative_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        86.6667,
+        100.0
+      ],
+      &quot;max&quot;: 100.0,
+      &quot;mean&quot;: 96.6667,
+      &quot;min&quot;: 83.3333,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;false_positive_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;final_alignment&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;mechanism_accuracy&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;option_match&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        13.3333
+      ],
+      &quot;max&quot;: 16.6667,
+      &quot;mean&quot;: 3.3333,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;recall&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        13.3333
+      ],
+      &quot;max&quot;: 16.6667,
+      &quot;mean&quot;: 3.3333,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;resolution&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        13.3333
+      ],
+      &quot;max&quot;: 16.6667,
+      &quot;mean&quot;: 3.3333,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;specificity&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        100.0,
+        100.0
+      ],
+      &quot;max&quot;: 100.0,
+      &quot;mean&quot;: 100.0,
+      &quot;min&quot;: 100.0,
+      &quot;stddev&quot;: 0.0
+    }
+  },
+  &quot;full&quot;: {
+    &quot;compliance&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        70.0
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 33.3333,
+      &quot;min&quot;: 16.6667,
+      &quot;stddev&quot;: 14.9071
+    },
+    &quot;false_negative_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        100.0
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 36.6666,
+      &quot;min&quot;: 33.3333,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;false_positive_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        13.3333
+      ],
+      &quot;max&quot;: 16.6667,
+      &quot;mean&quot;: 3.3333,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;final_alignment&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;mechanism_accuracy&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        100.0
+      ],
+      &quot;max&quot;: 66.6667,
+      &quot;mean&quot;: 60.0,
+      &quot;min&quot;: 50.0,
+      &quot;stddev&quot;: 8.165
+    },
+    &quot;option_match&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        70.0
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 40.0,
+      &quot;min&quot;: 33.3333,
+      &quot;stddev&quot;: 8.165
+    },
+    &quot;recall&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        100.0
+      ],
+      &quot;max&quot;: 66.6667,
+      &quot;mean&quot;: 63.3334,
+      &quot;min&quot;: 50.0,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;resolution&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        70.0
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 40.0,
+      &quot;min&quot;: 33.3333,
+      &quot;stddev&quot;: 8.165
+    },
+    &quot;specificity&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        86.6667,
+        100.0
+      ],
+      &quot;max&quot;: 100.0,
+      &quot;mean&quot;: 96.6667,
+      &quot;min&quot;: 83.3333,
+      &quot;stddev&quot;: 6.6667
+    }
+  },
+  &quot;semantic_only&quot;: {
+    &quot;compliance&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        63.3333
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 36.6666,
+      &quot;min&quot;: 33.3333,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;false_negative_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        20.0
+      ],
+      &quot;max&quot;: 16.6667,
+      &quot;mean&quot;: 6.6667,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 8.165
+    },
+    &quot;false_positive_rate&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        80.0
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 43.3333,
+      &quot;min&quot;: 33.3333,
+      &quot;stddev&quot;: 8.165
+    },
+    &quot;final_alignment&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        0.0
+      ],
+      &quot;max&quot;: 0.0,
+      &quot;mean&quot;: 0.0,
+      &quot;min&quot;: 0.0,
+      &quot;stddev&quot;: 0.0
+    },
+    &quot;mechanism_accuracy&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        100.0
+      ],
+      &quot;max&quot;: 66.6667,
+      &quot;mean&quot;: 63.3334,
+      &quot;min&quot;: 50.0,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;option_match&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        63.3333
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 36.6666,
+      &quot;min&quot;: 33.3333,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;recall&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        80.0,
+        100.0
+      ],
+      &quot;max&quot;: 100.0,
+      &quot;mean&quot;: 93.3333,
+      &quot;min&quot;: 83.3333,
+      &quot;stddev&quot;: 8.165
+    },
+    &quot;resolution&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        0.0,
+        63.3333
+      ],
+      &quot;max&quot;: 50.0,
+      &quot;mean&quot;: 36.6666,
+      &quot;min&quot;: 33.3333,
+      &quot;stddev&quot;: 6.6667
+    },
+    &quot;specificity&quot;: {
+      &quot;confidence_interval_95&quot;: [
+        20.0,
+        100.0
+      ],
+      &quot;max&quot;: 66.6667,
+      &quot;mean&quot;: 56.6667,
+      &quot;min&quot;: 50.0,
+      &quot;stddev&quot;: 8.165
+    }
+  }
+}</pre></article><article class="panel"><h3>Campaign operations</h3><pre>{
+  &quot;metrics&quot;: {
+    &quot;completion_tokens&quot;: 123538,
+    &quot;cost_usd&quot;: 1.56567844,
+    &quot;elapsed_seconds&quot;: 6463.972,
+    &quot;model_calls&quot;: 2610,
+    &quot;prompt_tokens&quot;: 12058834,
+    &quot;retries&quot;: 0
+  },
+  &quot;per_repetition&quot;: null,
+  &quot;scope&quot;: &quot;campaign_global&quot;
+}</pre></article></div></section><section><h2>What we learned</h2><div class="takeaway"><ul><li>Full System composite was 34.67/100 versus Baseline 19.78/100 (paired difference +14.89; 95% CI +1.83 to +24.50).</li><li>Full System ambiguity recall was 63.33% with 96.67% specificity, but final alignment was 0.00%.</li><li>Strict query pass rates remained low: Full System 8.18% and Baseline 5.45%; correctness was 5.56% and 5.56%, respectively.</li></ul></div></section><section><h2>How to interpret the results</h2><ul><li>Operational usage is campaign-global when per-repetition attribution is unavailable.</li></ul><pre>{
+  &quot;methodology&quot;: {
+    &quot;ambiguity&quot;: &quot;family-macro recall/specificity with frozen scoring weights&quot;,
+    &quot;bootstrap&quot;: &quot;arm metrics/deltas: 2,000-replicate paired, stratified percentile resampling of repetitions and question families, seed 20260723&quot;,
+    &quot;design&quot;: &quot;five complete compatible repetitions&quot;,
+    &quot;shared_etl_uncertainty&quot;: &quot;2,000-replicate repetition-only percentile bootstrap&quot;
+  },
+  &quot;provenance&quot;: {
+    &quot;fingerprint&quot;: {
+      &quot;arms&quot;: [
+        &quot;baseline&quot;,
+        &quot;candidate_only&quot;,
+        &quot;semantic_only&quot;,
+        &quot;full&quot;
+      ],
+      &quot;candidate_count&quot;: 3,
+      &quot;dataset_hash&quot;: &quot;cb7d48aad54a3c02bd84a6883becbd24f898f578045483ad9c0eddce361a9e4d&quot;,
+      &quot;model&quot;: &quot;google/gemma-4-31b-it&quot;,
+      &quot;prompt_hash&quot;: &quot;1308c044d161325abc422c2b5a64ea8516c2903ef506f230f2e2126846ab68ad&quot;,
+      &quot;runtime_hash&quot;: &quot;c6d13632beeeb636be6e6bec75a3502f2a5b5f2e745a44d4384fc0c2ebe60ba1&quot;,
+      &quot;scorer_version&quot;: &quot;45626c85fdf83006da3071ad86d7064f28880e1c3e431a110484a0104af47db3&quot;,
+      &quot;suite_hash&quot;: &quot;e66e4fdcc0e1115e70b2135b789a26bd475e07e438bf6bb00ea3ff79ec9edb37&quot;
+    },
+    &quot;model&quot;: &quot;google/gemma-4-31b-it&quot;,
+    &quot;suite_hash&quot;: &quot;e66e4fdcc0e1115e70b2135b789a26bd475e07e438bf6bb00ea3ff79ec9edb37&quot;,
+    &quot;suite_version&quot;: &quot;3.1.0&quot;
+  }
+}</pre></section></main><script>const b=document.body;if(localStorage.getItem('dbw-v3-theme')==='dark')b.classList.add('dark');document.getElementById('theme').onclick=()=>{b.classList.toggle('dark');localStorage.setItem('dbw-v3-theme',b.classList.contains('dark')?'dark':'light')};document.getElementById('print').onclick=()=>window.print();</script></body></html>
