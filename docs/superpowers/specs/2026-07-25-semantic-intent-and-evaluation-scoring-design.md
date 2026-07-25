@@ -330,6 +330,88 @@ any new paid run. The replay is labelled a counterfactual rescore and does not
 overwrite the immutable original campaign. Run a one-repetition canary only
 after all deterministic tests pass.
 
+## Campaign Review and Publication Workflow
+
+Campaign execution, result review, and HTML publication are separate phases.
+Completing and aggregating a campaign must not automatically overwrite or
+publish the two official HTML reports.
+
+### Report-readiness gate
+
+Before any paid official campaign, a deterministic preflight verifies that the
+campaign evidence and report model can populate every required report section.
+The gate checks for:
+
+- research question and experimental design;
+- four-arm definitions and comparable denominators;
+- correctness, ambiguity, safety, grounding, efficiency, and ETL metrics;
+- confidence intervals and paired arm deltas;
+- clarification plausibility, target coverage, compliance, and resolution;
+- projection and presentation diagnostics;
+- terminal workflow outcomes;
+- representative success and failure evidence;
+- findings separated from interpretation and recommendations;
+- campaign provenance, model, K, repetitions, dataset, cost, and elapsed time;
+- methodological limitations; and
+- explicit separation of immutable original results, deterministic
+  counterfactual rescores, and later live campaigns.
+
+Renderer tests may use fixtures and temporary output. They must not overwrite
+`docs/evaluation_method_one_page.html` or `docs/evaluation_report.html`.
+
+### Two-phase campaign command
+
+The official workflow separates:
+
+1. `run` and checkpoint observations;
+2. validate and aggregate a complete compatible campaign;
+3. create a machine-readable aggregate and a Markdown/JSON review package;
+4. stop before HTML publication;
+5. analyze the review package with the user;
+6. require explicit user approval tied to the campaign identity and hash; and
+7. publish the two HTML reports from that approved aggregate.
+
+The paid campaign runs in an external CMD window. The launcher displays overall
+campaign progress, elapsed time, percentage complete, and whole-campaign ETA.
+The review and publish commands do not make model calls.
+
+### Review package
+
+The pre-publication package contains enough evidence to review all headline
+claims without opening generated HTML:
+
+- campaign validity and completeness;
+- arm-level metrics, confidence intervals, and deltas;
+- family and case breakdowns;
+- clarification findings and terminal outcomes;
+- correctness and projection diagnostics;
+- representative SQL, result, and clarification transcripts;
+- cost, duration, retries, and infrastructure evidence;
+- caveats and proposed findings; and
+- a report-readiness checklist.
+
+The package may recommend findings, but none are treated as approved report
+language until the user reviews them.
+
+### HTML acceptance baselines
+
+After approval, publication produces exactly two reports:
+
+- a concise method-and-findings report using
+  `docs/evaluation_method_one_page.html` as the baseline for information
+  hierarchy, explanation density, finding types, and presentation; and
+- a detailed evidence report using `docs/evaluation_report.html` as the
+  baseline for navigation, analytical depth, methodology, comparisons, and
+  case-level drill-down.
+
+The acceptance criterion is not merely similar color or typography. The
+generated reports must retain the reference reports' kinds of data,
+explanations, findings, caveats, and supporting evidence while populating them
+from the newly approved campaign.
+
+Publication records the approved campaign identity and aggregate hash. It
+refuses incomplete, incompatible, unreviewed, or differently hashed input.
+
 ## Documentation and Reporting
 
 Update:
@@ -342,3 +424,4 @@ Update:
 
 The final report must distinguish the immutable original score, any
 counterfactual deterministic rescore, and results from a later live campaign.
+No final HTML is generated or overwritten before explicit review approval.

@@ -124,3 +124,31 @@ control explicitly resolves hospital versus ICU admission.
 These are approved design changes pending implementation. The complete design,
 tests, replay requirements, and reporting implications are documented in
 `docs/superpowers/specs/2026-07-25-semantic-intent-and-evaluation-scoring-design.md`.
+
+### Review before HTML publication
+
+Campaign execution and HTML publication are now separate approved phases. A
+complete campaign first produces validated aggregate evidence plus a
+Markdown/JSON review package. The package contains the metrics, uncertainty,
+arm deltas, case evidence, clarification findings, terminal outcomes,
+projection diagnostics, provenance, cost, limitations, and proposed findings
+needed for review without generating final HTML.
+
+Before a paid campaign, a deterministic report-readiness gate verifies that
+the evidence model can populate the information types, explanations, findings,
+caveats, and drill-down required by both reference reports. Renderer tests use
+fixtures or temporary output and do not overwrite the documents under `docs/`.
+
+The paid campaign continues to run in an external CMD window with overall
+progress, elapsed time, completion percentage, and whole-campaign ETA. It
+stops after validation, aggregation, and review-package creation. HTML
+publication makes no model calls and requires explicit user approval tied to
+the campaign identity and aggregate hash.
+
+Only after approval are the two final reports generated. The concise report
+uses `docs/evaluation_method_one_page.html` as its information-hierarchy and
+explanation baseline. The detailed report uses
+`docs/evaluation_report.html` as its navigation, evidence-depth, methodology,
+finding, and case-drill-down baseline. Visual similarity alone is
+insufficient; the generated reports must contain the same kinds of analytical
+content populated from the approved new campaign.
