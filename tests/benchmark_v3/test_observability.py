@@ -250,6 +250,58 @@ class CampaignObserverTest(unittest.TestCase):
                     session.post("https://example.invalid")
             self.assertIn("network down", observer.status["latest_error"])
 
+    def test_malformed_success_response_is_retried_before_client_parsing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 3.75)
+            session = InstrumentedSession(
+                observer,
+                attempts=2,
+                base_delay=0,
+                random_source=random.Random(0),
+            )
+            calls = 0
+
+            def post(*args: object, **kwargs: object) -> object:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    return SimpleNamespace(
+                        status_code=200,
+                        json=lambda: (_ for _ in ()).throw(
+                            ValueError("malformed provider JSON")
+                        ),
+                    )
+                return SimpleNamespace(
+                    status_code=200,
+                    json=lambda: {
+                        "model": "test",
+                        "choices": [{"message": {"content": "{}"}}],
+                        "usage": {
+                            "prompt_tokens": 3,
+                            "completion_tokens": 2,
+                            "cost": 0.01,
+                        },
+                    },
+                )
+
+            transport = SimpleNamespace(post=post)
+            with patch.object(session, "_transport", return_value=transport):
+                response = session.post(
+                    "https://example.invalid",
+                    json={"messages": [], "max_tokens": 1000},
+                )
+
+            self.assertEqual(2, calls)
+            self.assertEqual("test", response.json()["model"])
+            self.assertEqual(1, observer.status["retries"])
+            self.assertEqual(2, observer.status["model_calls"])
+            self.assertGreater(observer.status["cost_usd"], 0.5)
+            self.assertLess(observer.status["cost_usd"], 0.6)
+            self.assertEqual(0.0, observer.status["reserved_cost_usd"])
+            self.assertIsNone(observer.status["infrastructure_failure"])
+
     def test_invalid_provider_usage_fails_closed_without_logging_response_body(self) -> None:
         invalid_usages = (
             {"prompt_tokens": 1.5, "completion_tokens": 0, "cost": 0.1},

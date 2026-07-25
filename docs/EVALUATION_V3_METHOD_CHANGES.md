@@ -252,3 +252,25 @@ artifact records `behavioral_passed` and the exact failing cells. Its process
 exits nonzero when any selected cell has `score.passed != true`, even when
 every cell completed, so the external launcher cannot green-light the official
 campaign on execution progress alone.
+
+### Malformed provider-response recovery
+
+The first full campaign after the targeted audit stopped after 98 of 450 cells
+when OpenRouter returned HTTP 200 with a body that was not valid JSON. The
+provider call lasted 118 seconds; the transport initially counted it as a
+completed call, and the downstream SQL client raised a JSON decode error. This
+was an automation transport failure, not a DB Whisperer result.
+
+The instrumented transport now validates successful response bodies before
+returning them to SQL or ambiguity clients. A malformed HTTP-200 response may
+still have been billed, but its usage is unreadable, so the campaign charges
+the pre-admitted maximum request cost instead of silently treating it as free.
+It then uses the same bounded transient retry policy as connection failures
+and retryable HTTP statuses. Only retry exhaustion blocks the campaign, and
+durable logs contain a generic, secret-safe provider-response error rather
+than the response body.
+
+This transport change is fingerprinted. The 98 completed checkpoints remain
+diagnostic evidence, but they are not mixed with post-fix cells in an official
+aggregate; the reliable campaign starts under a new campaign ID and runtime
+fingerprint.

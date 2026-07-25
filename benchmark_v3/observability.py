@@ -66,6 +66,10 @@ class UsageValidationError(ValueError):
     """Raised when provider usage cannot safely affect campaign budget."""
 
 
+class MalformedProviderResponse(requests.RequestException):
+    """A successful HTTP response whose body is not valid provider JSON."""
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -750,7 +754,11 @@ def retry_transient(
     for attempt in range(attempts):
         try:
             response = operation()
-        except (requests.ConnectionError, requests.Timeout):
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            MalformedProviderResponse,
+        ):
             if attempt == attempts - 1:
                 raise
             if on_retry is not None:
@@ -843,6 +851,28 @@ class InstrumentedSession(requests.Session):
                 raise
             if int(getattr(response, "status_code", 0)) >= 400:
                 self.observer.release_model_call(reserve_usd)
+            else:
+                try:
+                    response.json()
+                except ValueError as error:
+                    # The provider may have charged for an unusable response,
+                    # but its usage payload cannot be trusted. Charge the
+                    # pre-admitted maximum so retrying cannot exceed budget.
+                    self.observer.record_usage(
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        cost_usd=reserve_usd,
+                        reserve_usd=reserve_usd,
+                    )
+                    self.observer.event(
+                        "model_call_usage_estimated",
+                        severity="warning",
+                        reason="malformed provider JSON",
+                        charged_cost_usd=reserve_usd,
+                    )
+                    raise MalformedProviderResponse(
+                        "Provider returned malformed JSON."
+                    ) from error
             return response
 
         self.observer.event("model_call_started")
@@ -855,15 +885,21 @@ class InstrumentedSession(requests.Session):
                 on_retry=self.observer.record_retry,
             )
         except requests.RequestException as error:
+            response_failure = isinstance(error, MalformedProviderResponse)
+            message = (
+                "Provider returned malformed JSON after retry exhaustion."
+                if response_failure
+                else str(error)
+            )
             self.observer.record_infrastructure_failure(
                 source="provider",
-                kind="transport",
-                message=str(error),
+                kind="response" if response_failure else "transport",
+                message=message,
             )
             self.observer.event(
                 "model_call_failed",
                 severity="error",
-                message=str(error),
+                message=message,
             )
             raise
         status_code = int(getattr(response, "status_code", 0))
