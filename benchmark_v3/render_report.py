@@ -9,10 +9,16 @@ from typing import Any, Mapping
 
 from benchmark_v3.report_model import build_report_model
 
-REPORT_TABS = (("overview", "Overview"), ("comparison", "System Comparison"),
-               ("questions", "Results by Question"), ("quality", "Quality Components"),
-               ("ambiguity", "Ambiguity Funnel"), ("operations", "Safety, ETL & Operations"),
-               ("methodology", "Methodology"), ("evidence", "Case Evidence"))
+REPORT_TABS = (
+    ("overview", "Overview"),
+    ("comparison", "System Comparison"),
+    ("questions", "Case Evidence"),
+    ("quality", "Correctness & Projection"),
+    ("ambiguity", "Ambiguity Funnel"),
+    ("operations", "Safety, ETL & Operations"),
+    ("methodology", "Methodology & Limitations"),
+    ("evidence", "Terminal Outcomes"),
+)
 ARM_LABELS = {"baseline": "Baseline", "candidate_only": "Candidate Only",
               "semantic_only": "Semantic Only", "full": "Full System"}
 
@@ -64,12 +70,12 @@ def _evidence(model: Mapping[str, Any]) -> str:
     return "".join(out) or "<p>No case evidence was supplied.</p>"
 
 
-def render_one_page(model: Mapping[str, Any]) -> str:
+def _legacy_render_one_page(model: Mapping[str, Any]) -> str:
     provenance, methodology = _map(model.get("provenance")), _map(model.get("methodology"))
     return """<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>%s</title><style>%s</style></head><body><a class=\"skip\" href=\"#main\">Skip to content</a><header class=\"hero\"><p class=\"eyebrow\">Campaign publication · Evaluation V3</p><h1>%s</h1><p>A plain-language overview of the V3 method and evidence.</p></header><nav class=\"toolbar\" aria-label=\"Page tools\"><div class=\"toolbar-inner\"><span class=\"context\">Evaluation V3 overview</span><button class=\"button\" id=\"theme\">Theme</button><button class=\"button\" id=\"print\">Print</button></div></nav><main id=\"main\"><div class=\"numbers\"><div class=\"number\"><strong>24</strong><span>Cases</span></div><div class=\"number\"><strong>4</strong><span>Arms</span></div><div class=\"number\"><strong>5×</strong><span>Repetitions</span></div><div class=\"number\"><strong>K=3</strong><span>Candidate arms</span></div></div><section><h2>The question we tested</h2><div class=\"question-card\">Can targeted clarification improve schema-aware text-to-SQL while preserving correct and safe answers?</div></section><section><h2>How the test worked</h2><div class=\"steps\"><article class=\"card\">22 query cases</article><article class=\"card\">2 ETL fixtures</article><article class=\"card\">Frozen deterministic scoring</article><article class=\"card\">Checkpoint each cell</article></div></section><section><h2>What the four arms did</h2><div class=\"cards\">%s</div></section><section><h2>What the aggregate shows</h2><div class=\"two\"><article class=\"panel\"><h3>Ambiguity funnel</h3><pre>%s</pre></article><article class=\"panel\"><h3>Campaign operations</h3><pre>%s</pre></article></div></section><section><h2>What we learned</h2><div class=\"takeaway\"><ul>%s</ul></div></section><section><h2>How to interpret the results</h2><ul>%s</ul><pre>%s</pre></section></main><script>const b=document.body;if(localStorage.getItem('dbw-v3-theme')==='dark')b.classList.add('dark');document.getElementById('theme').onclick=()=>{b.classList.toggle('dark');localStorage.setItem('dbw-v3-theme',b.classList.contains('dark')?'dark':'light')};document.getElementById('print').onclick=()=>window.print();</script></body></html>""" % (_text(model.get("title", "DB Whisperer Evaluation V3")), _style(), _text(model.get("title", "DB Whisperer Evaluation V3")), _cards(model), _json(model.get("ambiguity_funnel", {})), _json(model.get("operations", {})), _items(model.get("findings")), _items(model.get("limitations")), _json({"methodology": methodology, "provenance": provenance}))
 
 
-def render_full_report(model: Mapping[str, Any]) -> str:
+def _legacy_render_full_report(model: Mapping[str, Any]) -> str:
     arms = _map(model.get("arms")); headers = "".join("<th>%s</th>" % label for label in ARM_LABELS.values())
     components = "".join("<tr><th>%s</th>%s</tr>" % (name.title(), "".join("<td>%s</td>" % _mean(_map(_map(arms.get(arm)).get("components")).get(name)) for arm in ARM_LABELS)) for name in ("ambiguity", "correctness", "efficiency", "safety", "grounding", "etl"))
     contents = {
@@ -86,6 +92,47 @@ def render_full_report(model: Mapping[str, Any]) -> str:
     panels = "".join("<span id=\"%s\" hidden></span><section id=\"panel-%s\" class=\"tab-panel\" role=\"tabpanel\" aria-labelledby=\"tab-%s\"%s>%s</section>" % (key, key, key, "" if key == "overview" else " hidden", contents[key]) for key, _ in REPORT_TABS)
     script = """<script>document.documentElement.classList.add('js');const tabs=[...document.querySelectorAll('[role=tab]')],panels=[...document.querySelectorAll('[role=tabpanel]')];function activateTab(key,focus=false){tabs.forEach(t=>{const on=t.id==='tab-'+key;t.setAttribute('aria-selected',on);t.tabIndex=on?0:-1});panels.forEach(p=>p.hidden=p.id!=='panel-'+key);if(focus)document.getElementById('tab-'+key).focus()}tabs.forEach((tab,index)=>{tab.onclick=()=>activateTab(tab.id.slice(4));tab.onkeydown=e=>{if(!['ArrowRight','ArrowLeft','Home','End'].includes(e.key))return;e.preventDefault();const n=e.key==='Home'?0:e.key==='End'?tabs.length-1:e.key==='ArrowRight'?(index+1)%tabs.length:(index-1+tabs.length)%tabs.length;activateTab(tabs[n].id.slice(4),true)}});document.querySelectorAll('table.sortable').forEach(table=>{const body=table.tBodies[0];[...table.tHead.rows[0].cells].forEach((cell,index)=>{cell.tabIndex=0;cell.setAttribute('role','button');cell.setAttribute('aria-sort','none');cell.setAttribute('aria-label','Sort by '+cell.textContent.trim());let ascending=true;const sort=()=>{const rows=[...body.rows];rows.sort((a,b)=>{const av=a.cells[index].textContent.trim(),bv=b.cells[index].textContent.trim(),an=parseFloat(av),bn=parseFloat(bv),result=Number.isNaN(an)||Number.isNaN(bn)?av.localeCompare(bv):an-bn;return ascending?result:-result});rows.forEach(row=>body.appendChild(row));cell.setAttribute('aria-sort',ascending?'ascending':'descending');ascending=!ascending};cell.onclick=sort;cell.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();sort()}}})});const b=document.body;if(localStorage.getItem('dbw-v3-theme')==='dark')b.classList.add('dark');document.getElementById('theme').onclick=()=>{b.classList.toggle('dark');localStorage.setItem('dbw-v3-theme',b.classList.contains('dark')?'dark':'light')};document.getElementById('print').onclick=()=>window.print();</script>"""
     return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>%s evidence report</title><style>%s</style></head><body><header class=\"hero\"><p class=\"eyebrow\">Auditable campaign evidence</p><h1>%s</h1><p>Four V3 arms, 24 cases, and five repetitions.</p></header><nav class=\"toolbar\" aria-label=\"Report tools\"><div class=\"toolbar-inner\"><span class=\"context\">V3 evidence report</span><div class=\"tablist\" role=\"tablist\" aria-label=\"Report sections\">%s</div><button class=\"button\" id=\"theme\">Theme</button><button class=\"button\" id=\"print\">Print</button></div></nav><main>%s</main>%s</body></html>" % (_text(model.get("title", "DB Whisperer Evaluation V3")), _style(), _text(model.get("title", "DB Whisperer Evaluation V3")), buttons, panels, script)
+
+
+def render_one_page(model: Mapping[str, Any]) -> str:
+    """Render the approved one-page hierarchy without mutating evidence."""
+    rendered = _legacy_render_one_page(model)
+    rendered = rendered.replace("The question we tested", "Research question")
+    rendered = rendered.replace(
+        "Can targeted clarification improve schema-aware text-to-SQL while preserving correct and safe answers?",
+        _text(model.get("research_question")),
+    )
+    rendered = rendered.replace("How the test worked", "Experimental design")
+    rendered = rendered.replace("What the four arms did", "Headline results")
+    rendered = rendered.replace("What we learned", "Principal findings")
+    rendered = rendered.replace("How to interpret the results", "Limitations")
+    supplement = (
+        "<section><h2>Scoring framework</h2><pre>%s</pre></section>"
+        "<section><h2>Correctness diagnostics</h2><pre>%s</pre></section>"
+    ) % (
+        _json(model.get("scoring_framework", {})),
+        _json(model.get("correctness_diagnostics", {})),
+    )
+    return rendered.replace("</main>", supplement + "</main>")
+
+
+def render_full_report(model: Mapping[str, Any]) -> str:
+    """Render the evidence report with the approved analytical content types."""
+    rendered = _legacy_render_full_report(model)
+    rendered = rendered.replace("Results by Question", "Case Evidence")
+    rendered = rendered.replace("Quality Components", "Correctness &amp; Projection")
+    supplement = (
+        "<section><h2>Terminal Outcomes</h2><pre>%s</pre></section>"
+        "<section><h2>Principal Findings</h2><pre>%s</pre></section>"
+        "<section><h2>Recommendations</h2><pre>%s</pre></section>"
+        "<section><h2>Limitations</h2><pre>%s</pre></section>"
+    ) % (
+        _json(model.get("terminal_outcomes", {})),
+        _json(model.get("typed_findings", [])),
+        _json(model.get("recommendations", [])),
+        _json(model.get("limitations", [])),
+    )
+    return rendered.replace("</main>", supplement + "</main>")
 
 
 def _atomic_write(path: Path, contents: str) -> Path:

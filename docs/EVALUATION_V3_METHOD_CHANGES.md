@@ -165,3 +165,18 @@ explanation baseline. The detailed report uses
 finding, and case-drill-down baseline. Visual similarity alone is
 insufficient; the generated reports must contain the same kinds of analytical
 content populated from the approved new campaign.
+
+### Staged campaign validation
+
+`python -m benchmark_v3.preflight` now performs deterministic suite,
+reference, scorer, report-contract, temporary-renderer, fingerprint,
+historical-rescore, and public-HTML immutability checks without model calls.
+The live workflow then uses a non-publishable targeted one-repetition matrix
+before the official five-repetition campaign. Exact commands and behavioral
+pass gates are recorded in `benchmark_v3/LIVE_VALIDATION_RUNBOOK.md`.
+
+The official external launcher retains four-arm coverage, K=3 for candidate
+arms, five repetitions, two workers, and the $3.75 ceiling. Its terminal view
+is campaign-wide: completed tests out of 450, percentage, elapsed time, and
+whole-campaign ETA. Successful execution stops with review evidence; it does
+not render either HTML report.

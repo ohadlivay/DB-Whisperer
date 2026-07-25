@@ -24,6 +24,7 @@ Validate without network access:
 
 ```powershell
 python -m benchmark_v3.validate_suite
+python -m benchmark_v3.preflight
 ```
 
 Saved campaign evidence can be rescored with the current deterministic scorer
@@ -66,17 +67,30 @@ python -m benchmark_v3.run_evaluation --campaign-id official-20260723 --workers 
 ```
 
 Campaigns live under `benchmark_v3/results/runs/<campaign-id>`. Checkpoints
-and raw run reports are retained. Only a complete, valid five-repetition
-official campaign (450 valid system observations: 440 query cells and 10 ETL
-observations)
-stages `aggregate.json` and both HTML files, then promotes all three with
-backups and rollback. Incomplete, budget-stopped, or errored campaigns never
-replace the public reports; a failed promotion restores the prior aggregate and
-report bytes and records `latest_error`. Runs with fewer than five repetitions
-are nonpublishing validation/smoke artifacts and the CLI exits nonzero.
-Official publication additionally requires the loaded suite hash to match the
-frozen `DEFAULT_SUITE`; a custom `--suite` can retain its own checkpoints and
-raw evidence but cannot replace public reports.
+and raw run reports are retained. A complete, valid five-repetition official
+campaign (450 valid system observations: 440 query cells and 10 ETL
+observations) creates `aggregate.json`, `review-package.json`, and
+`review-package.md`, then stops successfully at review readiness. It does not
+generate HTML. Incomplete, budget-stopped, or errored campaigns never replace
+the public reports. Runs with fewer than five repetitions are nonpublishing
+validation/smoke artifacts and the official CLI exits nonzero.
+
+Before the official campaign, follow
+`benchmark_v3/LIVE_VALIDATION_RUNBOOK.md`. The targeted external runner
+exercises the semantic regressions with campaign-wide progress and always
+writes `publishable: false`:
+
+```powershell
+benchmark_v3\run_targeted_evaluation.cmd targeted-semantic-regression
+```
+
+After the official findings are discussed and explicitly approved, bind the
+approval to the aggregate hash and publish exactly two reports:
+
+```powershell
+python -m benchmark_v3.approve_campaign benchmark_v3/results/runs/<campaign-id>
+python -m benchmark_v3.publish_reports benchmark_v3/results/runs/<campaign-id>
+```
 
 The campaign runner uses the four arms `baseline`, `candidate_only`,
 `semantic_only`, and `full`. Baseline generates one candidate; the ambiguity
@@ -96,9 +110,8 @@ into each report. The Windows launcher keeps one in-place `Overall`
 line showing completed tests out of all 450 tests, overall percentage,
 campaign elapsed time, and campaign ETA. The compact line stays within a
 standard 80-column Command Prompt and does not print a separate progress block
-for each test. The final terminal message separately states whether those
-observations were published and gives the exact blocking reason when they were
-not.
+for each test. The final terminal message states whether aggregate and review
+evidence are ready and gives the exact blocking reason when they are not.
 
 Before an official run, replay validation should reject known-contaminated
 records and a one-repetition canary should be audited for valid observation

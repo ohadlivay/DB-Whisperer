@@ -8,6 +8,8 @@ import unittest
 from benchmark_v3.render_report import (
     REPORT_TABS, render_full_report, render_one_page, write_reports,
 )
+from benchmark_v3.report_contract import validate_report_model
+from benchmark_v3.review_package import write_review_package
 
 
 def fixture_model() -> dict:
@@ -15,25 +17,121 @@ def fixture_model() -> dict:
     arms = {
         arm: {"composite": distribution, "pass_rate": distribution,
               "components": {"ambiguity": distribution, "correctness": distribution, "efficiency": distribution, "safety": distribution, "grounding": distribution, "etl": distribution},
-              "ambiguity_metrics": {"recall": distribution, "specificity": distribution, "false_positive_rate": distribution, "false_negative_rate": distribution},
+              "ambiguity_metrics": {
+                  "recall": distribution, "specificity": distribution,
+                  "plausibility": distribution, "target_coverage": distribution,
+                  "resolution": distribution, "compliance": distribution,
+                  "final_alignment": distribution,
+                  "false_positive_rate": distribution,
+                  "false_negative_rate": distribution},
               "latency_seconds": distribution}
         for arm in ("baseline", "candidate_only", "semantic_only", "full")
     }
     case = {"case_id": "unsafe<script>alert(1)</script>", "family_id": "safe", "category": "safety", "arm": "full", "run": 1,
             "result": {"sql": "SELECT 1", "columns": ["answer"], "rows": [[1]]},
-            "score": {"passed": False, "reason": "failure", "ambiguity": {"candidate_support": [["a", 2]], "compliance": False}},
+            "terminal": {"category": "no_final_result"},
+            "score": {"passed": False, "reason": "failure", "comparison": {"semantic_compatible": False, "extra_columns": []}, "ambiguity": {"candidate_support": [["a", 2]], "compliance": False}},
             "clarifications": [{"question": "Which?", "candidate_support": [["a", 2]], "compliance_passed": False}]}
-    return {"title": "DB Whisperer Evaluation V3", "provenance": {"suite_version": "3.0", "suite_hash": "hash", "model": "model"},
+    return {"title": "DB Whisperer Evaluation V3",
+            "research_question": "Does explicit ambiguity handling improve text-to-SQL interpretation?",
+            "experimental_design": {"arms": 4, "repetitions": 5, "candidate_count": 3},
+            "provenance": {"suite_version": "3.0", "suite_hash": "hash", "model": "model", "result_provenance": "fixture live-campaign evidence"},
             "methodology": {"design": "five complete compatible repetitions"}, "arms": arms, "arm_cards": arms,
             "headline_metrics": {arm: distribution for arm in arms}, "arm_deltas": {"full": {"composite": distribution}},
             "ambiguity_funnel": {arm: arms[arm]["ambiguity_metrics"] for arm in arms},
-            "shared_etl": distribution, "operations": {"scope": "campaign_global", "metrics": {"cost_usd": 0.1, "retries": 2}},
+            "correctness_diagnostics": {"compatible": 1, "incompatible": 1},
+            "projection_diagnostics": {"extra_columns": 0, "aliases": 0},
+            "terminal_outcomes": {"no_final_result": {"count": 1, "denominator": 1}},
+            "case_findings": {"successes": [{"case_id": "success"}], "failures": [case]},
+            "shared_etl": distribution, "operations": {"scope": "campaign_global", "metrics": {"cost_usd": 0.1, "retries": 2, "elapsed_seconds": 12.0}},
             "usage": {"scope": "campaign_global", "cost_usd": 0.1}, "cases": [case], "evidence": {"failures": [case]},
-            "failures": [case], "oracle_reviews": [], "findings": ["<b>finding</b>"], "limitations": ["No live campaign claim."], "warnings": ["relationship warning"],
+            "failures": [case], "oracle_reviews": [],
+            "findings": [{"finding_id": "fixture", "kind": "comparative", "claim": "<b>finding</b>", "evidence": {}, "caveat": "fixture"}],
+            "interpretations": ["Interpret with campaign scope."],
+            "recommendations": ["Review case evidence before publication."],
+            "limitations": ["No live campaign claim."],
+            "report_readiness": {"metrics": True, "cases": True, "provenance": True, "findings": True},
+            "warnings": ["relationship warning"],
             "charts": {}, "tables": {}}
 
 
 class ReportingTest(unittest.TestCase):
+    def test_reports_match_approved_content_hierarchy(self) -> None:
+        one_page = render_one_page(fixture_model())
+        full = render_full_report(fixture_model())
+        for section in (
+            "Research question",
+            "Experimental design",
+            "Scoring framework",
+            "Headline results",
+            "Ambiguity funnel",
+            "Correctness diagnostics",
+            "Principal findings",
+            "Limitations",
+        ):
+            self.assertIn(section, one_page)
+        for section in (
+            "Methodology",
+            "System Comparison",
+            "Ambiguity Funnel",
+            "Correctness & Projection",
+            "Terminal Outcomes",
+            "Case Evidence",
+            "Safety, ETL & Operations",
+            "Limitations",
+        ):
+            self.assertIn(section, full)
+
+    def test_report_model_contains_every_approved_information_type(self) -> None:
+        model = fixture_model()
+        validate_report_model(model)
+        for key in (
+            "research_question",
+            "experimental_design",
+            "methodology",
+            "provenance",
+            "headline_metrics",
+            "arm_deltas",
+            "ambiguity_funnel",
+            "correctness_diagnostics",
+            "projection_diagnostics",
+            "terminal_outcomes",
+            "case_findings",
+            "findings",
+            "interpretations",
+            "recommendations",
+            "limitations",
+            "report_readiness",
+        ):
+            self.assertIn(key, model)
+
+    def test_review_package_contains_claims_and_case_evidence_without_html(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            aggregate = directory / "aggregate.json"
+            aggregate.write_text(
+                json.dumps({"model": fixture_model()}),
+                encoding="utf-8",
+            )
+
+            outputs = write_review_package(aggregate, directory / "review")
+
+            self.assertEqual(
+                ("review-package.json", "review-package.md"),
+                tuple(path.name for path in outputs),
+            )
+            self.assertFalse(
+                any(path.suffix == ".html" for path in outputs[0].parent.iterdir())
+            )
+            markdown = outputs[1].read_text(encoding="utf-8")
+        self.assertIn("# Campaign Review", markdown)
+        self.assertIn("## Arm comparison", markdown)
+        self.assertIn("## Clarification findings", markdown)
+        self.assertIn("## Terminal outcomes", markdown)
+        self.assertIn("## Report-readiness checklist", markdown)
+
     def test_writes_exactly_two_populated_reports(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary); aggregate = directory / "aggregate.json"

@@ -10,12 +10,19 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from benchmark_v3.contracts import EvaluationCase, load_suite
+from benchmark_v3.contracts import (
+    EvaluationCase,
+    load_suite,
+    validate_reference_suite,
+)
 from benchmark_v3.observability import atomic_json
 from benchmark_v3.run_evaluation import (
     ARMS,
     DEFAULT_SUITE,
     _deserialize_schema,
+    _serialize_schema,
+    build_services,
+    ingest_dataset,
 )
 from benchmark_v3.scoring import score_query_case, summarize_arm
 from db_whisperer.contracts import ComponentState, QueryResult
@@ -68,19 +75,28 @@ def _query_result(payload: Mapping[str, Any]) -> QueryResult:
 
 def _reference_evidence(
     directory: Path,
-    suite_hash: str,
+    suite: Any,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
     for path in sorted(directory.glob("references-*.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
         if (
-            payload.get("suite_hash") == suite_hash
+            payload.get("suite_hash") == suite.sha256
             and isinstance(payload.get("schema"), Mapping)
             and isinstance(payload.get("references"), Mapping)
         ):
             return payload["schema"], payload["references"]
-    raise ValueError(
-        "counterfactual rescore requires the campaign's frozen reference artifact"
-    )
+    schema = ingest_dataset(suite.dataset_path)
+    query, _ = build_services(suite.candidate_count)
+    executed = validate_reference_suite(suite, schema, query)
+    references = {
+        case_id: {
+            **result,
+            "state": "accepted",
+            "message": "regenerated current-suite reference",
+        }
+        for case_id, result in executed.items()
+    }
+    return _serialize_schema(schema), references
 
 
 def _rescore_record(
@@ -125,10 +141,7 @@ def rescore_campaign(campaign_dir: str | Path) -> Path:
     directory = Path(campaign_dir).resolve()
     suite = load_suite(DEFAULT_SUITE)
     source_campaign_hash = _source_hash(directory)
-    schema_payload, references = _reference_evidence(
-        directory,
-        suite.sha256,
-    )
+    schema_payload, references = _reference_evidence(directory, suite)
     schema = _deserialize_schema(schema_payload)
     cases = {case.id: case for case in suite.cases}
     reports: list[dict[str, Any]] = []

@@ -17,6 +17,11 @@ from benchmark_v3.run_evaluation import (
     build_services,
     run_cell,
 )
+from benchmark_v3.run_targeted_evaluation import (
+    targeted_payload,
+    targeted_schedule,
+)
+from benchmark_v3.validate_results import validate_aggregate
 from benchmark_v3.contracts import EvaluationCase
 from db_whisperer.contracts import AmbiguityDecision, ComponentState, QueryCandidate, QueryResult, SchemaMetadata
 from db_whisperer.querier import QueryService
@@ -31,6 +36,34 @@ SUITE_PATH = (
 
 
 class RunnerTest(unittest.TestCase):
+    def test_targeted_schedule_contains_only_requested_cells(self) -> None:
+        suite = load_suite(SUITE_PATH)
+
+        schedule = targeted_schedule(
+            suite,
+            case_ids=("from_2024_admission", "diagnoses_occurrences"),
+            arms=("semantic_only", "full"),
+            repetitions=1,
+        )
+
+        self.assertEqual(4, len(schedule))
+        self.assertEqual(
+            {"from_2024_admission", "diagnoses_occurrences"},
+            {item.case_id for item in schedule},
+        )
+        self.assertEqual({"semantic_only", "full"}, {item.arm for item in schedule})
+
+    def test_targeted_campaign_is_never_publishable(self) -> None:
+        payload = targeted_payload([], suite_hash="suite", model="model")
+
+        self.assertFalse(payload["publishable"])
+        self.assertEqual(
+            "dbwhisperer_v3_targeted_regression",
+            payload["report_type"],
+        )
+        with self.assertRaises(ValueError):
+            validate_aggregate(payload)
+
     def test_unnecessary_clarification_preserves_preclarification_result(
         self,
     ) -> None:

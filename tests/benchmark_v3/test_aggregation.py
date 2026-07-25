@@ -187,10 +187,17 @@ class AggregationTest(unittest.TestCase):
         )
         self.assertEqual(3, len(model["findings"]))
         self.assertTrue(
-            any("paired difference" in item for item in model["findings"])
+            any(
+                item["finding_id"] == "full_vs_baseline_composite"
+                and "delta" in item["evidence"]
+                for item in model["findings"]
+            )
         )
         self.assertTrue(
-            any("final alignment" in item for item in model["findings"])
+            any(
+                "final alignment" in item["claim"]
+                for item in model["findings"]
+            )
         )
         query_case = next(row for row in model["cases"] if row["arm"] == "full")
         self.assertNotEqual("Not recorded", query_case.get("question"))

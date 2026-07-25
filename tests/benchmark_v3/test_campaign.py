@@ -43,6 +43,14 @@ from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
 from benchmark_v3.observability import BudgetStop, InfrastructureStop
 from benchmark_v3.rescore_campaign import rescore_campaign
 from tests.benchmark_v3.test_aggregation import write_campaign
+from benchmark_v3.aggregate_results import aggregate_campaign
+from benchmark_v3.review_package import write_review_package
+from benchmark_v3.publication import (
+    approve_campaign,
+    publish_approved_campaign,
+    sha256_file,
+)
+from benchmark_v3.preflight import run_preflight
 
 
 SUITE_PATH = (
@@ -54,6 +62,72 @@ SUITE_PATH = (
 
 
 class CampaignTest(unittest.TestCase):
+    def test_preflight_is_offline_and_checks_report_readiness(self) -> None:
+        historical = (
+            PROJECT_ROOT
+            / "benchmark_v3"
+            / "results"
+            / "runs"
+            / "v3-official-evidence-final-20260724"
+        )
+        with patch(
+            "requests.Session.post",
+            side_effect=AssertionError("preflight must not call the network"),
+        ):
+            result = run_preflight(DEFAULT_SUITE, historical_campaign=historical)
+
+        self.assertTrue(result.passed, result.errors)
+        for name in (
+            "suite",
+            "references",
+            "scorer",
+            "report_contract",
+            "renderer",
+            "fingerprint",
+            "historical_rescore",
+            "public_html_unchanged",
+        ):
+            self.assertTrue(result.checks[name], name)
+
+    def test_approval_binds_campaign_and_aggregate_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "campaign-id"
+            directory.mkdir()
+            write_campaign(directory)
+            aggregate = directory / "aggregate.json"
+            aggregate.write_text(
+                json.dumps(aggregate_campaign(directory)),
+                encoding="utf-8",
+            )
+            write_review_package(aggregate, directory)
+
+            approval = approve_campaign(directory, approved_by="user")
+
+            payload = json.loads(approval.read_text(encoding="utf-8"))
+            self.assertEqual(directory.name, payload["campaign_id"])
+            self.assertEqual(
+                sha256_file(aggregate),
+                payload["aggregate_sha256"],
+            )
+            self.assertEqual("user", payload["approved_by"])
+
+    def test_publish_rejects_changed_aggregate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "campaign-id"
+            directory.mkdir()
+            write_campaign(directory)
+            aggregate = directory / "aggregate.json"
+            aggregate.write_text(
+                json.dumps(aggregate_campaign(directory)),
+                encoding="utf-8",
+            )
+            write_review_package(aggregate, directory)
+            approve_campaign(directory, approved_by="user")
+            aggregate.write_text('{"changed":true}', encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "approval hash|aggregate"):
+                publish_approved_campaign(directory)
+
     def test_rescore_writes_new_artifact_without_mutating_campaign(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -205,30 +279,38 @@ class CampaignTest(unittest.TestCase):
             with patch("benchmark_v3.aggregate_results.aggregate_campaign", side_effect=AssertionError("aggregate")), patch("benchmark_v3.render_report.write_reports", side_effect=AssertionError("render")):
                 self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
             campaign = json.loads((directory / "campaign.json").read_text())
-            self.assertTrue(campaign["complete"]); self.assertIn("frozen default suite", campaign["latest_error"])
+            self.assertTrue(campaign["complete"]); self.assertIn("report approval", campaign["latest_error"])
             self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
 
-    def test_publication_writes_aggregate_then_exactly_two_reports(self) -> None:
+    def test_approved_publication_writes_exactly_two_reports(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary); public = directory / "public"; public.mkdir()
-            (directory / "campaign.json").write_text(json.dumps({"complete": True, "suite_hash": load_suite(DEFAULT_SUITE).sha256, "repetitions": 5, "records": [{}] * 450}))
-            aggregate = {"validated": True}
+            write_campaign(directory)
+            aggregate_path = directory / "aggregate.json"
+            aggregate_path.write_text(json.dumps(aggregate_campaign(directory)), encoding="utf-8")
+            write_review_package(aggregate_path, directory)
+            approve_campaign(directory, approved_by="reviewer")
             def render_staged(_: Path, staged_one: Path, staged_full: Path) -> tuple[Path, Path]:
                 staged_one.write_text("new one"); staged_full.write_text("new full")
                 return staged_one, staged_full
-            with patch("benchmark_v3.aggregate_results.aggregate_campaign", return_value=aggregate), patch("benchmark_v3.aggregate_results.validate_aggregate") as validate, patch("benchmark_v3.render_report.write_reports", side_effect=render_staged) as write:
+            with patch("benchmark_v3.render_report.write_reports", side_effect=render_staged) as write:
                 self.assertTrue(publish_campaign(directory, one_page_path=public / "evaluation_method_one_page.html", full_report_path=public / "evaluation_report.html"))
-            self.assertEqual(aggregate, json.loads((directory / "aggregate.json").read_text()))
-            validate.assert_called_once_with(aggregate); write.assert_called_once()
+            write.assert_called_once()
+            self.assertEqual("new one", (public / "evaluation_method_one_page.html").read_text())
+            self.assertEqual("new full", (public / "evaluation_report.html").read_text())
 
-    def test_publication_rolls_back_every_artifact_when_second_or_third_promotion_fails(self) -> None:
-        for failed_promotion in (2, 3):
+    def test_publication_rolls_back_both_reports_when_promotion_fails(self) -> None:
+        for failed_promotion in (1, 2):
             with self.subTest(failed_promotion=failed_promotion), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary); public = directory / "public"; public.mkdir()
-                aggregate_path = directory / "aggregate.json"; one_page = public / "evaluation_method_one_page.html"; full = public / "evaluation_report.html"
-                aggregate_path.write_bytes(b"old aggregate"); one_page.write_bytes(b"old one"); full.write_bytes(b"old full")
-                before = tuple(path.read_bytes() for path in (aggregate_path, one_page, full))
-                (directory / "campaign.json").write_text(json.dumps({"complete": True, "suite_hash": load_suite(DEFAULT_SUITE).sha256, "repetitions": 5, "records": [{}] * 450}))
+                one_page = public / "evaluation_method_one_page.html"; full = public / "evaluation_report.html"
+                one_page.write_bytes(b"old one"); full.write_bytes(b"old full")
+                before = tuple(path.read_bytes() for path in (one_page, full))
+                write_campaign(directory)
+                aggregate_path = directory / "aggregate.json"
+                aggregate_path.write_text(json.dumps(aggregate_campaign(directory)), encoding="utf-8")
+                write_review_package(aggregate_path, directory)
+                approve_campaign(directory, approved_by="reviewer")
                 calls = 0
                 def render_staged(_: Path, staged_one: Path, staged_full: Path) -> tuple[Path, Path]:
                     staged_one.write_text("new one"); staged_full.write_text("new full")
@@ -238,9 +320,9 @@ class CampaignTest(unittest.TestCase):
                     calls += 1
                     if calls == failed_promotion: raise OSError("injected promotion failure")
                     return source.replace(target)
-                with patch("benchmark_v3.aggregate_results.aggregate_campaign", return_value={"new": True}), patch("benchmark_v3.aggregate_results.validate_aggregate"), patch("benchmark_v3.render_report.write_reports", side_effect=render_staged), patch("benchmark_v3.run_evaluation._replace_staged", side_effect=replace):
+                with patch("benchmark_v3.render_report.write_reports", side_effect=render_staged), patch("benchmark_v3.run_evaluation._replace_staged", side_effect=replace):
                     self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
-                self.assertEqual(before, tuple(path.read_bytes() for path in (aggregate_path, one_page, full)))
+                self.assertEqual(before, tuple(path.read_bytes() for path in (one_page, full)))
 
     def test_publication_error_preserves_public_reports_and_marks_campaign_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -375,7 +457,7 @@ class CampaignTest(unittest.TestCase):
             ),
             frozenset(),
             (),
-            published=True,
+            review_ready=True,
         )
 
         def run(config: CampaignConfig) -> CampaignResult:
@@ -410,6 +492,29 @@ class CampaignTest(unittest.TestCase):
         self.assertIn("--interactive-progress", launcher)
         self.assertIn('if "%~2"=="1" set "REPETITIONS=1"', launcher)
         self.assertIn("--repetitions %REPETITIONS%", launcher)
+
+    def test_live_runbook_orders_targeted_before_official(self) -> None:
+        runbook = (
+            BENCHMARK_DIR / "LIVE_VALIDATION_RUNBOOK.md"
+        ).read_text(encoding="utf-8")
+        self.assertLess(
+            runbook.index("Targeted one-repetition"),
+            runbook.index("Official five-repetition"),
+        )
+        self.assertIn("semantic_only", runbook)
+        self.assertIn("full", runbook)
+        self.assertIn("review-package.md", runbook)
+        self.assertIn("Do not publish HTML", runbook)
+
+    def test_targeted_launcher_is_masked_and_nonpublishing(self) -> None:
+        launcher = (
+            BENCHMARK_DIR / "run_targeted_evaluation.cmd"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Read-Host 'OpenRouter API key' -AsSecureString", launcher)
+        self.assertIn("ZeroFreeBSTR", launcher)
+        self.assertIn("-m benchmark_v3.run_targeted_evaluation", launcher)
+        self.assertNotIn("-m benchmark_v3.publish", launcher)
+        self.assertIn("--arm semantic_only --arm full", launcher)
 
     def test_budget_stop_drains_admitted_cells_without_new_submissions(self) -> None:
         suite = self._suite(repetitions=2)

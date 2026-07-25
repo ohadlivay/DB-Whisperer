@@ -138,6 +138,8 @@ class CampaignConfig:
     service_factory: Callable[[CampaignObserver], tuple[QueryService, dict[str, ApplicationService]]] | None = None
     cell_runner: Callable[..., dict[str, Any]] | None = None
     progress_factory: Callable[[CampaignObserver], TerminalProgress] | None = None
+    arms: tuple[str, ...] = ARMS
+    publishable: bool = True
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,8 @@ class CampaignResult:
     stopped_for_infrastructure: bool = False
     stop_reason: str = ""
     publication_failed: bool = False
+    aggregate_ready: bool = False
+    review_ready: bool = False
 
 
 def _hash_paths(paths: tuple[Path, ...]) -> str:
@@ -186,6 +190,7 @@ def _fingerprint(
     dataset_hash: str,
     *,
     workers: int = 2,
+    arms: tuple[str, ...] = ARMS,
 ) -> CampaignFingerprint:
     prompt_hash = _hash_paths(_behavior_source_paths())
     runtime_source_hash = _source_hash(
@@ -203,7 +208,7 @@ def _fingerprint(
         "workers": workers,
         "repetitions": suite.repetitions,
         "candidate_count": suite.candidate_count,
-        "arms": ARMS,
+        "arms": arms,
         "runtime_source_hash": runtime_source_hash,
     }
     runtime_hash = sha256(
@@ -216,7 +221,7 @@ def _fingerprint(
         prompt_hash=prompt_hash,
         scorer_version=scorer_hash,
         candidate_count=suite.candidate_count,
-        arms=ARMS,
+        arms=arms,
         runtime_hash=runtime_hash,
     )
 
@@ -231,6 +236,7 @@ def _fingerprint_payload(fingerprint: CampaignFingerprint) -> dict[str, Any]:
 def build_schedule(
     suite: EvaluationSuite,
     repetitions: int | None = None,
+    arms: tuple[str, ...] = ARMS,
 ) -> tuple[WorkItem, ...]:
     """Fixed-seed query schedule; ETL fixtures are deliberately separate."""
     count = repetitions if repetitions is not None else suite.repetitions
@@ -238,11 +244,13 @@ def build_schedule(
     for repetition in range(1, count + 1):
         cases = list(suite.query_cases)
         random.Random(2112 + repetition).shuffle(cases)
-        arms = ARMS[repetition % len(ARMS):] + ARMS[:repetition % len(ARMS)]
+        rotated_arms = (
+            arms[repetition % len(arms):] + arms[:repetition % len(arms)]
+        )
         for case in cases:
             items.extend(
                 WorkItem(repetition, case.id, case.family_id, case.category, arm)
-                for arm in arms
+                for arm in rotated_arms
             )
     return tuple(items)
 
@@ -880,8 +888,15 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     if config.workers not in {1, 2}:
         raise ValueError("workers must be one or two")
     dataset_hash = config.dataset.dataset_hash if config.dataset else _hash_files(config.suite.dataset_path)
-    fingerprint = _fingerprint(config.suite, dataset_hash, workers=config.workers)
-    query_schedule = build_schedule(config.suite)
+    if not config.arms or any(arm not in ARMS for arm in config.arms):
+        raise ValueError("campaign arms must be a non-empty subset of V3 arms")
+    fingerprint = _fingerprint(
+        config.suite,
+        dataset_hash,
+        workers=config.workers,
+        arms=config.arms,
+    )
+    query_schedule = build_schedule(config.suite, arms=config.arms)
     schedule = query_schedule + build_etl_schedule(config.suite)
     campaign_path = config.campaign_dir / "campaign.json"
     existing = json.loads(campaign_path.read_text(encoding="utf-8")) if campaign_path.exists() else {}
@@ -891,7 +906,7 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     metadata = {
         "report_type": "dbwhisperer_v3_run", "suite_version": config.suite.version,
         "suite_hash": config.suite.sha256, "model": config.suite.model,
-        "arms": list(ARMS), "fingerprint": _fingerprint_payload(fingerprint),
+        "arms": list(config.arms), "fingerprint": _fingerprint_payload(fingerprint),
     }
     # Make compatibility durable before preparing data or admitting a cell.
     atomic_json(campaign_path, {**metadata, "complete": False, "records": list(checkpoint_records.values())})
@@ -1053,19 +1068,36 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
     atomic_json(campaign_path, payload)
     published = False
     publication_failed = False
-    if payload["complete"] and config.suite.repetitions == OFFICIAL_REPETITIONS and len(records) == OFFICIAL_RECORD_COUNT:
-        published = publish_campaign(config.campaign_dir)
-        if not published:
-            publication_failed = True
+    aggregate_ready = False
+    review_ready = False
+    if (
+        config.publishable
+        and config.arms == ARMS
+        and payload["complete"]
+        and config.suite.repetitions == OFFICIAL_REPETITIONS
+        and len(records) == OFFICIAL_RECORD_COUNT
+    ):
+        try:
+            finalize_campaign(config.campaign_dir)
+            aggregate_ready = True
+            review_ready = True
             campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
-            stop_reason = str(
-                campaign.get("latest_error", "campaign publication failed")
-            )
+            campaign["aggregate_ready"] = True
+            campaign["review_ready"] = True
+            campaign["published"] = False
+            campaign.pop("latest_error", None)
+            atomic_json(campaign_path, campaign)
+        except Exception as error:
+            publication_failed = True
+            stop_reason = f"campaign finalization failed: {error}"
+            campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+            campaign["latest_error"] = stop_reason
+            atomic_json(campaign_path, campaign)
     observer.publish(
         state=(
-            "published"
-            if published
-            else "publication_failed"
+            "review_ready"
+            if review_ready
+            else "finalization_failed"
             if publication_failed
             else "blocked"
             if stopped_for_budget or stopped_for_infrastructure or stop_reason
@@ -1074,15 +1106,36 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
         latest_error=stop_reason,
     )
     return CampaignResult(
-        fingerprint,
-        frozenset(completed),
-        tuple(records),
-        stopped_for_budget,
-        published,
-        stopped_for_infrastructure,
-        stop_reason,
-        publication_failed,
+        fingerprint=fingerprint,
+        completed_keys=frozenset(completed),
+        records=tuple(records),
+        stopped_for_budget=stopped_for_budget,
+        published=published,
+        stopped_for_infrastructure=stopped_for_infrastructure,
+        stop_reason=stop_reason,
+        publication_failed=publication_failed,
+        aggregate_ready=aggregate_ready,
+        review_ready=review_ready,
     )
+
+
+def finalize_campaign(
+    campaign_dir: Path,
+) -> tuple[Path, tuple[Path, Path]]:
+    """Validate aggregate evidence and create the non-HTML review handoff."""
+
+    from benchmark_v3.aggregate_results import (
+        aggregate_campaign,
+        validate_aggregate,
+    )
+    from benchmark_v3.review_package import write_review_package
+
+    aggregate = aggregate_campaign(campaign_dir)
+    validate_aggregate(aggregate)
+    aggregate_path = campaign_dir / "aggregate.json"
+    atomic_json(aggregate_path, aggregate)
+    review_paths = write_review_package(aggregate_path, campaign_dir)
+    return aggregate_path, review_paths
 
 
 def _replace_staged(source: Path, target: Path) -> Path:
@@ -1120,53 +1173,23 @@ def publish_campaign(
     one_page_path: Path | None = None,
     full_report_path: Path | None = None,
 ) -> bool:
-    """Publish only a complete official campaign; raw evidence is never removed."""
-    campaign_path = campaign_dir / "campaign.json"
-    if not campaign_path.exists():
-        return False
-    campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
-    if (
-        campaign.get("complete") is not True
-        or campaign.get("repetitions") != OFFICIAL_REPETITIONS
-        or not isinstance(campaign.get("records"), list)
-        or len(campaign["records"]) != OFFICIAL_RECORD_COUNT
-    ):
-        return False
-    if campaign.get("suite_hash") != load_suite(DEFAULT_SUITE).sha256:
-        campaign["latest_error"] = "official publication requires the frozen default suite hash"
-        atomic_json(campaign_path, campaign)
-        return False
-    one_page_path = one_page_path or PROJECT_ROOT / "docs" / "evaluation_method_one_page.html"
-    full_report_path = full_report_path or PROJECT_ROOT / "docs" / "evaluation_report.html"
-    stage_dir = campaign_dir / f".publication-{os.getpid()}-{datetime.now(timezone.utc).strftime('%f')}"
+    """Compatibility wrapper for approval-gated report publication."""
     try:
-        from benchmark_v3.aggregate_results import aggregate_campaign, validate_aggregate
-        from benchmark_v3.render_report import write_reports
+        from benchmark_v3.publication import publish_approved_campaign
 
-        aggregate = aggregate_campaign(campaign_dir)
-        validate_aggregate(aggregate)
-        aggregate_path = campaign_dir / "aggregate.json"
-        stage_dir.mkdir(parents=True, exist_ok=False)
-        staged_aggregate = stage_dir / "aggregate.json"
-        staged_one_page = stage_dir / one_page_path.name
-        staged_full_report = stage_dir / full_report_path.name
-        atomic_json(staged_aggregate, aggregate)
-        write_reports(staged_aggregate, staged_one_page, staged_full_report)
-        _promote_publication(
-            (staged_aggregate, staged_one_page, staged_full_report),
-            (aggregate_path, one_page_path, full_report_path),
-            stage_dir,
+        publish_approved_campaign(
+            campaign_dir,
+            one_page_path=one_page_path,
+            full_report_path=full_report_path,
         )
-        campaign["published"] = True
-        campaign.pop("latest_error", None)
-        atomic_json(campaign_path, campaign)
         return True
     except Exception as error:
-        campaign["latest_error"] = f"publication failed: {error}"
-        atomic_json(campaign_path, campaign)
+        campaign_path = campaign_dir / "campaign.json"
+        if campaign_path.is_file():
+            campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+            campaign["latest_error"] = f"publication failed: {error}"
+            atomic_json(campaign_path, campaign)
         return False
-    finally:
-        shutil.rmtree(stage_dir, ignore_errors=True)
 
 
 def _campaign_directory(campaign_id: str | None) -> Path:
@@ -1218,12 +1241,12 @@ def main() -> None:
         detail = result.stop_reason or "publication failed"
         raise SystemExit(
             "Processing completed with all 450 valid observations, but "
-            f"publication failed: {detail}. No evaluation cells need rerun; "
-            "publication can be retried."
+            f"review finalization failed: {detail}. No evaluation cells need "
+            "rerun; finalization can be retried."
         )
     if (
         args.repetitions != OFFICIAL_REPETITIONS
-        or not result.published
+        or not result.review_ready
         or result.stopped_for_budget
         or result.stopped_for_infrastructure
     ):
@@ -1231,10 +1254,15 @@ def main() -> None:
             "the run did not contain five complete valid repetitions"
         )
         raise SystemExit(
-            "Campaign was not published: "
+            "Campaign did not reach review-ready state: "
             f"{detail}. Processed cells remain resumable and are not scored "
             "as infrastructure failures."
         )
+    print(
+        "Campaign aggregate and review package are ready. HTML reports await "
+        "explicit approval."
+    )
+    print(f"Review: {campaign_dir / 'review-package.md'}")
 
 
 if __name__ == "__main__":
