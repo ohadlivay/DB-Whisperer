@@ -84,6 +84,29 @@ def targeted_payload(
     }
 
 
+def targeted_gate_failures(
+    records: Iterable[dict[str, Any]],
+) -> tuple[str, ...]:
+    """Return completed cells that fail the targeted behavioral contract."""
+
+    failures: list[str] = []
+    for record in records:
+        score = record.get("score")
+        passed = isinstance(score, dict) and score.get("passed") is True
+        if passed:
+            continue
+        reason = (
+            str(score.get("reason", "missing score"))
+            if isinstance(score, dict)
+            else "missing score"
+        )
+        failures.append(
+            f"{record.get('case_id', 'unknown')}/"
+            f"{record.get('arm', 'unknown')}: {reason}"
+        )
+    return tuple(failures)
+
+
 def _target_suite(
     suite: EvaluationSuite,
     case_ids: tuple[str, ...],
@@ -176,9 +199,17 @@ def main() -> None:
         )
     )
     payload["stop_reason"] = result.stop_reason
+    gate_failures = targeted_gate_failures(result.records)
+    payload["behavioral_passed"] = not gate_failures
+    payload["behavioral_failures"] = list(gate_failures)
     atomic_json(directory / "targeted-campaign.json", payload)
     if not payload["complete"]:
         raise SystemExit(result.stop_reason or "targeted campaign did not complete")
+    if gate_failures:
+        raise SystemExit(
+            "targeted behavioral gate failed:\n- "
+            + "\n- ".join(gate_failures)
+        )
     print(f"Targeted regression complete: {directory}")
     print("This artifact is non-publishable.")
 

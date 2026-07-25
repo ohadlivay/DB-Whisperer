@@ -301,7 +301,12 @@ def build_services(
         return ApplicationService(
             querier=query,
             ambiguity=ambiguity,
-            semantic_column=SemanticColumnAmbiguityService(),
+            semantic_column=SemanticColumnAmbiguityService(
+                client=AmbiguityOpenRouterClient(
+                    session=session,
+                    prompt_logger=logger,
+                ),
+            ),
             event_logger=logger,
             candidates_per_iteration=candidate_count,
             max_parallel_candidates=candidate_count,
@@ -758,7 +763,7 @@ def run_cell(
     }
     score = score_query_case(
         case, result, dataset.references.get(case.id), dataset.schema,
-        clarifications, safety_evidence=safety,
+        clarifications, safety_evidence=safety, arm=item.arm,
     )
     return {
         "run": item.repetition,

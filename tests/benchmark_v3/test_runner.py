@@ -19,6 +19,7 @@ from benchmark_v3.run_evaluation import (
 )
 from benchmark_v3.run_targeted_evaluation import (
     _target_suite,
+    targeted_gate_failures,
     targeted_payload,
     targeted_schedule,
 )
@@ -37,6 +38,30 @@ SUITE_PATH = (
 
 
 class RunnerTest(unittest.TestCase):
+    def test_targeted_gate_rejects_completed_behavioral_failure(self) -> None:
+        failures = targeted_gate_failures([
+            {
+                "case_id": "from_2024_birth",
+                "arm": "full",
+                "score": {
+                    "passed": False,
+                    "reason": "clarification was not asked",
+                },
+            },
+            {
+                "case_id": "ctl_from_2024_birth",
+                "arm": "full",
+                "score": {"passed": True, "reason": "exact multiset"},
+            },
+        ])
+
+        self.assertEqual(
+            (
+                "from_2024_birth/full: clarification was not asked",
+            ),
+            failures,
+        )
+
     def test_targeted_schedule_contains_only_requested_cells(self) -> None:
         suite = load_suite(SUITE_PATH)
 
@@ -200,6 +225,14 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(
             applications["full"].ambiguity.prompt_builder
             .include_relationships
+        )
+        self.assertIs(
+            applications["full"].semantic_column.client.session,
+            applications["full"].ambiguity.client.session,
+        )
+        self.assertIs(
+            applications["full"].semantic_column.client.prompt_logger,
+            observer.prompt_logger,
         )
 
     def test_schedule_is_deterministic_and_counterbalanced(self) -> None:

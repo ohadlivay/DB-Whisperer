@@ -255,6 +255,61 @@ class ResultCompatibilityTest(unittest.TestCase):
 
         self.assertTrue(compatible, reason)
 
+    def test_duration_contract_maps_interval_without_canonical_alias(self) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+        )
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT hadm_id, admittime, dischtime, "
+                "date_diff('hour', admittime, dischtime) / 24.0 "
+                "AS hospital_los_days FROM admissions"
+            ),
+            required_column_groups=(("hospital_los_days",),),
+            duration=contract,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("hadm_id", "admittime", "dischtime", "hospital_los_days"),
+            ((
+                142345,
+                "2164-10-23 21:09:00",
+                "2164-11-01 17:15:00",
+                8.8375,
+            ),),
+        )
+        actual_sql = (
+            "SELECT subject_id, hadm_id, admittime, dischtime, "
+            "(dischtime - admittime) AS length_of_stay FROM admissions"
+        )
+        actual = result(
+            actual_sql,
+            (
+                "subject_id",
+                "hadm_id",
+                "admittime",
+                "dischtime",
+                "length_of_stay",
+            ),
+            ((
+                10006,
+                142345,
+                "2164-10-23 21:09:00",
+                "2164-11-01 17:15:00",
+                timedelta(days=8, hours=20, minutes=6),
+            ),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+
+        self.assertTrue(compatible, reason)
+
     def test_harmless_extra_columns_preserve_correctness(self) -> None:
         evaluation_case = case(
             expected_sql=(
@@ -810,6 +865,30 @@ class ScoringTest(unittest.TestCase):
         self.assertFalse(evidence["plausibility"])
         self.assertFalse(evidence["target_coverage"])
 
+    def test_mechanism_accuracy_is_conditioned_on_ablation_arm(self) -> None:
+        evaluation_case = case(
+            category="ambiguity",
+            family_id="diagnoses",
+            should_clarify=True,
+            expected_mechanism="candidate-comparison",
+        )
+        clarification = {
+            "question": "Count occurrences or distinct patients?",
+            "options": ["Diagnosis occurrences", "Distinct patients"],
+            "mechanism": "semantic-column",
+            "matched_intent": True,
+            "compliance_passed": True,
+        }
+
+        evidence = ambiguity_evidence(
+            evaluation_case,
+            [clarification],
+            final_aligned=True,
+            arm="semantic_only",
+        )
+
+        self.assertTrue(evidence["mechanism_correct"])
+
     def setUp(self) -> None:
         admission_columns = (
             ColumnMetadata("subject_id", "BIGINT", "admissions"),
@@ -1095,6 +1174,94 @@ class ScoringTest(unittest.TestCase):
         )
 
         self.assertNotIn("required filter is missing", score["reason"])
+
+    def test_required_filter_treats_date_part_year_as_extract_year(self) -> None:
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT dob FROM patients "
+                "WHERE EXTRACT(YEAR FROM dob) = 2112"
+            ),
+            required_tables=("patients",),
+            required_column_groups=(("dob",),),
+            required_filters=("EXTRACT(YEAR FROM dob) = 2112",),
+        )
+        actual = result(
+            "SELECT dob FROM patients "
+            "WHERE date_part('year', dob) = 2112",
+            ("dob",),
+            ((date(2112, 1, 1),),),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("dob",),
+            ((date(2112, 1, 1),),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertNotIn("required filter is missing", score["reason"])
+
+    def test_official_admission_control_allows_patient_details_join(self) -> None:
+        from benchmark_v3.contracts import load_suite
+        from pathlib import Path
+
+        suite_path = (
+            Path(__file__).resolve().parents[2]
+            / "benchmark_v3"
+            / "cases"
+            / "evaluation_cases.json"
+        )
+        evaluation_case = next(
+            item
+            for item in load_suite(suite_path).query_cases
+            if item.id == "ctl_from_2024_admission"
+        )
+        actual = result(
+            "SELECT p.subject_id, a.hadm_id, a.admittime "
+            "FROM patients AS p JOIN admissions AS a "
+            "ON a.subject_id = p.subject_id "
+            "WHERE YEAR(a.admittime) = 2112 "
+            "ORDER BY p.subject_id, a.hadm_id",
+            ("subject_id", "hadm_id", "admittime"),
+            ((10006, 142345, "2112-01-02 03:04:05"),),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id", "hadm_id", "admittime"),
+            ((10006, 142345, "2112-01-02 03:04:05"),),
+        )
+        columns = (
+            ColumnMetadata("subject_id", "BIGINT", "patients"),
+            ColumnMetadata("gender", "VARCHAR", "patients"),
+            ColumnMetadata("subject_id", "BIGINT", "admissions"),
+            ColumnMetadata("hadm_id", "BIGINT", "admissions"),
+            ColumnMetadata("admittime", "TIMESTAMP", "admissions"),
+        )
+        schema = SchemaMetadata(
+            table_names=("patients", "admissions"),
+            columns=columns,
+            tables=(
+                TableSchema("patients", columns[:2], 1),
+                TableSchema("admissions", columns[2:], 1),
+            ),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            schema,
+            [],
+        )
+
+        self.assertEqual(1.0, score["grounding"])
+        self.assertEqual(1.0, score["correctness"], score["reason"])
 
     def test_ambiguous_success_requires_compliance_and_final_alignment(
         self,

@@ -131,6 +131,7 @@ def _rescore_record(
         expected,
         schema,
         turns,
+        arm=str(record.get("arm", "")) or None,
     )
     return rescored
 

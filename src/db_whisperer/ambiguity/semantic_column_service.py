@@ -239,7 +239,6 @@ class SemanticColumnAmbiguityService:
                 continue
 
             parsed: list[tuple[int, str, str, SemanticGrounding]] = []
-            relevance_values: list[int] = []
             for entry in raw_interpretations:
                 if not isinstance(entry, dict):
                     continue
@@ -317,7 +316,6 @@ class SemanticColumnAmbiguityService:
                             dropped.append(value)
                     continue
 
-                relevance_values.append(relevance)
                 parsed.append((
                     relevance,
                     label.strip(),
@@ -330,9 +328,6 @@ class SemanticColumnAmbiguityService:
                         temporal_role=temporal_role.strip(),
                     ),
                 ))
-
-            if len(relevance_values) != len(set(relevance_values)):
-                continue
 
             unique: list[tuple[int, str, str, SemanticGrounding]] = []
             seen_grounding: set[SemanticGrounding] = set()

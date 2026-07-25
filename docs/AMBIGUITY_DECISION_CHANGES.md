@@ -276,10 +276,15 @@ hospital` settle their corresponding dimension. Representation-only choices
 such as diagnosis long title versus short title cannot pre-empt unresolved
 measure or aggregation ambiguity.
 
-For `How common is each diagnosis?`, the semantic distinction is diagnosis-row
+For `How common is each diagnosis code?`, the semantic distinction is diagnosis-row
 occurrences versus distinct affected patients. For temporal ambiguity,
 columns are grouped by real-world roles such as birth, hospital admission, and
 death before the two most relevant unresolved options are selected.
+
+Interpretation relevance is an ordering hint rather than a uniqueness
+constraint. Equal ranks are valid for equally plausible interpretations and
+retain the model's stable returned order; schema grounding must still be
+distinct for the finding to survive validation.
 
 This design is now production behavior. Regression coverage includes:
 

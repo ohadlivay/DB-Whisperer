@@ -422,6 +422,16 @@ def _has_required_output_concepts(
             or case.reference.rank_column_required
             or not any("rank" in token.casefold() for token in group)
         )
+        and not (
+            case.reference is not None
+            and case.reference.duration is not None
+            and any(
+                {"duration", "los"}.intersection(
+                    _normalized_identifier(token).split("_")
+                )
+                for token in group
+            )
+        )
     )
     return all(
         any(
@@ -490,6 +500,7 @@ def map_required_columns(
     selected: list[int] = []
     used: set[int] = set()
     aliases: list[tuple[str, str]] = []
+    duration_indexes = _duration_expected_indexes(case, expected)
     for expected_index, expected_name in enumerate(expected_names):
         exact = [
             index for index, actual_name in enumerate(actual_names)
@@ -501,25 +512,44 @@ def map_required_columns(
             )
         candidates = exact
         if not candidates:
-            expected_signature = _column_signature(
-                expected.rows,
-                expected_index,
-                ordered=ordered,
-            )
-            candidates = [
-                actual_index
-                for actual_index in range(len(actual.columns))
-                if actual_index not in used
-                and _signature_compatible(
-                    _column_signature(
-                        actual.rows,
+            if (
+                expected_index in duration_indexes
+                and reference.duration is not None
+            ):
+                candidates = [
+                    actual_index
+                    for actual_index in range(len(actual.columns))
+                    if actual_index not in used
+                    and _duration_columns_compatible(
+                        actual,
                         actual_index,
+                        expected,
+                        expected_index,
+                        reference.duration,
                         ordered=ordered,
-                    ),
-                    expected_signature,
-                    subset=subset,
+                        subset=subset,
+                    )
+                ]
+            else:
+                expected_signature = _column_signature(
+                    expected.rows,
+                    expected_index,
+                    ordered=ordered,
                 )
-            ]
+                candidates = [
+                    actual_index
+                    for actual_index in range(len(actual.columns))
+                    if actual_index not in used
+                    and _signature_compatible(
+                        _column_signature(
+                            actual.rows,
+                            actual_index,
+                            ordered=ordered,
+                        ),
+                        expected_signature,
+                        subset=subset,
+                    )
+                ]
         if len(candidates) != 1:
             return None, (
                 "required column mapping is missing or ambiguous for "
@@ -542,6 +572,54 @@ def map_required_columns(
         extra_indexes=extras,
         aliases_used=tuple(aliases),
     ), "required result concepts mapped unambiguously"
+
+
+def _duration_columns_compatible(
+    actual: QueryResult,
+    actual_index: int,
+    expected: QueryResult,
+    expected_index: int,
+    contract: DurationContract,
+    *,
+    ordered: bool,
+    subset: bool,
+) -> bool:
+    """Match a duration projection by values across allowed representations."""
+
+    actual_values = [row[actual_index] for row in actual.rows]
+    expected_values = [row[expected_index] for row in expected.rows]
+    if ordered:
+        return (
+            (subset or len(actual_values) == len(expected_values))
+            and len(actual_values) >= len(expected_values)
+            and all(
+                duration_values_compatible(expected_value, actual_value, contract)
+                for expected_value, actual_value in zip(
+                    expected_values,
+                    actual_values,
+                )
+            )
+        )
+    if not subset and len(actual_values) != len(expected_values):
+        return False
+    unmatched = set(range(len(actual_values)))
+    for expected_value in expected_values:
+        match = next(
+            (
+                index
+                for index in sorted(unmatched)
+                if duration_values_compatible(
+                    expected_value,
+                    actual_values[index],
+                    contract,
+                )
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        unmatched.remove(match)
+    return subset or not unmatched
 
 
 def _projected_rows_match(
@@ -847,16 +925,23 @@ def results_compatible(
 
 
 def _canonical_expression(expression: exp.Expression) -> str:
-    copied = expression.copy().transform(
-        lambda node: (
-            exp.Year(this=node.expression.copy())
-            if (
-                isinstance(node, exp.Extract)
-                and str(node.this).casefold() == "year"
-            )
-            else node
-        )
-    )
+    def canonical_node(node: exp.Expression) -> exp.Expression:
+        if (
+            isinstance(node, exp.Extract)
+            and str(node.this).strip("'\"").casefold() == "year"
+        ):
+            return exp.Year(this=node.expression.copy())
+        if (
+            isinstance(node, exp.Anonymous)
+            and node.name.casefold() == "date_part"
+            and len(node.expressions) == 2
+            and isinstance(node.expressions[0], exp.Literal)
+            and str(node.expressions[0].this).casefold() == "year"
+        ):
+            return exp.Year(this=node.expressions[1].copy())
+        return node
+
+    copied = expression.copy().transform(canonical_node)
     for identifier in copied.find_all(exp.Identifier):
         identifier.set("quoted", False)
     for column in copied.find_all(exp.Column):
@@ -978,6 +1063,8 @@ def ambiguity_evidence(
     case: EvaluationCase,
     clarifications: Sequence[Mapping[str, Any]],
     final_aligned: bool,
+    *,
+    arm: str | None = None,
 ) -> dict[str, Any]:
     """Return the explicit ambiguity-funnel evidence for one query case."""
 
@@ -1011,8 +1098,13 @@ def ambiguity_evidence(
     )
     if expected:
         detection = asked
+        allowed_mechanisms = {
+            "candidate_only": {"candidate-comparison"},
+            "semantic_only": {"semantic-column"},
+            "full": {"candidate-comparison", "semantic-column"},
+        }.get(arm, {case.expected_mechanism})
         mechanism_correct = bool(
-            asked and mechanism == case.expected_mechanism
+            asked and mechanism in allowed_mechanisms
         )
         final_alignment = bool(compliance and final_aligned)
     else:
@@ -1135,6 +1227,7 @@ def score_query_case(
     clarifications: list[dict[str, Any]],
     *,
     safety_evidence: SafetyEvidence | None = None,
+    arm: str | None = None,
 ) -> dict[str, Any]:
     """Score one query without mixing semantic correctness and join count."""
 
@@ -1169,7 +1262,12 @@ def score_query_case(
             "oracle_review": False,
             "analysis": None,
             "comparison": comparison,
-            "ambiguity": ambiguity_evidence(case, clarifications, passed),
+            "ambiguity": ambiguity_evidence(
+                case,
+                clarifications,
+                passed,
+                arm=arm,
+            ),
             "reason": (
                 reason
             ),
@@ -1276,7 +1374,12 @@ def score_query_case(
             reference_analysis.join_count,
             analysis.join_count,
         )
-    ambiguity = ambiguity_evidence(case, clarifications, compatible)
+    ambiguity = ambiguity_evidence(
+        case,
+        clarifications,
+        compatible,
+        arm=arm,
+    )
     ambiguity_passed = bool(
         not ambiguity["applicable"]
         or (
@@ -1580,6 +1683,7 @@ def score_case(
     clarifications: list[dict[str, Any]],
     *,
     safety_evidence: SafetyEvidence | None = None,
+    arm: str | None = None,
 ) -> dict[str, Any]:
     """Compatibility wrapper retained until the V3 runner is rebuilt."""
 
@@ -1590,6 +1694,7 @@ def score_case(
         _inferred_schema(case, actual),
         clarifications,
         safety_evidence=safety_evidence,
+        arm=arm,
     )
     ambiguity = scored["ambiguity"]
     scored["clarification"] = {

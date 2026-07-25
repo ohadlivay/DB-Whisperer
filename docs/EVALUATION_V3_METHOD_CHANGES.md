@@ -200,3 +200,55 @@ The pre-publication review found and corrected additional edge cases:
   262K-token context plus enforced provider-price caps until usage is recorded,
   covering provider framing and preventing concurrent requests from sharing
   the same $3.75 allowance.
+
+### Targeted semantic-regression audit
+
+The first post-change targeted run completed without infrastructure failures,
+but its behavioral gate failed: 10 of 26 primary cells passed and none of the
+four admission-control cells passed. The run was correctly non-publishable and
+did not authorize an official campaign or HTML generation.
+
+Raw prompt evidence showed that the semantic model usually found the intended
+distinctions, but gave both equally plausible interpretations the same
+relevance rank. The deterministic validator rejected tied ranks even though it
+later replaced raw ranks with stable local interpretation IDs. Equal ranks are
+now accepted in returned order; duplicate semantic grounding still fails
+closed.
+
+The audit also found that the runner created the semantic detector with a
+separate, uninstrumented OpenRouter client. Semantic calls therefore bypassed
+campaign call counts, prompt evidence, budget admission, and recorded cost.
+The targeted artifacts reported $0.07429228 across both stages, while the
+central prompt log contained another $0.01000654 of semantic calls. All
+query-generation, ambiguity-judge, and semantic-detector calls now share the
+campaign's instrumented session and prompt logger.
+
+Three deterministic scoring false negatives were corrected:
+
+- `date_part('year', column)` is canonicalized with `YEAR(column)` and
+  `EXTRACT(YEAR FROM column)`;
+- duration columns are mapped by declared value compatibility across integer,
+  decimal, and interval/timedelta representations instead of requiring the
+  reference alias; and
+- admission-year cases allow an optional `patients` join. Their shortest
+  reference remains admission-table-only, so an unnecessary join affects
+  efficiency rather than semantic correctness.
+
+The admission-year references return `subject_id` and `admittime`; `hadm_id`
+is no longer treated as a user-required output when the request asks for
+patients. The ambiguous diagnosis wording is now `How common is each diagnosis
+code?` in both target branches. This preserves the intended occurrence-count
+versus distinct-patient ambiguity while removing long-title versus code as an
+unrequested presentation variable from that regression family.
+
+Mechanism accuracy is conditioned on the evaluated arm. Candidate Only can
+correctly use candidate comparison, Semantic Only can correctly use semantic
+column evidence, and Full can correctly use either candidate evidence or the
+validated semantic fallback. Without this conditioning, a correct ablation
+could be penalized for not using evidence that the arm intentionally removes.
+
+Targeted-run completion no longer implies behavioral success. The targeted
+artifact records `behavioral_passed` and the exact failing cells. Its process
+exits nonzero when any selected cell has `score.passed != true`, even when
+every cell completed, so the external launcher cannot green-light the official
+campaign on execution progress alone.

@@ -35,8 +35,14 @@ Required gates:
 - no overall-death clarification for “hospital mortality”;
 - correct birth/admission target coverage in the Full arm;
 - no clarification for the explicit hospital-admission-year control;
-- no infrastructure failures; and
-- every artifact states `publishable: false`.
+- no infrastructure failures;
+- every artifact states `publishable: false`;
+- every selected cell has `score.passed: true`; and
+- `targeted-campaign.json` states `behavioral_passed: true`.
+
+The launcher exits nonzero if cells finish but any behavioral gate fails.
+`Overall 100%` means execution completed; only exit code 0 plus
+`behavioral_passed: true` means the targeted regression passed.
 
 ## Official five-repetition campaign
 

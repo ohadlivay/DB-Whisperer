@@ -321,23 +321,37 @@ class SemanticColumnAnalysisTest(unittest.TestCase):
                 ).analyze(common_request())
                 self.assertFalse(analysis.ambiguous)
 
-    def test_duplicate_relevance_and_duplicate_grounding_fail_closed(self) -> None:
-        for duplicate in ("relevance", "grounding"):
-            with self.subTest(duplicate=duplicate):
-                finding = common_finding()
-                if duplicate == "relevance":
-                    finding["interpretations"][1]["relevance"] = 1
-                else:
-                    finding["interpretations"][1].update(
-                        finding["interpretations"][0]
-                    )
-                    finding["interpretations"][1]["label"] = "Same grounding"
-                    finding["interpretations"][1]["meaning"] = "Same meaning"
-                    finding["interpretations"][1]["relevance"] = 2
-                analysis = SemanticColumnAmbiguityService(
-                    client=FakeClient({"findings": [finding]})
-                ).analyze(common_request())
-                self.assertFalse(analysis.ambiguous)
+    def test_equal_relevance_retains_stable_model_order(self) -> None:
+        finding = common_finding()
+        finding["interpretations"][1]["relevance"] = 1
+
+        analysis = SemanticColumnAmbiguityService(
+            client=FakeClient({"findings": [finding]})
+        ).analyze(common_request())
+
+        self.assertTrue(analysis.ambiguous)
+        self.assertEqual(
+            ("Diagnosis record count", "Distinct patient count"),
+            tuple(
+                interpretation.label
+                for interpretation in analysis.terms[0].interpretations
+            ),
+        )
+
+    def test_duplicate_grounding_fails_closed(self) -> None:
+        finding = common_finding()
+        finding["interpretations"][1].update(
+            finding["interpretations"][0]
+        )
+        finding["interpretations"][1]["label"] = "Same grounding"
+        finding["interpretations"][1]["meaning"] = "Same meaning"
+        finding["interpretations"][1]["relevance"] = 2
+
+        analysis = SemanticColumnAmbiguityService(
+            client=FakeClient({"findings": [finding]})
+        ).analyze(common_request())
+
+        self.assertFalse(analysis.ambiguous)
 
     def test_fewer_than_two_interpretations_is_not_ambiguous(self) -> None:
         finding = common_finding()
