@@ -250,3 +250,35 @@ Evaluation V3 records whether the final SQL passed clarification compliance.
 An ambiguous case cannot receive a passing clarification score solely because
 the right option was selected; the final executed result must also come from a
 verified compliant alternative.
+
+## Approved post-campaign follow-up design
+
+The first official V3 campaign showed that the birth-year versus admission-year
+design is not yet enforced reliably. The current implementation correctly
+validates and pins schema references after a correct clarification, but the
+pre-SQL detector can omit `admissions.admittime`, and the unified judge can
+still select birth versus death even when admission time is present. Existing
+tests validate injected birth/admission findings; follow-up coverage must
+exercise the actual detector and option-selection path with death timestamps
+present.
+
+The approved follow-up replaces column-only semantic evidence with structured
+intent findings. Findings identify the unresolved phrase, semantic dimension,
+grounded interpretations, and relevance order. Initial dimensions include
+aggregation grain, measure definition, temporal role, entity scope, episode
+scope, filter scope, and column meaning.
+
+Complete phrases are interpreted compositionally. Explicit modifiers such as
+`hospital mortality`, `distinct patients`, `ICU stay`, and `admitted to the
+hospital` settle their corresponding dimension. Representation-only choices
+such as diagnosis long title versus short title cannot pre-empt unresolved
+measure or aggregation ambiguity.
+
+For `How common is each diagnosis?`, the semantic distinction is diagnosis-row
+occurrences versus distinct affected patients. For temporal ambiguity,
+columns are grouped by real-world roles such as birth, hospital admission, and
+death before the two most relevant unresolved options are selected.
+
+This section records an approved design, not current production behavior.
+Implementation and regression tests are specified in
+`docs/superpowers/specs/2026-07-25-semantic-intent-and-evaluation-scoring-design.md`.

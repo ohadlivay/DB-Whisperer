@@ -84,3 +84,43 @@ produces exactly a one-page method summary and an eight-tab evidence report.
 ## Interpretation limits
 
 The results estimate performance on the frozen suite, model, and database snapshot; they are not a general claim about every dataset or model. Year wording is explicitly disambiguated when it could mean a patient birth date versus an admission date. No conclusion relies on relationship-route multiplicity.
+
+## Approved post-campaign scoring follow-up
+
+The official campaign remains immutable. Its strict correctness score measures
+the scorer that was frozen for that run. Post-campaign review found that exact
+projection width, aliases, reference-only ordering, and duration
+representation were incorrectly acting as semantic correctness gates.
+
+The approved follow-up makes user-intent result compatibility the primary
+correctness decision. Harmless extra columns, unambiguous aliases, and
+non-material reference tie-breakers do not erase correctness. Projection
+precision and presentation fidelity are reported separately. Extra columns
+still fail correctness when they change grain, cardinality, grouping,
+filtering, meaning, or create a material safety or privacy concern.
+
+Duration contracts accept integer units, fractional units, and
+interval/timedelta representations. Whole-day calculations are acceptable
+when the request does not require sub-day precision. Raw endpoint timestamps
+alone remain context rather than a duration answer.
+
+Ranking requests can be satisfied by correct ordered output without a separate
+rank-number column unless rank values were explicitly requested. Top-N
+comparison is tie-aware, while reference-only deterministic tie-breakers are
+reported as reproducibility diagnostics.
+
+Clarification scoring separates plausibility from target-option coverage.
+Reports replace the generic `query was not accepted` label with terminal
+outcomes that distinguish unresolved or unnecessary clarification, missing
+target options, malformed generation, candidate quorum, validation, execution,
+post-clarification generation, and compliance failures. The best executed
+pre-clarification result is retained as a diagnostic even when the end-to-end
+workflow returns no final answer.
+
+The admission-year control is revised from `Show patients admitted in the year
+2112.` to `Show patients admitted to the hospital in the year 2112.` so the
+control explicitly resolves hospital versus ICU admission.
+
+These are approved design changes pending implementation. The complete design,
+tests, replay requirements, and reporting implications are documented in
+`docs/superpowers/specs/2026-07-25-semantic-intent-and-evaluation-scoring-design.md`.
