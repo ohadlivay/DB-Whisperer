@@ -128,7 +128,7 @@ def render_full_report(model: Mapping[str, Any]) -> str:
         "<section><h2>Limitations</h2><pre>%s</pre></section>"
     ) % (
         _json(model.get("terminal_outcomes", {})),
-        _json(model.get("typed_findings", [])),
+        _json(model.get("findings", [])),
         _json(model.get("recommendations", [])),
         _json(model.get("limitations", [])),
     )

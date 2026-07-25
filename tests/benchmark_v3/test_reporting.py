@@ -129,6 +129,8 @@ class ReportingTest(unittest.TestCase):
         self.assertIn("# Campaign Review", markdown)
         self.assertIn("## Arm comparison", markdown)
         self.assertIn("## Clarification findings", markdown)
+        self.assertIn("## Interpretations", markdown)
+        self.assertIn("## Recommendations", markdown)
         self.assertIn("## Terminal outcomes", markdown)
         self.assertIn("## Report-readiness checklist", markdown)
 

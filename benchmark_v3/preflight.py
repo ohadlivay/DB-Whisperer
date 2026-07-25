@@ -8,7 +8,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import shutil
-import tempfile
+from uuid import uuid4
 
 from benchmark_v3.contracts import load_suite, validate_reference_suite
 from benchmark_v3.observability import atomic_json
@@ -36,6 +36,7 @@ CHECKS = (
     "historical_rescore",
     "public_html_unchanged",
 )
+TEMP_ROOT = PROJECT_ROOT / "benchmark_v3" / "results"
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,12 @@ class PreflightResult:
 
 def _file_hash(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+
+
+def _work_directory(label: str) -> Path:
+    path = TEMP_ROOT / f".preflight-{label}-{uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    return path
 
 
 def _copy_rescore_inputs(source: Path, target: Path) -> None:
@@ -169,32 +176,30 @@ def run_preflight(
             validate_report_model(model)
             checks["report_contract"] = True
             details["report_contract"] = "fixture populates all approved report fields"
-            with tempfile.TemporaryDirectory() as temporary:
-                temp = Path(temporary)
-                aggregate_path = temp / "aggregate.json"
-                aggregate_path.write_text(
-                    json.dumps({"model": model}),
-                    encoding="utf-8",
-                )
-                reports = write_reports(
-                    aggregate_path,
-                    temp / "one-page.html",
-                    temp / "evidence.html",
-                )
-                if len(reports) != 2 or any(not path.is_file() for path in reports):
-                    raise ValueError("renderer did not produce two temporary reports")
+            temp = _work_directory("render")
+            aggregate_path = temp / "aggregate.json"
+            aggregate_path.write_text(
+                json.dumps({"model": model}),
+                encoding="utf-8",
+            )
+            reports = write_reports(
+                aggregate_path,
+                temp / "one-page.html",
+                temp / "evidence.html",
+            )
+            if len(reports) != 2 or any(not path.is_file() for path in reports):
+                raise ValueError("renderer did not produce two temporary reports")
             checks["renderer"] = True
             details["renderer"] = "two temporary HTML reports rendered"
         except Exception as error:
             errors.append(f"report_contract: {error}")
         try:
-            with tempfile.TemporaryDirectory() as temporary:
-                copied = Path(temporary) / history.name
-                _copy_rescore_inputs(history, copied)
-                artifact = rescore_campaign(copied)
-                payload = json.loads(artifact.read_text(encoding="utf-8"))
-                if payload.get("report_type") != "dbwhisperer_v3_counterfactual_rescore":
-                    raise ValueError("unexpected historical rescore artifact")
+            copied = _work_directory("rescore") / history.name
+            _copy_rescore_inputs(history, copied)
+            artifact = rescore_campaign(copied)
+            payload = json.loads(artifact.read_text(encoding="utf-8"))
+            if payload.get("report_type") != "dbwhisperer_v3_counterfactual_rescore":
+                raise ValueError("unexpected historical rescore artifact")
             checks["historical_rescore"] = True
             details["historical_rescore"] = "immutable copied evidence rescored"
         except Exception as error:
