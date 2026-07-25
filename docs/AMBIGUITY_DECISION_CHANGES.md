@@ -218,18 +218,20 @@ infer that multiple routes require clarification.
 - Failed SQL candidates do not become evidence; the judge receives successful
   executed SQL/result pairs only.
 
-### Grounded semantic references
+### Grounded semantic intent
 
-Semantic findings are exposed to the unified judge with stable round-local IDs
-such as `semantic_1`. A semantic clarification must return that ID and exactly
-two qualified columns belonging to the finding. Human-readable term text is
-presentation data and is no longer used as an identifier.
+Semantic findings are exposed to the unified judge with stable round-local
+finding IDs such as `semantic_1` and interpretation IDs such as
+`interpretation_1`. A semantic clarification must return one exact finding ID
+and exactly two interpretation IDs from that finding. Human-readable labels
+remain presentation data rather than identifiers.
 
-If the judge response is invalid, deterministic fallback first anchors to the
-finding column used by the most executed SQL candidates, then contrasts it
-with another column from the same finding. The final resolved decision is
-logged as `ambiguity_decision`, including whether fallback was used and the
-two evidence columns.
+Each interpretation carries schema-validated tables, qualified columns,
+operations, grain, and temporal role. The resulting decision records the
+selected semantic dimension, interpretation IDs, and the stable union of
+grounded columns. If the judge fails, deterministic fallback prioritizes
+measure definition and aggregation grain over temporal/scope distinctions and
+places presentation-level column meaning last.
 
 ## Evaluation change
 
@@ -279,6 +281,14 @@ occurrences versus distinct affected patients. For temporal ambiguity,
 columns are grouped by real-world roles such as birth, hospital admission, and
 death before the two most relevant unresolved options are selected.
 
-This section records an approved design, not current production behavior.
-Implementation and regression tests are specified in
+This design is now production behavior. Regression coverage includes:
+
+- birth year versus hospital admission year with death columns present;
+- diagnosis record frequency versus distinct-patient prevalence while long
+  and short diagnosis titles are present;
+- suppression of clarification for explicit hospital mortality, record-count,
+  distinct-patient, ICU-stay, and hospital-admission wording; and
+- preservation of first-round SQL prompt isolation.
+
+The approved design and implementation rationale remain in
 `docs/superpowers/specs/2026-07-25-semantic-intent-and-evaluation-scoring-design.md`.

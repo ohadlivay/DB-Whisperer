@@ -593,6 +593,10 @@ class ApplicationService:
                 "question": ambiguity.question,
                 "options": list(ambiguity.options),
                 "evidence_columns": list(ambiguity.evidence_columns),
+                "evidence_interpretations": list(
+                    ambiguity.evidence_interpretations
+                ),
+                "evidence_dimension": ambiguity.evidence_dimension,
                 "evidence_alternatives": list(
                     ambiguity.evidence_alternatives
                 ),

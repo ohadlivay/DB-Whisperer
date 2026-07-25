@@ -209,6 +209,31 @@ class SchemaLinkerTest(unittest.TestCase):
 
         self.assertEqual({"patients", "admissions"}, required)
 
+    def test_structured_grounding_pins_birth_and_admission_tables(self) -> None:
+        required = clarification_required_tables(
+            (
+                "Question: Born or admitted? Selected answer: Admitted "
+                '[grounding: "patients.dob", "admissions.admittime"]',
+            ),
+            SchemaMetadata(
+                table_names=("patients", "admissions"),
+                tables=(
+                    TableSchema(
+                        table_name="patients",
+                        columns=(ColumnMetadata("dob", "TIMESTAMP"),),
+                        row_count=100,
+                    ),
+                    TableSchema(
+                        table_name="admissions",
+                        columns=(ColumnMetadata("admittime", "TIMESTAMP"),),
+                        row_count=100,
+                    ),
+                ),
+            ),
+        )
+
+        self.assertEqual({"patients", "admissions"}, required)
+
     def test_required_clarification_table_is_kept_with_original_match(
         self,
     ) -> None:

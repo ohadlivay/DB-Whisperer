@@ -193,13 +193,59 @@ class SemanticColumnCandidate:
         return f"{self.table}.{self.column}"
 
 
+SEMANTIC_DIMENSIONS = frozenset({
+    "aggregation_grain",
+    "measure_definition",
+    "temporal_role",
+    "entity_scope",
+    "episode_scope",
+    "filter_scope",
+    "column_meaning",
+})
+
+
+SEMANTIC_OPERATIONS = frozenset({
+    "count_rows",
+    "count_distinct",
+    "average",
+    "sum",
+    "minimum",
+    "maximum",
+    "filter",
+    "group",
+    "select",
+})
+
+
+@dataclass(frozen=True)
+class SemanticGrounding:
+    """Validated schema and operation evidence for one interpretation."""
+
+    tables: tuple[str, ...] = ()
+    columns: tuple[str, ...] = ()
+    operations: tuple[str, ...] = ()
+    grain: str = ""
+    temporal_role: str = ""
+
+
+@dataclass(frozen=True)
+class SemanticInterpretation:
+    """One ranked, user-facing meaning within a semantic finding."""
+
+    interpretation_id: str
+    label: str
+    meaning: str
+    grounding: SemanticGrounding
+    relevance: int
+
+
 @dataclass(frozen=True)
 class SemanticAmbiguityTerm:
-    """A vague user term with two or more plausible same-kind columns."""
+    """An unresolved phrase with two or more grounded interpretations."""
 
     term: str
-    bucket: str
-    columns: tuple[SemanticColumnCandidate, ...]
+    dimension: str
+    interpretations: tuple[SemanticInterpretation, ...]
 
 
 @dataclass(frozen=True)
@@ -230,6 +276,8 @@ class AmbiguityDecision:
     reason: str = ""
     mechanism: str = ""
     evidence_columns: tuple[str, ...] = ()
+    evidence_interpretations: tuple[str, ...] = ()
+    evidence_dimension: str = ""
     evidence_alternatives: tuple[str, ...] = ()
     candidate_support: tuple[tuple[str, int], ...] = ()
     candidate_rejection_reason: str = ""

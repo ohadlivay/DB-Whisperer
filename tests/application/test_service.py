@@ -24,7 +24,8 @@ from db_whisperer.contracts import (
     SchemaMetadata,
     SemanticAmbiguityTerm,
     SemanticColumnAnalysis,
-    SemanticColumnCandidate,
+    SemanticGrounding,
+    SemanticInterpretation,
 )
 
 
@@ -212,19 +213,29 @@ class SemanticAnalysisSpy:
     @staticmethod
     def fallback_decision(analysis, pairs=()):
         term = analysis.terms[0]
-        first, second = term.columns[:2]
+        first, second = term.interpretations[:2]
+        evidence_columns = tuple(dict.fromkeys((
+            *first.grounding.columns,
+            *second.grounding.columns,
+        )))
         return AmbiguityDecision(
             state=ComponentState.ACCEPTED,
             passed=False,
             question=(
                 f'Which {term.term} do you mean? '
-                f'(clarifying which column: "{first.qualified_name}" or '
-                f'"{second.qualified_name}")'
+                "[grounding: "
+                + ", ".join(f'"{column}"' for column in evidence_columns)
+                + "]"
             ),
-            options=(first.qualified_name, second.qualified_name),
+            options=(first.label, second.label),
             reason="Deterministic semantic fallback.",
             mechanism="semantic-column",
-            evidence_columns=(first.qualified_name, second.qualified_name),
+            evidence_columns=evidence_columns,
+            evidence_interpretations=(
+                first.interpretation_id,
+                second.interpretation_id,
+            ),
+            evidence_dimension=term.dimension,
         )
 
 
@@ -243,19 +254,31 @@ def _semantic_analysis() -> SemanticColumnAnalysis:
         terms=(
             SemanticAmbiguityTerm(
                 term="date",
-                bucket="temporal",
-                columns=(
-                    SemanticColumnCandidate(
-                        table="orders",
-                        column="order_date",
-                        data_type="DATE",
-                        bucket="temporal",
+                dimension="temporal_role",
+                interpretations=(
+                    SemanticInterpretation(
+                        interpretation_id="interpretation_1",
+                        label="orders.order_date",
+                        meaning="Use the order date.",
+                        grounding=SemanticGrounding(
+                            tables=("orders",),
+                            columns=("orders.order_date",),
+                            operations=("filter",),
+                            temporal_role="order",
+                        ),
+                        relevance=1,
                     ),
-                    SemanticColumnCandidate(
-                        table="orders",
-                        column="required_date",
-                        data_type="DATE",
-                        bucket="temporal",
+                    SemanticInterpretation(
+                        interpretation_id="interpretation_2",
+                        label="orders.required_date",
+                        meaning="Use the required date.",
+                        grounding=SemanticGrounding(
+                            tables=("orders",),
+                            columns=("orders.required_date",),
+                            operations=("filter",),
+                            temporal_role="required",
+                        ),
+                        relevance=2,
                     ),
                 ),
             ),
@@ -355,6 +378,14 @@ class HybridAmbiguityFlowTest(unittest.TestCase):
         self.assertEqual(
             ["orders.order_date", "orders.required_date"],
             decision_events[0][2]["evidence_columns"],
+        )
+        self.assertEqual(
+            ["interpretation_1", "interpretation_2"],
+            decision_events[0][2]["evidence_interpretations"],
+        )
+        self.assertEqual(
+            "temporal_role",
+            decision_events[0][2]["evidence_dimension"],
         )
 
     def test_analysis_failure_degrades_to_candidate_judge(self) -> None:

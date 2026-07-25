@@ -20,7 +20,8 @@ from db_whisperer.contracts import (
     SchemaMetadata,
     SemanticAmbiguityTerm,
     SemanticColumnAnalysis,
-    SemanticColumnCandidate,
+    SemanticGrounding,
+    SemanticInterpretation,
 )
 
 
@@ -63,18 +64,30 @@ def request() -> AmbiguityRequest:
 
 def semantic_request() -> AmbiguityRequest:
     base = request()
-    columns = (
-        SemanticColumnCandidate(
-            table="admissions",
-            column="admittime",
-            data_type="TIMESTAMP",
-            bucket="temporal",
+    interpretations = (
+        SemanticInterpretation(
+            interpretation_id="interpretation_1",
+            label="Birth year",
+            meaning="Filter by patient birth year.",
+            relevance=1,
+            grounding=SemanticGrounding(
+                tables=("patients",),
+                columns=("patients.dob",),
+                operations=("filter",),
+                temporal_role="birth",
+            ),
         ),
-        SemanticColumnCandidate(
-            table="patients",
-            column="dob",
-            data_type="TIMESTAMP",
-            bucket="temporal",
+        SemanticInterpretation(
+            interpretation_id="interpretation_2",
+            label="Admission year",
+            meaning="Filter by hospital admission year.",
+            relevance=2,
+            grounding=SemanticGrounding(
+                tables=("admissions",),
+                columns=("admissions.admittime",),
+                operations=("filter",),
+                temporal_role="admission",
+            ),
         ),
     )
     return AmbiguityRequest(
@@ -93,8 +106,8 @@ def semantic_request() -> AmbiguityRequest:
             terms=(
                 SemanticAmbiguityTerm(
                     term="from 2024",
-                    bucket="temporal",
-                    columns=columns,
+                    dimension="temporal_role",
+                    interpretations=interpretations,
                 ),
             ),
         ),
@@ -294,7 +307,10 @@ class AmbiguityServiceTest(unittest.TestCase):
                 "status": "clarify",
                 "source": "semantic-column",
                 "semantic_finding_id": "semantic_1",
-                "columns": ["patients.dob", "admissions.admittime"],
+                "interpretation_ids": [
+                    "interpretation_1",
+                    "interpretation_2",
+                ],
                 "candidate_rejection_reason": (
                     "The candidate difference is not a natural reading."
                 ),
@@ -307,9 +323,14 @@ class AmbiguityServiceTest(unittest.TestCase):
         self.assertEqual(ComponentState.ACCEPTED, decision.state)
         self.assertFalse(decision.passed)
         self.assertEqual(
+            ("interpretation_1", "interpretation_2"),
+            decision.evidence_interpretations,
+        )
+        self.assertEqual(
             ("patients.dob", "admissions.admittime"),
             decision.evidence_columns,
         )
+        self.assertEqual("temporal_role", decision.evidence_dimension)
         self.assertIn("patients.dob", decision.question)
         self.assertIn(
             "not a natural reading",
@@ -322,7 +343,10 @@ class AmbiguityServiceTest(unittest.TestCase):
                 "status": "clarify",
                 "source": "semantic-column",
                 "semantic_finding_id": "semantic_1 (temporal)",
-                "columns": ["patients.dob", "admissions.admittime"],
+                "interpretation_ids": [
+                    "interpretation_1",
+                    "interpretation_2",
+                ],
                 "candidate_rejection_reason": "Candidate distinction is weak.",
                 "question": "Which date?",
                 "options": ["Birth", "Admission"],
@@ -332,13 +356,16 @@ class AmbiguityServiceTest(unittest.TestCase):
         self.assertEqual(ComponentState.FAILED, decision.state)
         self.assertIn("exact finding ID", decision.reason)
 
-    def test_semantic_clarification_rejects_column_outside_finding(self) -> None:
+    def test_semantic_clarification_rejects_unknown_interpretation(self) -> None:
         decision = AmbiguityService(
             client=FakeJudgeClient({
                 "status": "clarify",
                 "source": "semantic-column",
                 "semantic_finding_id": "semantic_1",
-                "columns": ["patients.dob", "patients.dod"],
+                "interpretation_ids": [
+                    "interpretation_1",
+                    "interpretation_99",
+                ],
                 "candidate_rejection_reason": "Candidate distinction is weak.",
                 "question": "Which date?",
                 "options": ["Birth", "Death"],
@@ -346,7 +373,7 @@ class AmbiguityServiceTest(unittest.TestCase):
         ).evaluate(semantic_request())
 
         self.assertEqual(ComponentState.FAILED, decision.state)
-        self.assertIn("qualified columns", decision.reason)
+        self.assertIn("interpretation IDs", decision.reason)
 
     def test_candidate_clarification_rejects_unknown_alternative_id(self) -> None:
         decision = AmbiguityService(
@@ -368,7 +395,10 @@ class AmbiguityServiceTest(unittest.TestCase):
                 "status": "clarify",
                 "source": "semantic-column",
                 "semantic_finding_id": "semantic_1",
-                "columns": ["patients.dob", "admissions.admittime"],
+                "interpretation_ids": [
+                    "interpretation_1",
+                    "interpretation_2",
+                ],
                 "question": "Born or admitted?",
                 "options": ["Born", "Admitted"],
             })
@@ -416,7 +446,10 @@ class AmbiguityServiceTest(unittest.TestCase):
             "status": "clarify",
             "source": "semantic-column",
             "semantic_finding_id": "semantic_1",
-            "columns": ["patients.dob", "admissions.admittime"],
+            "interpretation_ids": [
+                "interpretation_1",
+                "interpretation_2",
+            ],
             "candidate_rejection_reason": (
                 "Born-or-deceased is a singleton arbitrary union not "
                 "supported by the wording."

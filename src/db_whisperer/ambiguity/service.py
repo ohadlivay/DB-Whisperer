@@ -18,7 +18,7 @@ from db_whisperer.contracts import (
     AmbiguityRequest,
     ComponentState,
     SemanticAmbiguityTerm,
-    SemanticColumnCandidate,
+    SemanticInterpretation,
 )
 
 
@@ -204,6 +204,8 @@ class AmbiguityService:
 
         normalized_question = question.strip()
         evidence_columns: tuple[str, ...] = ()
+        evidence_interpretations: tuple[str, ...] = ()
+        evidence_dimension = ""
         evidence_alternatives: tuple[str, ...] = ()
         candidate_rejection_reason = ""
         if source == "candidate-comparison":
@@ -247,20 +249,29 @@ class AmbiguityService:
                 return cls._failure(
                     "Semantic clarification must name an exact finding ID."
                 )
-            selected = cls._semantic_columns(term, judgment.get("columns"))
+            selected = cls._semantic_interpretations(
+                term,
+                judgment.get("interpretation_ids"),
+            )
             if selected is None:
                 return cls._failure(
                     "Semantic clarification must select exactly two distinct "
-                    "qualified columns from the named finding."
+                    "interpretation IDs from the named finding."
                 )
             first, second = selected
-            evidence_columns = (
-                first.qualified_name,
-                second.qualified_name,
+            evidence_interpretations = (
+                first.interpretation_id,
+                second.interpretation_id,
             )
+            evidence_dimension = term.dimension
+            evidence_columns = tuple(dict.fromkeys((
+                *first.grounding.columns,
+                *second.grounding.columns,
+            )))
             normalized_question += (
-                f' (clarifying which column: "{first.qualified_name}" or '
-                f'"{second.qualified_name}")'
+                " [grounding: "
+                + ", ".join(f'"{column}"' for column in evidence_columns)
+                + "]"
             )
 
         return AmbiguityDecision(
@@ -271,6 +282,8 @@ class AmbiguityService:
             reason=reason.strip(),
             mechanism=str(source),
             evidence_columns=evidence_columns,
+            evidence_interpretations=evidence_interpretations,
+            evidence_dimension=evidence_dimension,
             evidence_alternatives=evidence_alternatives,
             candidate_support=candidate_support,
             candidate_rejection_reason=candidate_rejection_reason,
@@ -378,21 +391,24 @@ class AmbiguityService:
         return request.semantic_analysis.terms[index]
 
     @staticmethod
-    def _semantic_columns(
+    def _semantic_interpretations(
         term: SemanticAmbiguityTerm,
-        raw_columns: object,
-    ) -> tuple[SemanticColumnCandidate, SemanticColumnCandidate] | None:
-        if not isinstance(raw_columns, list) or len(raw_columns) != 2:
+        raw_ids: object,
+    ) -> tuple[SemanticInterpretation, SemanticInterpretation] | None:
+        if not isinstance(raw_ids, list) or len(raw_ids) != 2:
             return None
         if not all(
             isinstance(value, str) and value.strip()
-            for value in raw_columns
+            for value in raw_ids
         ):
             return None
-        normalized = tuple(str(value).strip() for value in raw_columns)
+        normalized = tuple(str(value).strip() for value in raw_ids)
         if normalized[0] == normalized[1]:
             return None
-        known = {column.qualified_name: column for column in term.columns}
+        known = {
+            interpretation.interpretation_id: interpretation
+            for interpretation in term.interpretations
+        }
         if any(value not in known for value in normalized):
             return None
         return known[normalized[0]], known[normalized[1]]

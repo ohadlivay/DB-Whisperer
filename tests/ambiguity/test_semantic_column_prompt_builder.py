@@ -16,6 +16,44 @@ from db_whisperer.contracts import (
 
 
 class SemanticColumnPromptBuilderTest(unittest.TestCase):
+    def test_prompt_prioritizes_measure_over_representation(self) -> None:
+        request = SemanticColumnRequest(
+            user_query="Show the most common diagnoses.",
+            schema=SchemaMetadata(columns=(
+                ColumnMetadata("icd9_code", "VARCHAR", "diagnoses_icd"),
+                ColumnMetadata("subject_id", "INTEGER", "diagnoses_icd"),
+                ColumnMetadata("long_title", "VARCHAR", "d_icd_diagnoses"),
+                ColumnMetadata("short_title", "VARCHAR", "d_icd_diagnoses"),
+            )),
+            api_key="key",
+            model="model",
+        )
+
+        prompt = SemanticColumnPromptBuilder().build_term_prompt(request)
+
+        self.assertIn("interpret the complete phrase", prompt)
+        self.assertIn("aggregation_grain", prompt)
+        self.assertIn("record count", prompt)
+        self.assertIn("distinct-entity count", prompt)
+        self.assertIn("long title versus short title", prompt)
+        self.assertIn("must not pre-empt", prompt)
+
+    def test_prompt_treats_explicit_modifiers_as_resolved(self) -> None:
+        request = SemanticColumnRequest(
+            user_query="Show hospital mortality by first ICU care unit.",
+            schema=SchemaMetadata(columns=(
+                ColumnMetadata("hospital_expire_flag", "INTEGER", "admissions"),
+                ColumnMetadata("dod", "TIMESTAMP", "patients"),
+            )),
+            api_key="key",
+            model="model",
+        )
+
+        prompt = SemanticColumnPromptBuilder().build_term_prompt(request)
+
+        self.assertIn("hospital mortality", prompt)
+        self.assertIn("already resolves", prompt)
+
     def test_prompt_includes_types_question_and_previous_answers(self) -> None:
         request = SemanticColumnRequest(
             user_query="show dates",

@@ -15,16 +15,29 @@ from db_whisperer.contracts import (
     AmbiguityDecision,
     ComponentState,
     ExecutedQueryPair,
+    SEMANTIC_DIMENSIONS,
+    SEMANTIC_OPERATIONS,
     SchemaMetadata,
     SemanticAmbiguityTerm,
     SemanticColumnAnalysis,
     SemanticColumnCandidate,
+    SemanticGrounding,
+    SemanticInterpretation,
     SemanticColumnRequest,
 )
 
 
 MECHANISM = "semantic-column"
 DEFAULT_MAX_TERMS = 6
+DIMENSION_PRIORITY = {
+    "measure_definition": 0,
+    "aggregation_grain": 1,
+    "temporal_role": 2,
+    "entity_scope": 3,
+    "episode_scope": 4,
+    "filter_scope": 5,
+    "column_meaning": 6,
+}
 ColumnRef = tuple[str, str]
 
 TEMPORAL_TYPES = ("DATE", "TIME", "TIMESTAMP", "INTERVAL")
@@ -71,11 +84,6 @@ class SemanticColumnAmbiguityService:
         columns = self._columns(request.schema)
         if not columns:
             return self._pass("Schema exposes no columns to compare.")
-        if not self._has_same_bucket_pair(columns):
-            return self._pass(
-                "No two columns share a semantic type; semantic-column "
-                "ambiguity is impossible."
-            )
 
         try:
             judgment = self.client.evaluate(
@@ -86,9 +94,15 @@ class SemanticColumnAmbiguityService:
         except (AmbiguityJudgeError, ValueError) as error:
             return self._failure(f"Term extraction failed: {error}")
 
-        terms, dropped, capped = self._parse_terms(judgment, columns)
+        terms, dropped, capped = self._parse_findings(
+            judgment,
+            request.schema,
+            columns,
+        )
         if terms is None:
-            return self._failure("Term extraction returned no usable terms list.")
+            return self._failure(
+                "Term extraction returned no usable findings list."
+            )
 
         unresolved = tuple(
             term for term in terms
@@ -109,7 +123,7 @@ class SemanticColumnAmbiguityService:
             base = (
                 "All semantic-column ambiguities have already been clarified."
                 if terms
-                else "No term maps to more than one same-type column."
+                else "No unresolved semantic-intent finding was validated."
             )
             return self._pass(" ".join((base, *notes)).strip())
 
@@ -172,65 +186,169 @@ class SemanticColumnAmbiguityService:
             seen.add(candidate.bucket)
         return False
 
-    def _parse_terms(
+    def _parse_findings(
         self,
         judgment: dict[str, object],
+        schema: SchemaMetadata,
         columns: dict[ColumnRef, SemanticColumnCandidate],
     ) -> tuple[tuple[SemanticAmbiguityTerm, ...] | None, tuple[str, ...], bool]:
-        raw_terms = judgment.get("terms")
+        if not isinstance(judgment, dict):
+            return None, (), False
+        raw_terms = judgment.get("findings")
         if not isinstance(raw_terms, list):
             return None, (), False
+
+        known_tables = set(schema.table_names)
+        known_tables.update(column.table_name for column in schema.columns)
+        known_tables.update(table.table_name for table in schema.tables)
+        known_columns = {
+            candidate.qualified_name: candidate for candidate in columns.values()
+        }
 
         findings: list[SemanticAmbiguityTerm] = []
         dropped: list[str] = []
         for raw in raw_terms:
             if not isinstance(raw, dict):
                 continue
+            if raw.get("resolved_by_context") is True:
+                continue
             term = raw.get("term")
-            raw_columns = raw.get("columns")
+            dimension = raw.get("dimension")
+            raw_interpretations = raw.get("interpretations")
             if not isinstance(term, str) or not term.strip():
                 continue
-            if not isinstance(raw_columns, list):
+            if dimension not in SEMANTIC_DIMENSIONS:
+                continue
+            if not isinstance(raw_interpretations, list):
                 continue
 
-            known: list[SemanticColumnCandidate] = []
-            for entry in raw_columns:
+            parsed: list[tuple[int, str, str, SemanticGrounding]] = []
+            relevance_values: list[int] = []
+            for entry in raw_interpretations:
                 if not isinstance(entry, dict):
                     continue
-                table, column = entry.get("table"), entry.get("column")
-                if not isinstance(table, str) or not isinstance(column, str):
+                label = entry.get("label")
+                meaning = entry.get("meaning")
+                relevance = entry.get("relevance")
+                raw_tables = entry.get("tables")
+                raw_columns = entry.get("columns")
+                raw_operations = entry.get("operations")
+                grain = entry.get("grain", "")
+                temporal_role = entry.get("temporal_role", "")
+                if (
+                    not isinstance(label, str)
+                    or not label.strip()
+                    or not isinstance(meaning, str)
+                    or not meaning.strip()
+                    or isinstance(relevance, bool)
+                    or not isinstance(relevance, int)
+                    or relevance < 1
+                    or not isinstance(raw_tables, list)
+                    or not raw_tables
+                    or not isinstance(raw_columns, list)
+                    or not raw_columns
+                    or not isinstance(raw_operations, list)
+                    or not raw_operations
+                    or not isinstance(grain, str)
+                    or not isinstance(temporal_role, str)
+                ):
                     continue
-                ref = (table.strip(), column.strip())
-                candidate = columns.get(ref)
-                if candidate is None:
-                    label = f"{ref[0]}.{ref[1]}"
-                    if label not in dropped:
-                        dropped.append(label)
-                elif candidate not in known:
-                    known.append(candidate)
 
-            grouped: dict[str, list[SemanticColumnCandidate]] = {}
-            for candidate in known:
-                grouped.setdefault(candidate.bucket, []).append(candidate)
-            if not grouped:
+                tables = tuple(
+                    value.strip() for value in raw_tables
+                    if isinstance(value, str) and value.strip()
+                )
+                column_names = tuple(
+                    value.strip() for value in raw_columns
+                    if isinstance(value, str) and value.strip()
+                )
+                operations = tuple(
+                    value.strip() for value in raw_operations
+                    if isinstance(value, str) and value.strip()
+                )
+                unknown_tables = [
+                    value for value in tables if value not in known_tables
+                ]
+                unknown_columns = [
+                    value for value in column_names
+                    if value not in known_columns
+                ]
+                unknown_operations = [
+                    value for value in operations
+                    if value not in SEMANTIC_OPERATIONS
+                ]
+                mismatched_columns = [
+                    value for value in column_names
+                    if value.split(".", 1)[0] not in tables
+                ]
+                invalid_values = (
+                    len(tables) != len(raw_tables)
+                    or len(column_names) != len(raw_columns)
+                    or len(operations) != len(raw_operations)
+                    or unknown_tables
+                    or unknown_columns
+                    or unknown_operations
+                    or mismatched_columns
+                )
+                if invalid_values:
+                    for value in (
+                        *unknown_tables,
+                        *unknown_columns,
+                        *unknown_operations,
+                        *mismatched_columns,
+                    ):
+                        if value not in dropped:
+                            dropped.append(value)
+                    continue
+
+                relevance_values.append(relevance)
+                parsed.append((
+                    relevance,
+                    label.strip(),
+                    meaning.strip(),
+                    SemanticGrounding(
+                        tables=tables,
+                        columns=column_names,
+                        operations=operations,
+                        grain=grain.strip(),
+                        temporal_role=temporal_role.strip(),
+                    ),
+                ))
+
+            if len(relevance_values) != len(set(relevance_values)):
                 continue
-            bucket = min(grouped, key=lambda key: (-len(grouped[key]), key))
-            members = tuple(
-                sorted(
-                    grouped[bucket],
-                    key=lambda item: (item.table, item.column),
+
+            unique: list[tuple[int, str, str, SemanticGrounding]] = []
+            seen_grounding: set[SemanticGrounding] = set()
+            for item in sorted(parsed, key=lambda value: value[0]):
+                if item[3] in seen_grounding:
+                    continue
+                seen_grounding.add(item[3])
+                unique.append(item)
+            if len(unique) < 2:
+                continue
+
+            interpretations = tuple(
+                SemanticInterpretation(
+                    interpretation_id=f"interpretation_{index}",
+                    label=label,
+                    meaning=meaning,
+                    relevance=index,
+                    grounding=grounding,
+                )
+                for index, (_, label, meaning, grounding) in enumerate(
+                    unique,
+                    start=1,
                 )
             )
-            if len(members) >= 2:
-                findings.append(
-                    SemanticAmbiguityTerm(
-                        term=term.strip(),
-                        bucket=bucket,
-                        columns=members,
-                    )
+            findings.append(
+                SemanticAmbiguityTerm(
+                    term=term.strip(),
+                    dimension=dimension,
+                    interpretations=interpretations,
                 )
+            )
 
-        findings.sort(key=lambda item: (-len(item.columns), item.term.casefold()))
         capped = len(findings) > self.max_terms
         return tuple(findings[: self.max_terms]), tuple(dropped), capped
 
@@ -242,8 +360,8 @@ class SemanticColumnAmbiguityService:
     ) -> bool:
         return any(
             sum(
-                cls._names_qualified_ref(text, column.qualified_name)
-                for column in term.columns
+                interpretation.label.casefold() in text.casefold()
+                for interpretation in term.interpretations
             ) >= 2
             for text in clarifications
         )
@@ -271,63 +389,88 @@ class SemanticColumnAmbiguityService:
             )
         term = min(
             analysis.terms,
-            key=lambda item: (-len(item.columns), item.term.casefold()),
+            key=lambda item: (
+                DIMENSION_PRIORITY.get(item.dimension, 99),
+                min(
+                    interpretation.relevance
+                    for interpretation in item.interpretations
+                ),
+                item.term.casefold(),
+            ),
         )
-        first, second = cls._fallback_columns(term, pairs)
+        first, second = cls._fallback_interpretations(term, pairs)
+        first_columns = first.grounding.columns
+        second_columns = second.grounding.columns
+        evidence_columns = tuple(dict.fromkeys(
+            (*first_columns, *second_columns)
+        ))
+        grounding_note = "[grounding: " + ", ".join(
+            f'"{column}"' for column in evidence_columns
+        ) + "]"
         question = (
-            f'The term "{term.term}" could mean more than one column. '
-            "Which one do you mean? "
-            f'(clarifying which column: "{first.qualified_name}" or '
-            f'"{second.qualified_name}")'
+            f'The phrase "{term.term}" has two plausible meanings. '
+            f"Which one do you mean? {grounding_note}"
         )
         return AmbiguityDecision(
             state=ComponentState.ACCEPTED,
             passed=False,
             question=question,
             options=(
-                f'"{first.column}" (from {first.table})',
-                f'"{second.column}" (from {second.table})',
+                first.label,
+                second.label,
             ),
             reason=(
                 "Used a deterministic semantic-column clarification because "
                 "the unified ambiguity judge failed."
             ),
             mechanism=MECHANISM,
-            evidence_columns=(
-                first.qualified_name,
-                second.qualified_name,
+            evidence_columns=evidence_columns,
+            evidence_interpretations=(
+                first.interpretation_id,
+                second.interpretation_id,
             ),
+            evidence_dimension=term.dimension,
         )
 
     @classmethod
-    def _fallback_columns(
+    def _fallback_interpretations(
         cls,
         term: SemanticAmbiguityTerm,
         pairs: tuple[ExecutedQueryPair, ...],
-    ) -> tuple[SemanticColumnCandidate, SemanticColumnCandidate]:
-        """Prefer the column used by candidates against one alternative."""
+    ) -> tuple[SemanticInterpretation, SemanticInterpretation]:
+        """Prefer the interpretation grounded in candidate SQL."""
         scores = {
-            column: sum(
-                cls._sql_names_column(pair.sql, column)
+            interpretation: sum(
+                any(
+                    cls._sql_names_column_name(pair.sql, column)
+                    for column in interpretation.grounding.columns
+                )
                 for pair in pairs
             )
-            for column in term.columns
+            for interpretation in term.interpretations
         }
         highest = max(scores.values(), default=0)
         if highest:
             first = next(
-                column for column in term.columns if scores[column] == highest
+                interpretation
+                for interpretation in term.interpretations
+                if scores[interpretation] == highest
             )
-            second = next(column for column in term.columns if column != first)
+            second = next(
+                interpretation
+                for interpretation in term.interpretations
+                if interpretation != first
+            )
             return first, second
-        return term.columns[0], term.columns[1]
+        return term.interpretations[0], term.interpretations[1]
 
     @staticmethod
-    def _sql_names_column(
+    def _sql_names_column_name(
         sql: str,
-        column: SemanticColumnCandidate,
+        qualified_name: str,
     ) -> bool:
-        escaped = re.escape(column.column)
+        column_name = qualified_name.rsplit(".", 1)[-1]
+        escaped = re.escape(column_name)
         quoted = rf'(?i)(?<![A-Za-z0-9_])"{escaped}"(?![A-Za-z0-9_])'
         bare = rf"(?i)(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
         return (

@@ -53,7 +53,9 @@ Decision order is mandatory:
    single most important unresolved two-way distinction.
 7. Eligible candidate-derived distinctions take priority over semantic-column
    findings. If no candidate distinction passes the plausibility gate, a
-   validated semantic finding may independently justify clarification.
+   validated semantic finding may independently justify clarification. Prefer
+   the higher-level unresolved dimension over a lower-level representation
+   choice.
 
 Schema columns, data types, and direct discovered relationships help interpret
 observed candidate differences. They never prove ambiguity by themselves.
@@ -75,7 +77,7 @@ Return exactly one JSON object:
 - Clarify from semantic analysis:
   {"status": "clarify", "source": "semantic-column",
    "semantic_finding_id": "<exact finding ID from SEMANTIC FINDINGS>",
-   "columns": ["<exact qualified column 1>", "<exact qualified column 2>"],
+   "interpretation_ids": ["<exact interpretation ID 1>", "<exact interpretation ID 2>"],
    "candidate_rejection_reason": "<why shown candidate differences are ineligible>",
    "question": "<one concise question>",
    "options": ["<choice 1>", "<choice 2>"], "reason": "<short reason>"}
@@ -96,9 +98,8 @@ applies_all value is true.
 Ask only one short, non-technical question with exactly two distinct,
 self-contained, mutually exclusive options on one semantic dimension.
 Candidate options must correspond to the two returned alternative IDs. For
-semantic clarification, copy one
-finding ID exactly and select exactly two qualified columns listed under that
-same finding. Do not return SQL or Markdown."""
+semantic clarification, copy one finding ID and exactly two interpretation IDs
+from that same finding. Do not return SQL or Markdown."""
 
 
 SEMANTIC_ONLY_INSTRUCTIONS = """You are evaluating semantic-column ambiguity
@@ -120,7 +121,7 @@ Return exactly one JSON object:
 - Pass: {"status": "pass", "reason": "<short reason>"}
 - Clarify: {"status": "clarify", "source": "semantic-column",
   "semantic_finding_id": "<exact finding ID from SEMANTIC FINDINGS>",
-  "columns": ["<exact qualified column 1>", "<exact qualified column 2>"],
+  "interpretation_ids": ["<exact interpretation ID 1>", "<exact interpretation ID 2>"],
   "question": "<one concise question>",
   "options": ["<choice 1>", "<choice 2>"], "reason": "<short reason>"}
 
@@ -132,8 +133,8 @@ If none applies every clarification, return status "noncompliant" with the
 complete compliance array and a short reason.
 
 Ask at most one short, non-technical question with exactly two distinct,
-self-contained options corresponding to two columns listed for that term. Do
-not return SQL or Markdown."""
+self-contained options corresponding to two interpretations listed for that
+finding. Do not return SQL or Markdown."""
 
 
 class AmbiguityPromptBuilder:
@@ -268,15 +269,32 @@ class AmbiguityPromptBuilder:
                 (
                     f"--- SEMANTIC FINDING semantic_{index} ---",
                     f"TERM: {_safe(term.term)}",
-                    f"BUCKET: {_safe(term.bucket)}",
-                    "COLUMNS:",
+                    f"DIMENSION: {_safe(term.dimension)}",
                 )
             )
-            lines.extend(
-                f"- {_safe(column.qualified_name)} "
-                f"({_safe(column.data_type)})"
-                for column in term.columns
-            )
+            for interpretation in term.interpretations:
+                grounding = interpretation.grounding
+                lines.extend(
+                    (
+                        f"INTERPRETATION: {_safe(interpretation.interpretation_id)}",
+                        f"LABEL: {_safe(interpretation.label)}",
+                        f"MEANING: {_safe(interpretation.meaning)}",
+                        "TABLES: " + ", ".join(
+                            _safe(value) for value in grounding.tables
+                        ),
+                        "COLUMNS: " + ", ".join(
+                            _safe(value) for value in grounding.columns
+                        ),
+                        "OPERATIONS: " + ", ".join(
+                            _safe(value) for value in grounding.operations
+                        ),
+                        f"GRAIN: {_safe(grounding.grain) or 'NONE'}",
+                        (
+                            "TEMPORAL ROLE: "
+                            + (_safe(grounding.temporal_role) or "NONE")
+                        ),
+                    )
+                )
         return "\n".join(lines)
 
     @staticmethod

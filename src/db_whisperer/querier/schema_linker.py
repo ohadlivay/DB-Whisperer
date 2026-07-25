@@ -33,10 +33,15 @@ Do not invent tables or columns.
 Do not return SQL, Markdown, explanations, or any other keys."""
 
 
-_CLARIFICATION_COLUMNS = re.compile(
+_LEGACY_CLARIFICATION_COLUMNS = re.compile(
     r'\(clarifying which column:\s*"([^"]+)"\s+or\s+"([^"]+)"\)',
     re.IGNORECASE,
 )
+_GROUNDING_BLOCK = re.compile(
+    r'\[(?:semantic\s+)?grounding:\s*([^\]]*)\]',
+    re.IGNORECASE,
+)
+_QUOTED_GROUNDED_COLUMN = re.compile(r'"([^"]+)"')
 
 
 def clarification_required_tables(
@@ -58,8 +63,15 @@ def clarification_required_tables(
 
     required: set[str] = set()
     for clarification in clarifications:
-        for match in _CLARIFICATION_COLUMNS.finditer(clarification):
+        for match in _LEGACY_CLARIFICATION_COLUMNS.finditer(clarification):
             for qualified_name in match.groups():
+                table_name = known_columns.get(qualified_name)
+                if table_name is not None:
+                    required.add(table_name)
+        for block in _GROUNDING_BLOCK.finditer(clarification):
+            for qualified_name in _QUOTED_GROUNDED_COLUMN.findall(
+                block.group(1)
+            ):
                 table_name = known_columns.get(qualified_name)
                 if table_name is not None:
                     required.add(table_name)

@@ -674,9 +674,15 @@ def _format_clarification(question: str, answer: str) -> str:
 def _display_clarification_question(question: str) -> str:
     """Remove semantic-column bookkeeping from a user-facing question."""
     return re.sub(
-        r'\s*\(clarifying which column: "[^"]+" or "[^"]+"\)\s*$',
+        (
+            r'\s*(?:'
+            r'\(clarifying which column: "[^"]+" or "[^"]+"\)'
+            r'|\[(?:semantic\s+)?grounding:[^\]]*\]'
+            r')\s*$'
+        ),
         "",
         question,
+        flags=re.IGNORECASE,
     ).strip()
 
 

@@ -149,6 +149,17 @@ class GuiWorkflowTest(unittest.TestCase):
             _display_clarification_question(internal_question),
         )
 
+    def test_hides_structured_grounding_from_question(self) -> None:
+        internal_question = (
+            "Were patients born or admitted in 2112? "
+            '[grounding: "patients.dob", "admissions.admittime"]'
+        )
+
+        self.assertEqual(
+            "Were patients born or admitted in 2112?",
+            _display_clarification_question(internal_question),
+        )
+
     def test_pending_workflow_hides_semantic_column_bookkeeping(self) -> None:
         app = self._app()
         internal_question = (

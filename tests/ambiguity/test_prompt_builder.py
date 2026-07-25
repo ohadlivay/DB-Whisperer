@@ -21,7 +21,8 @@ from db_whisperer.contracts import (
     ExecutedQueryPair,
     SemanticAmbiguityTerm,
     SemanticColumnAnalysis,
-    SemanticColumnCandidate,
+    SemanticGrounding,
+    SemanticInterpretation,
 )
 
 
@@ -138,17 +139,35 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
                 state=ComponentState.ACCEPTED,
                 terms=(
                     SemanticAmbiguityTerm(
-                        term="from 2024",
-                        bucket="temporal",
-                        columns=(
-                            SemanticColumnCandidate(
-                                "patients", "dob", "TIMESTAMP", "temporal"
+                        term="most common diagnoses",
+                        dimension="aggregation_grain",
+                        interpretations=(
+                            SemanticInterpretation(
+                                interpretation_id="interpretation_1",
+                                label="Diagnosis record count",
+                                meaning="Count every diagnosis record.",
+                                relevance=1,
+                                grounding=SemanticGrounding(
+                                    tables=("diagnoses_icd",),
+                                    columns=("diagnoses_icd.icd9_code",),
+                                    operations=("count_rows",),
+                                    grain="diagnosis_code",
+                                ),
                             ),
-                            SemanticColumnCandidate(
-                                "admissions",
-                                "admittime",
-                                "TIMESTAMP",
-                                "temporal",
+                            SemanticInterpretation(
+                                interpretation_id="interpretation_2",
+                                label="Distinct patient count",
+                                meaning="Count distinct affected patients.",
+                                relevance=2,
+                                grounding=SemanticGrounding(
+                                    tables=("diagnoses_icd",),
+                                    columns=(
+                                        "diagnoses_icd.icd9_code",
+                                        "diagnoses_icd.subject_id",
+                                    ),
+                                    operations=("count_distinct",),
+                                    grain="diagnosis_code",
+                                ),
                             ),
                         ),
                     ),
@@ -159,9 +178,10 @@ class AmbiguityPromptBuilderTest(unittest.TestCase):
         prompt = AmbiguityPromptBuilder().build(request)
 
         self.assertIn("SEMANTIC FINDING semantic_1", prompt)
-        self.assertIn("TERM: from 2024", prompt)
-        self.assertIn("BUCKET: temporal", prompt)
-        self.assertNotIn("from 2024 (temporal)", prompt)
+        self.assertIn("DIMENSION: aggregation_grain", prompt)
+        self.assertIn("interpretation_1", prompt)
+        self.assertIn("OPERATIONS: count_rows", prompt)
+        self.assertIn("higher-level unresolved dimension", prompt)
         self.assertIn('"semantic_finding_id"', prompt)
 
     def test_instructions_make_question_discriminate_alternatives(self) -> None:

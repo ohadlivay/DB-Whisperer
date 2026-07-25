@@ -28,3 +28,10 @@ as clarifications and included in every Querier prompt in the next iteration.
 The user selects K in the GUI, with a default of three.
 Candidate processing uses a bounded worker pool and restores candidate order
 before ambiguity evaluation.
+
+Semantic clarifications use exact interpretation IDs from one validated
+finding. Their internal grounding annotation is hidden from the GUI but is
+preserved in the clarification passed to the Querier. Schema linking validates
+every referenced qualified column and pins all grounded tables after the user
+answers. Initial candidate generation remains blind to semantic findings, so
+the pre-SQL detector cannot steer first-round candidate diversity.
