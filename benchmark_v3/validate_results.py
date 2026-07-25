@@ -277,6 +277,32 @@ def validate_aggregate(payload: Mapping[str, Any]) -> None:
         raise ValueError("aggregate campaign evidence is missing")
     if campaign.get("publishable") is not True:
         raise ValueError("aggregate campaign is not publishable")
+    suite = load_suite(DEFAULT_SUITE)
+    expected_identity = {
+        "suite_version": suite.version,
+        "suite_hash": suite.sha256,
+        "model": suite.model,
+    }
+    for field, expected in expected_identity.items():
+        if payload.get(field) != expected or campaign.get(field) != expected:
+            raise ValueError(
+                f"aggregate official identity is incompatible: {field}"
+            )
+    if campaign.get("arms") != list(ARMS):
+        raise ValueError("aggregate official identity is incompatible: arms")
+    aggregate_fingerprint = payload.get("fingerprint")
+    campaign_fingerprint = campaign.get("fingerprint")
+    if (
+        not isinstance(aggregate_fingerprint, Mapping)
+        or aggregate_fingerprint != campaign_fingerprint
+        or aggregate_fingerprint.get("suite_hash") != suite.sha256
+        or aggregate_fingerprint.get("model") != suite.model
+        or aggregate_fingerprint.get("candidate_count") != suite.candidate_count
+        or aggregate_fingerprint.get("arms") != list(ARMS)
+    ):
+        raise ValueError("aggregate official fingerprint is incompatible")
+    if campaign.get("repetitions") != suite.repetitions:
+        raise ValueError("aggregate official repetitions are incompatible")
     validate_reports(reports, campaign)
     _finite(payload.get("arms"), "arms")
     _finite(payload.get("arm_deltas"), "arm_deltas")

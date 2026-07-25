@@ -196,5 +196,6 @@ The pre-publication review found and corrected additional edge cases:
 - targeted campaign IDs use the official safe-slug validation;
 - semantic findings are discarded unless the reported vague phrase occurs in
   the actual user query; and
-- each model request reserves $0.25 of the $3.75 budget until provider usage
-  is recorded, preventing concurrent requests from sharing the same allowance.
+- each model request reserves its maximum cost from token bounds and enforced
+  provider-price caps until usage is recorded, preventing concurrent requests
+  from sharing the same $3.75 allowance.

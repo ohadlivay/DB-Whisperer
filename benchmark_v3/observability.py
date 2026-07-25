@@ -22,6 +22,8 @@ import requests
 
 TRANSIENT_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 REQUEST_COST_RESERVE_USD = 0.25
+MAX_PROVIDER_TOKEN_PRICE_PER_MILLION_USD = 2.0
+MAX_PROVIDER_REQUEST_PRICE_USD = 0.05
 _ATOMIC_WRITE_LOCK = Lock()
 _SENSITIVE_FIELD_NAMES = {
     "authorization",
@@ -601,14 +603,19 @@ class CampaignObserver:
         self.event("checkpoint_written", key=key, checkpoint=str(path))
         return path
 
-    def admit_model_call(self) -> None:
+    def admit_model_call(
+        self,
+        reserve_usd: float = REQUEST_COST_RESERVE_USD,
+    ) -> None:
         """Reserve budget atomically before admitting a transport attempt."""
 
+        reserve = _nonnegative_cost(reserve_usd)
+        if reserve <= 0:
+            raise ValueError("request cost reservation must be positive")
         with self._lock:
             failure = self.status.get("infrastructure_failure")
             if isinstance(failure, Mapping):
                 raise InfrastructureStop(str(failure.get("message", "infrastructure failure")))
-            reserve = min(REQUEST_COST_RESERVE_USD, self.budget_usd)
             committed = (
                 float(self.status.get("cost_usd", 0.0))
                 + float(self.status.get("reserved_cost_usd", 0.0))
@@ -626,11 +633,14 @@ class CampaignObserver:
                 ),
             )
 
-    def release_model_call(self) -> None:
+    def release_model_call(
+        self,
+        reserve_usd: float = REQUEST_COST_RESERVE_USD,
+    ) -> None:
         """Release one in-flight request reservation after a non-usage result."""
 
+        reserve = _nonnegative_cost(reserve_usd)
         with self._lock:
-            reserve = min(REQUEST_COST_RESERVE_USD, self.budget_usd)
             self._publish_locked(
                 reserved_cost_usd=round(
                     max(
@@ -652,6 +662,7 @@ class CampaignObserver:
         prompt_tokens: int,
         completion_tokens: int,
         cost_usd: float,
+        reserve_usd: float | None = None,
     ) -> None:
         validated_prompt_tokens = _nonnegative_token_count(
             prompt_tokens,
@@ -662,7 +673,26 @@ class CampaignObserver:
             "completion_tokens",
         )
         validated_cost = _nonnegative_cost(cost_usd)
+        reserve = (
+            _nonnegative_cost(reserve_usd)
+            if reserve_usd is not None
+            else None
+        )
         with self._lock:
+            if reserve is not None and validated_cost > reserve + 1e-8:
+                self._publish_locked(
+                    reserved_cost_usd=round(
+                        max(
+                            0.0,
+                            float(self.status.get("reserved_cost_usd", 0.0))
+                            - reserve,
+                        ),
+                        8,
+                    )
+                )
+                raise UsageValidationError(
+                    "provider cost exceeded the pre-admitted maximum"
+                )
             total_prompt_tokens = _nonnegative_token_count(
                 int(self.status.get("prompt_tokens", 0))
                 + validated_prompt_tokens,
@@ -680,13 +710,24 @@ class CampaignObserver:
                 prompt_tokens=total_prompt_tokens,
                 completion_tokens=total_completion_tokens,
                 cost_usd=round(total_cost, 8),
-                reserved_cost_usd=round(
-                    max(
-                        0.0,
-                        float(self.status.get("reserved_cost_usd", 0.0))
-                        - min(REQUEST_COST_RESERVE_USD, self.budget_usd),
-                    ),
-                    8,
+                **(
+                    {
+                        "reserved_cost_usd": round(
+                            max(
+                                0.0,
+                                float(
+                                    self.status.get(
+                                        "reserved_cost_usd",
+                                        0.0,
+                                    )
+                                )
+                                - reserve,
+                            ),
+                            8,
+                        )
+                    }
+                    if reserve is not None
+                    else {}
                 ),
             )
 
@@ -762,16 +803,46 @@ class InstrumentedSession(requests.Session):
 
     def post(self, url: str, *args: Any, **kwargs: Any) -> requests.Response:  # type: ignore[override]
         started = perf_counter()
+        request_payload = kwargs.get("json")
+        if not isinstance(request_payload, Mapping):
+            request_payload = {"messages": [], "max_tokens": 1000}
+        request_payload = dict(request_payload)
+        provider = dict(request_payload.get("provider", {}))
+        provider["max_price"] = {
+            "prompt": MAX_PROVIDER_TOKEN_PRICE_PER_MILLION_USD,
+            "completion": MAX_PROVIDER_TOKEN_PRICE_PER_MILLION_USD,
+            "request": MAX_PROVIDER_REQUEST_PRICE_USD,
+        }
+        request_payload["provider"] = provider
+        kwargs["json"] = request_payload
+        messages_bytes = len(
+            json.dumps(
+                request_payload.get("messages", []),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        )
+        max_completion_tokens = int(request_payload.get("max_tokens", 0))
+        if max_completion_tokens < 1:
+            raise ValueError("instrumented model request requires max_tokens")
+        reserve_usd = round(
+            MAX_PROVIDER_REQUEST_PRICE_USD
+            + (
+                messages_bytes + max_completion_tokens
+            )
+            * MAX_PROVIDER_TOKEN_PRICE_PER_MILLION_USD
+            / 1_000_000,
+            8,
+        )
 
         def operation() -> requests.Response:
-            self.observer.admit_model_call()
+            self.observer.admit_model_call(reserve_usd)
             try:
                 response = self._transport().post(url, *args, **kwargs)
             except BaseException:
-                self.observer.release_model_call()
+                self.observer.release_model_call(reserve_usd)
                 raise
             if int(getattr(response, "status_code", 0)) >= 400:
-                self.observer.release_model_call()
+                self.observer.release_model_call(reserve_usd)
             return response
 
         self.observer.event("model_call_started")
@@ -818,9 +889,9 @@ class InstrumentedSession(requests.Session):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 cost_usd=cost_usd,
+                reserve_usd=reserve_usd,
             )
         except UsageValidationError:
-            self.observer.release_model_call()
             self.observer.record_infrastructure_failure(
                 source="provider",
                 kind="usage",

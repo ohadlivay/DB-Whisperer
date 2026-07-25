@@ -590,7 +590,7 @@ class CampaignObserverTest(unittest.TestCase):
                             "usage": {
                                 "prompt_tokens": 3,
                                 "completion_tokens": 2,
-                                "cost": 0.25,
+                                "cost": 0.01,
                             },
                         },
                     )
@@ -628,7 +628,7 @@ class CampaignObserverTest(unittest.TestCase):
             self.assertEqual(3, observer.status["retries"])
             self.assertEqual(9, observer.status["prompt_tokens"])
             self.assertEqual(6, observer.status["completion_tokens"])
-            self.assertEqual(0.75, observer.status["cost_usd"])
+            self.assertEqual(0.03, observer.status["cost_usd"])
             self.assertEqual(3, len(created))
             self.assertTrue(all(transport.closed for transport in created))
 
