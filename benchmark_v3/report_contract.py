@@ -83,8 +83,14 @@ def validate_report_model(model: Mapping[str, Any]) -> None:
     )
     case_findings = model["case_findings"]
     _require(isinstance(case_findings, Mapping), "case_findings")
-    _require(bool(case_findings.get("successes")), "case_findings.successes")
-    _require(bool(case_findings.get("failures")), "case_findings.failures")
+    _require(
+        isinstance(case_findings.get("successes"), list),
+        "case_findings.successes",
+    )
+    _require(
+        isinstance(case_findings.get("failures"), list),
+        "case_findings.failures",
+    )
     for key in ("findings", "limitations"):
         _require(isinstance(model[key], list) and bool(model[key]), key)
     for key in ("interpretations", "recommendations"):

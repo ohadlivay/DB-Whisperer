@@ -180,3 +180,21 @@ arms, five repetitions, two workers, and the $3.75 ceiling. Its terminal view
 is campaign-wide: completed tests out of 450, percentage, elapsed time, and
 whole-campaign ETA. Successful execution stops with review evidence; it does
 not render either HTML report.
+
+### Final validation hardening
+
+The pre-publication review found and corrected additional edge cases:
+
+- official finalization, approval, and publication require the frozen default
+  suite hash and an explicitly publishable campaign;
+- approval hashes the aggregate and both regenerated review-package files, so
+  stale or edited review evidence cannot authorize publication;
+- offline preflight works in a clean checkout and runs historical replay only
+  when `--historical-campaign` is supplied;
+- all-pass campaigns can produce a review package without manufacturing a
+  failure example;
+- targeted campaign IDs use the official safe-slug validation;
+- semantic findings are discarded unless the reported vague phrase occurs in
+  the actual user query; and
+- each model request reserves $0.25 of the $3.75 budget until provider usage
+  is recorded, preventing concurrent requests from sharing the same allowance.

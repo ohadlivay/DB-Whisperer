@@ -18,6 +18,7 @@ from benchmark_v3.run_evaluation import (
     run_cell,
 )
 from benchmark_v3.run_targeted_evaluation import (
+    _target_suite,
     targeted_payload,
     targeted_schedule,
 )
@@ -63,6 +64,21 @@ class RunnerTest(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             validate_aggregate(payload)
+
+    def test_target_suite_has_a_distinct_nonofficial_fingerprint(self) -> None:
+        suite = load_suite(SUITE_PATH)
+        targeted = _target_suite(
+            suite,
+            ("from_2024_admission",),
+            1,
+            ("full",),
+        )
+
+        self.assertNotEqual(suite.sha256, targeted.sha256)
+        self.assertEqual(1, targeted.repetitions)
+        self.assertEqual(("from_2024_admission",), tuple(
+            case.id for case in targeted.query_cases
+        ))
 
     def test_unnecessary_clarification_preserves_preclarification_result(
         self,

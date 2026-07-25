@@ -907,6 +907,7 @@ def run_campaign(config: CampaignConfig) -> CampaignResult:
         "report_type": "dbwhisperer_v3_run", "suite_version": config.suite.version,
         "suite_hash": config.suite.sha256, "model": config.suite.model,
         "arms": list(config.arms), "fingerprint": _fingerprint_payload(fingerprint),
+        "publishable": config.publishable,
     }
     # Make compatibility durable before preparing data or admitting a cell.
     atomic_json(campaign_path, {**metadata, "complete": False, "records": list(checkpoint_records.values())})
@@ -1130,6 +1131,13 @@ def finalize_campaign(
     )
     from benchmark_v3.review_package import write_review_package
 
+    campaign = json.loads(
+        (campaign_dir / "campaign.json").read_text(encoding="utf-8")
+    )
+    if campaign.get("suite_hash") != load_suite(DEFAULT_SUITE).sha256:
+        raise ValueError(
+            "official finalization requires the frozen default suite hash"
+        )
     aggregate = aggregate_campaign(campaign_dir)
     validate_aggregate(aggregate)
     aggregate_path = campaign_dir / "aggregate.json"

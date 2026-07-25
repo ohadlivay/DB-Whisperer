@@ -98,6 +98,7 @@ class SemanticColumnAmbiguityService:
             judgment,
             request.schema,
             columns,
+            request.user_query,
         )
         if terms is None:
             return self._failure(
@@ -191,6 +192,7 @@ class SemanticColumnAmbiguityService:
         judgment: dict[str, object],
         schema: SchemaMetadata,
         columns: dict[ColumnRef, SemanticColumnCandidate],
+        user_query: str,
     ) -> tuple[tuple[SemanticAmbiguityTerm, ...] | None, tuple[str, ...], bool]:
         if not isinstance(judgment, dict):
             return None, (), False
@@ -216,6 +218,20 @@ class SemanticColumnAmbiguityService:
             dimension = raw.get("dimension")
             raw_interpretations = raw.get("interpretations")
             if not isinstance(term, str) or not term.strip():
+                continue
+            normalized_term = " ".join(
+                "".join(
+                    character if character.isalnum() else " "
+                    for character in term.casefold()
+                ).split()
+            )
+            normalized_query = " ".join(
+                "".join(
+                    character if character.isalnum() else " "
+                    for character in user_query.casefold()
+                ).split()
+            )
+            if not normalized_term or normalized_term not in normalized_query:
                 continue
             if dimension not in SEMANTIC_DIMENSIONS:
                 continue

@@ -62,9 +62,11 @@ def _copy_rescore_inputs(source: Path, target: Path) -> None:
     for path in source.rglob("*"):
         if not path.is_file():
             continue
-        if path.suffix.casefold() in {".duckdb", ".log"}:
-            continue
-        if path.name in {"counterfactual-rescore.json", "aggregate.json"}:
+        if not (
+            path.name == "campaign.json"
+            or path.name.startswith("run-") and path.suffix == ".json"
+            or path.name.startswith("references-") and path.suffix == ".json"
+        ):
             continue
         destination = target / path.relative_to(source)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -167,32 +169,37 @@ def run_preflight(
             )
         except Exception as error:
             errors.append(f"fingerprint: {error}")
+    try:
+        model = _report_fixture()
+        validate_report_model(model)
+        checks["report_contract"] = True
+        details["report_contract"] = "fixture populates all approved report fields"
+        temp = _work_directory("render")
+        aggregate_path = temp / "aggregate.json"
+        aggregate_path.write_text(
+            json.dumps({"model": model}),
+            encoding="utf-8",
+        )
+        reports = write_reports(
+            aggregate_path,
+            temp / "one-page.html",
+            temp / "evidence.html",
+        )
+        if len(reports) != 2 or any(not path.is_file() for path in reports):
+            raise ValueError("renderer did not produce two temporary reports")
+        checks["renderer"] = True
+        details["renderer"] = "two temporary HTML reports rendered"
+    except Exception as error:
+        errors.append(f"report_contract: {error}")
     history = Path(historical_campaign).resolve() if historical_campaign else None
-    if history is None or not history.is_dir():
-        errors.append("historical_rescore: a historical campaign directory is required")
+    if history is None:
+        checks["historical_rescore"] = callable(rescore_campaign)
+        details["historical_rescore"] = (
+            "rescorer ready; pass --historical-campaign to execute replay"
+        )
+    elif not history.is_dir():
+        errors.append("historical_rescore: campaign directory does not exist")
     else:
-        try:
-            model = _report_fixture()
-            validate_report_model(model)
-            checks["report_contract"] = True
-            details["report_contract"] = "fixture populates all approved report fields"
-            temp = _work_directory("render")
-            aggregate_path = temp / "aggregate.json"
-            aggregate_path.write_text(
-                json.dumps({"model": model}),
-                encoding="utf-8",
-            )
-            reports = write_reports(
-                aggregate_path,
-                temp / "one-page.html",
-                temp / "evidence.html",
-            )
-            if len(reports) != 2 or any(not path.is_file() for path in reports):
-                raise ValueError("renderer did not produce two temporary reports")
-            checks["renderer"] = True
-            details["renderer"] = "two temporary HTML reports rendered"
-        except Exception as error:
-            errors.append(f"report_contract: {error}")
         try:
             copied = _work_directory("rescore") / history.name
             _copy_rescore_inputs(history, copied)
@@ -226,16 +233,9 @@ def main() -> None:
     parser.add_argument("--historical-campaign", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    history = args.historical_campaign or (
-        PROJECT_ROOT
-        / "benchmark_v3"
-        / "results"
-        / "runs"
-        / "v3-official-evidence-final-20260724"
-    )
     result = run_preflight(
         args.suite,
-        historical_campaign=history,
+        historical_campaign=args.historical_campaign,
         output_path=args.output,
     )
     for name in CHECKS:

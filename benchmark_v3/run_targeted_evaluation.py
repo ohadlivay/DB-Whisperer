@@ -18,9 +18,9 @@ from benchmark_v3.progress import TerminalProgress
 from benchmark_v3.run_evaluation import (
     ARMS,
     CampaignConfig,
-    DEFAULT_OUTPUT,
     DEFAULT_SUITE,
     WorkItem,
+    _campaign_directory,
     _hash_files,
     _prepare_dataset,
     run_campaign,
@@ -138,7 +138,9 @@ def main() -> None:
     identifier = args.campaign_id or (
         "targeted-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     )
-    directory = DEFAULT_OUTPUT / identifier
+    if not identifier.startswith("targeted-"):
+        raise SystemExit("targeted campaign id must start with 'targeted-'")
+    directory = _campaign_directory(identifier)
     dataset_hash = _hash_files(suite.dataset_path)
     dataset = _prepare_dataset(suite, directory, dataset_hash)
     result = run_campaign(

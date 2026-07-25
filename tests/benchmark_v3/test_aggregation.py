@@ -114,6 +114,9 @@ def write_campaign(directory: Path, *, reports: int = 5, macro_fixture: bool = F
         (directory / f"run-{payload['repetition']:02d}.json").write_text(json.dumps(payload))
     (directory / "campaign.json").write_text(json.dumps({
         "complete": reports == 5,
+        "publishable": True,
+        "suite_hash": payloads[0]["suite_hash"],
+        "repetitions": reports,
         "fingerprint": payloads[0]["fingerprint"],
         "records": [record for payload in payloads for record in payload["records"]],
     }))

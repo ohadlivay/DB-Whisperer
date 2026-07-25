@@ -275,6 +275,8 @@ def validate_aggregate(payload: Mapping[str, Any]) -> None:
     campaign = payload.get("campaign")
     if not isinstance(campaign, Mapping):
         raise ValueError("aggregate campaign evidence is missing")
+    if campaign.get("publishable") is not True:
+        raise ValueError("aggregate campaign is not publishable")
     validate_reports(reports, campaign)
     _finite(payload.get("arms"), "arms")
     _finite(payload.get("arm_deltas"), "arm_deltas")

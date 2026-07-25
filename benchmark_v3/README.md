@@ -59,7 +59,9 @@ benchmark_v3\run_official_evaluation.cmd official-20260723
 ```
 
 It runs two workers, five repetitions, the frozen $3.75 suite budget, and the
-four V3 arms. A new campaign ID is generated when the optional ID is omitted;
+four V3 arms. Each in-flight request reserves $0.25 against the ceiling until
+provider usage is recorded, so concurrent candidate calls cannot reuse the
+same remaining allowance. A new campaign ID is generated when the optional ID is omitted;
 use the same safe lowercase ID to resume an interrupted campaign:
 
 ```powershell

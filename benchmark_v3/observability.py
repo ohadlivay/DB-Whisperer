@@ -21,6 +21,7 @@ import requests
 
 
 TRANSIENT_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+REQUEST_COST_RESERVE_USD = 0.25
 _ATOMIC_WRITE_LOCK = Lock()
 _SENSITIVE_FIELD_NAMES = {
     "authorization",
@@ -159,6 +160,7 @@ def initial_status(
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "cost_usd": 0.0,
+        "reserved_cost_usd": 0.0,
         "budget_usd": budget_usd,
         "elapsed_seconds": 0.0,
         "eta_seconds": None,
@@ -188,6 +190,7 @@ def initial_status(
     # Work from a previous process is no longer active after initialization.
     status["active_by_key"] = {}
     status["active"] = []
+    status["reserved_cost_usd"] = 0.0
     # A new process may resume after credentials or provider availability were
     # repaired. Historical failures remain durable in events.jsonl.
     status["infrastructure_failure"] = None
@@ -599,24 +602,44 @@ class CampaignObserver:
         return path
 
     def admit_model_call(self) -> None:
-        """Atomically admit and count one transport attempt.
-
-        Provider cost is unknown until a response arrives. Calls admitted while
-        recorded cost is below the ceiling may therefore remain in flight and
-        report cost later; the network call itself is intentionally not
-        serialized so candidate generation keeps its K-way concurrency.
-        """
+        """Reserve budget atomically before admitting a transport attempt."""
 
         with self._lock:
             failure = self.status.get("infrastructure_failure")
             if isinstance(failure, Mapping):
                 raise InfrastructureStop(str(failure.get("message", "infrastructure failure")))
-            if float(self.status.get("cost_usd", 0.0)) >= self.budget_usd:
+            reserve = min(REQUEST_COST_RESERVE_USD, self.budget_usd)
+            committed = (
+                float(self.status.get("cost_usd", 0.0))
+                + float(self.status.get("reserved_cost_usd", 0.0))
+            )
+            if committed + reserve > self.budget_usd:
                 raise BudgetStop(
-                    "Campaign budget ceiling reached before paid request."
+                    "Campaign budget ceiling cannot reserve another request."
                 )
             self._publish_locked(
                 model_calls=int(self.status.get("model_calls", 0)) + 1,
+                reserved_cost_usd=round(
+                    float(self.status.get("reserved_cost_usd", 0.0))
+                    + reserve,
+                    8,
+                ),
+            )
+
+    def release_model_call(self) -> None:
+        """Release one in-flight request reservation after a non-usage result."""
+
+        with self._lock:
+            reserve = min(REQUEST_COST_RESERVE_USD, self.budget_usd)
+            self._publish_locked(
+                reserved_cost_usd=round(
+                    max(
+                        0.0,
+                        float(self.status.get("reserved_cost_usd", 0.0))
+                        - reserve,
+                    ),
+                    8,
+                )
             )
 
     def record_retry(self) -> None:
@@ -657,6 +680,14 @@ class CampaignObserver:
                 prompt_tokens=total_prompt_tokens,
                 completion_tokens=total_completion_tokens,
                 cost_usd=round(total_cost, 8),
+                reserved_cost_usd=round(
+                    max(
+                        0.0,
+                        float(self.status.get("reserved_cost_usd", 0.0))
+                        - min(REQUEST_COST_RESERVE_USD, self.budget_usd),
+                    ),
+                    8,
+                ),
             )
 
 
@@ -698,12 +729,7 @@ def retry_transient(
 
 
 class InstrumentedSession(requests.Session):
-    """Thread-local concurrent transport with atomic budget admission.
-
-    An admitted request can report provider cost after another admitted
-    request has reached the recorded ceiling because cost is unavailable until
-    responses arrive. Admission is serialized; network I/O is not.
-    """
+    """Thread-local concurrent transport with reserved budget admission."""
 
     def __init__(
         self,
@@ -739,7 +765,14 @@ class InstrumentedSession(requests.Session):
 
         def operation() -> requests.Response:
             self.observer.admit_model_call()
-            return self._transport().post(url, *args, **kwargs)
+            try:
+                response = self._transport().post(url, *args, **kwargs)
+            except BaseException:
+                self.observer.release_model_call()
+                raise
+            if int(getattr(response, "status_code", 0)) >= 400:
+                self.observer.release_model_call()
+            return response
 
         self.observer.event("model_call_started")
         try:
@@ -787,6 +820,7 @@ class InstrumentedSession(requests.Session):
                 cost_usd=cost_usd,
             )
         except UsageValidationError:
+            self.observer.release_model_call()
             self.observer.record_infrastructure_failure(
                 source="provider",
                 kind="usage",

@@ -136,6 +136,19 @@ class CampaignObserverTest(unittest.TestCase):
                 session.post("https://example.invalid")
             self.assertEqual(0, observer.status["model_calls"])
 
+    def test_budget_reserves_concurrent_requests_before_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            observer = CampaignObserver(Path(temporary), (), 0.5)
+
+            observer.admit_model_call()
+            observer.admit_model_call()
+
+            with self.assertRaises(BudgetStop):
+                observer.admit_model_call()
+            self.assertEqual(0.5, observer.status["reserved_cost_usd"])
+            observer.release_model_call()
+            self.assertEqual(0.25, observer.status["reserved_cost_usd"])
+
     def test_budget_admission_is_atomic_with_recorded_cost(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             observer = CampaignObserver(Path(temporary), (), 1.0)

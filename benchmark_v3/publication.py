@@ -10,15 +10,38 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from benchmark_v3.observability import atomic_json
+from benchmark_v3.contracts import load_suite
+from benchmark_v3.observability import _safe_value, atomic_json
 from benchmark_v3.report_model import build_report_model
 from benchmark_v3.report_contract import validate_report_model
-from benchmark_v3.run_evaluation import PROJECT_ROOT, _promote_publication
+from benchmark_v3.run_evaluation import (
+    DEFAULT_SUITE,
+    PROJECT_ROOT,
+    _promote_publication,
+)
 from benchmark_v3.validate_results import validate_aggregate
 
 
 def sha256_file(path: str | Path) -> str:
     return sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _require_official_suite(
+    directory: Path,
+    aggregate: dict[str, Any] | None = None,
+) -> None:
+    expected = load_suite(DEFAULT_SUITE).sha256
+    campaign_path = directory / "campaign.json"
+    if campaign_path.is_file():
+        campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+        if campaign.get("suite_hash") != expected:
+            raise ValueError(
+                "official publication requires the frozen default suite hash"
+            )
+    if aggregate is not None and aggregate.get("suite_hash") != expected:
+        raise ValueError(
+            "official publication requires the frozen default suite hash"
+        )
 
 
 def approve_campaign(
@@ -37,8 +60,20 @@ def approve_campaign(
     if not review_json.is_file() or not review_markdown.is_file():
         raise ValueError("review package must exist before approval")
     aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    _require_official_suite(directory, aggregate)
     validate_aggregate(aggregate)
-    validate_report_model(build_report_model(aggregate))
+    model = build_report_model(aggregate)
+    validate_report_model(model)
+    reviewed_model = json.loads(review_json.read_text(encoding="utf-8"))
+    normalized_model = json.loads(
+        json.dumps(_safe_value(model), default=str, allow_nan=False)
+    )
+    if reviewed_model != normalized_model:
+        raise ValueError("review package JSON does not match aggregate")
+    from benchmark_v3.review_package import _markdown
+
+    if review_markdown.read_text(encoding="utf-8") != _markdown(model):
+        raise ValueError("review package Markdown does not match aggregate")
     if not approved_by.strip():
         raise ValueError("approved_by is required")
     output = directory / "report-approval.json"
@@ -46,6 +81,8 @@ def approve_campaign(
         "report_type": "dbwhisperer_v3_report_approval",
         "campaign_id": directory.name,
         "aggregate_sha256": sha256_file(aggregate_path),
+        "review_json_sha256": sha256_file(review_json),
+        "review_markdown_sha256": sha256_file(review_markdown),
         "approved_by": approved_by.strip(),
         "approved_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -61,6 +98,7 @@ def publish_approved_campaign(
     """Render and atomically promote exactly two approved HTML reports."""
 
     directory = Path(campaign_dir).resolve()
+    _require_official_suite(directory)
     aggregate_path = directory / "aggregate.json"
     approval_path = directory / "report-approval.json"
     if not aggregate_path.is_file() or not approval_path.is_file():
@@ -71,6 +109,17 @@ def publish_approved_campaign(
         raise ValueError("approval campaign identity does not match")
     if approval.get("aggregate_sha256") != sha256_file(aggregate_path):
         raise ValueError("approval hash does not match aggregate")
+    _require_official_suite(directory, aggregate)
+    review_json = directory / "review-package.json"
+    review_markdown = directory / "review-package.md"
+    if (
+        not review_json.is_file()
+        or approval.get("review_json_sha256") != sha256_file(review_json)
+        or not review_markdown.is_file()
+        or approval.get("review_markdown_sha256")
+        != sha256_file(review_markdown)
+    ):
+        raise ValueError("approval hash does not match reviewed package")
     validate_aggregate(aggregate)
     validate_report_model(build_report_model(aggregate))
 

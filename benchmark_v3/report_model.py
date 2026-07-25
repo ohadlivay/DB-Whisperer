@@ -210,7 +210,7 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
             "ambiguity_funnel": True,
             "correctness_projection_diagnostics": True,
             "terminal_outcomes": True,
-            "representative_cases": bool(successes and retained_failures),
+            "representative_cases": bool(query_records),
             "provenance_and_operations": True,
             "findings_and_limitations": True,
         },

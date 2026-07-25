@@ -115,6 +115,15 @@ def common_finding() -> dict[str, object]:
 
 
 class SemanticColumnAnalysisTest(unittest.TestCase):
+    def test_model_cannot_invent_a_vague_term_absent_from_user_query(self) -> None:
+        client = FakeClient(response={"findings": [common_finding()]})
+        service = SemanticColumnAmbiguityService(client=client)
+
+        result = service.analyze(request())
+
+        self.assertEqual(ComponentState.ACCEPTED, result.state)
+        self.assertEqual((), result.terms)
+
     def test_structured_finding_exposes_ranked_grounded_interpretations(self) -> None:
         finding = SemanticAmbiguityTerm(
             term="common",

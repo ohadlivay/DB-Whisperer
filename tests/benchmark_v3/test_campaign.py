@@ -63,18 +63,11 @@ SUITE_PATH = (
 
 class CampaignTest(unittest.TestCase):
     def test_preflight_is_offline_and_checks_report_readiness(self) -> None:
-        historical = (
-            PROJECT_ROOT
-            / "benchmark_v3"
-            / "results"
-            / "runs"
-            / "v3-official-evidence-final-20260724"
-        )
         with patch(
             "requests.Session.post",
             side_effect=AssertionError("preflight must not call the network"),
         ):
-            result = run_preflight(DEFAULT_SUITE, historical_campaign=historical)
+            result = run_preflight(DEFAULT_SUITE)
 
         self.assertTrue(result.passed, result.errors)
         for name in (
@@ -127,6 +120,25 @@ class CampaignTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "approval hash|aggregate"):
                 publish_approved_campaign(directory)
+
+    def test_approval_rejects_review_package_that_no_longer_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "campaign-id"
+            directory.mkdir()
+            write_campaign(directory)
+            aggregate = directory / "aggregate.json"
+            aggregate.write_text(
+                json.dumps(aggregate_campaign(directory)),
+                encoding="utf-8",
+            )
+            write_review_package(aggregate, directory)
+            (directory / "review-package.md").write_text(
+                "stale reviewed evidence",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "review package"):
+                approve_campaign(directory, approved_by="user")
 
     def test_rescore_writes_new_artifact_without_mutating_campaign(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -279,7 +291,7 @@ class CampaignTest(unittest.TestCase):
             with patch("benchmark_v3.aggregate_results.aggregate_campaign", side_effect=AssertionError("aggregate")), patch("benchmark_v3.render_report.write_reports", side_effect=AssertionError("render")):
                 self.assertFalse(publish_campaign(directory, one_page_path=one_page, full_report_path=full))
             campaign = json.loads((directory / "campaign.json").read_text())
-            self.assertTrue(campaign["complete"]); self.assertIn("report approval", campaign["latest_error"])
+            self.assertTrue(campaign["complete"]); self.assertIn("frozen default suite", campaign["latest_error"])
             self.assertEqual("old one", one_page.read_text()); self.assertEqual("old full", full.read_text())
 
     def test_approved_publication_writes_exactly_two_reports(self) -> None:
