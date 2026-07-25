@@ -59,9 +59,10 @@ benchmark_v3\run_official_evaluation.cmd official-20260723
 ```
 
 It runs two workers, five repetitions, the frozen $3.75 suite budget, and the
-four V3 arms. Each in-flight request reserves its maximum cost from the
-request token bounds and enforced OpenRouter provider-price caps until usage
-is recorded, so concurrent candidate calls cannot reuse the same remaining
+four V3 arms. Each in-flight request reserves the maximum cost of the frozen
+model's complete 262K-token context plus the enforced OpenRouter per-request
+and token-price caps until usage is recorded. This includes provider framing
+tokens and prevents concurrent candidate calls from reusing the same remaining
 allowance. A new campaign ID is generated when the optional ID is omitted;
 use the same safe lowercase ID to resume an interrupted campaign:
 

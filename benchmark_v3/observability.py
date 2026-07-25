@@ -24,6 +24,7 @@ TRANSIENT_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 REQUEST_COST_RESERVE_USD = 0.25
 MAX_PROVIDER_TOKEN_PRICE_PER_MILLION_USD = 2.0
 MAX_PROVIDER_REQUEST_PRICE_USD = 0.05
+FROZEN_MODEL_CONTEXT_TOKENS = 262_144
 _ATOMIC_WRITE_LOCK = Lock()
 _SENSITIVE_FIELD_NAMES = {
     "authorization",
@@ -815,20 +816,19 @@ class InstrumentedSession(requests.Session):
         }
         request_payload["provider"] = provider
         kwargs["json"] = request_payload
-        messages_bytes = len(
-            json.dumps(
-                request_payload.get("messages", []),
-                ensure_ascii=False,
-            ).encode("utf-8")
-        )
         max_completion_tokens = int(request_payload.get("max_tokens", 0))
-        if max_completion_tokens < 1:
+        if (
+            max_completion_tokens < 1
+            or max_completion_tokens > FROZEN_MODEL_CONTEXT_TOKENS
+        ):
             raise ValueError("instrumented model request requires max_tokens")
+        # The provider-rendered prompt plus completion must fit the frozen
+        # model's complete context window. Reserving that entire window also
+        # covers chat-template/protocol tokens that are not present in the
+        # serialized client messages.
         reserve_usd = round(
             MAX_PROVIDER_REQUEST_PRICE_USD
-            + (
-                messages_bytes + max_completion_tokens
-            )
+            + FROZEN_MODEL_CONTEXT_TOKENS
             * MAX_PROVIDER_TOKEN_PRICE_PER_MILLION_USD
             / 1_000_000,
             8,
