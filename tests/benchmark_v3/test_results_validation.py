@@ -68,6 +68,7 @@ class ResultsValidationTest(unittest.TestCase):
             record = report["records"][0]
             record["result"]["state"] = "failed"
             record["score"]["passed"] = False
+            record["terminal"]["category"] = "no_final_result"
             record["observation"] = {
                 "valid": True,
                 "source": "system",
@@ -78,6 +79,29 @@ class ResultsValidationTest(unittest.TestCase):
             payload = self._aggregate(directory)
 
         self.assertTrue(payload["failures"])
+
+    def test_rejects_missing_terminal_or_incomplete_preclarification_result(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            del report["records"][0]["terminal"]
+            report_path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "terminal"):
+                self._aggregate(directory)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            report_path = directory / "run-01.json"
+            report = json.loads(report_path.read_text())
+            del report["records"][0]["best_preclarification_result"]["rows"]
+            report_path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "preclarification"):
+                self._aggregate(directory)
 
     def test_rejects_unknown_compliance_after_matched_clarification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

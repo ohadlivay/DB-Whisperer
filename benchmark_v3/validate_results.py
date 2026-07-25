@@ -17,6 +17,28 @@ _MISSING_FILTER_PREFIX = "required filter is missing: "
 _DISTRIBUTION_FIELDS = {
     "mean", "stddev", "min", "max", "confidence_interval_95",
 }
+TERMINAL_CATEGORIES = {
+    "accepted",
+    "safety_rejection",
+    "unresolved_clarification",
+    "unnecessary_clarification",
+    "target_option_missing",
+    "initial_generation_format_failure",
+    "candidate_quorum_failure",
+    "sql_validation_failure",
+    "sql_execution_failure",
+    "post_clarification_generation_failure",
+    "clarification_compliance_failure",
+    "no_final_result",
+}
+_SERIALIZED_RESULT_FIELDS = {
+    "state",
+    "message",
+    "sql",
+    "columns",
+    "rows",
+    "truncated",
+}
 
 
 def _metadata(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -148,6 +170,42 @@ def validate_reports(
             observation = record.get("observation")
             if not isinstance(result, Mapping) or not isinstance(score, Mapping):
                 raise ValueError("run record result or score is missing")
+            if record.get("arm") in ARMS:
+                terminal = record.get("terminal")
+                if (
+                    not isinstance(terminal, Mapping)
+                    or terminal.get("category") not in TERMINAL_CATEGORIES
+                ):
+                    raise ValueError(
+                        "run record terminal category is missing or invalid"
+                    )
+                for count_field in (
+                    "generated_candidates",
+                    "executed_candidates",
+                    "successful_candidates",
+                ):
+                    count = terminal.get(count_field)
+                    if (
+                        isinstance(count, bool)
+                        or not isinstance(count, int)
+                        or count < 0
+                    ):
+                        raise ValueError(
+                            "run record terminal counts are invalid"
+                        )
+                best = record.get("best_preclarification_result")
+                if best is not None:
+                    if (
+                        not isinstance(best, Mapping)
+                        or not _SERIALIZED_RESULT_FIELDS <= set(best)
+                        or best.get("state") != "accepted"
+                        or not isinstance(best.get("columns"), list)
+                        or not isinstance(best.get("rows"), list)
+                        or not isinstance(best.get("truncated"), bool)
+                    ):
+                        raise ValueError(
+                            "best preclarification result is incomplete"
+                        )
             if (
                 not isinstance(observation, Mapping)
                 or observation.get("valid") is not True

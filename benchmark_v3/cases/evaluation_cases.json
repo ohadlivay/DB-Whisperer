@@ -75,7 +75,7 @@
       "kind": "query",
       "category": "control",
       "capabilities": ["date_arithmetic", "ordering"],
-      "question": "Show patients admitted in the year 2112.",
+      "question": "Show patients admitted to the hospital in the year 2112.",
       "intent_id": "admission_year",
       "required_tables": ["admissions"],
       "forbidden_tables": ["patients"],
@@ -106,7 +106,12 @@
       "reference": {
         "comparison_mode": "ordered",
         "required_filters": ["subject_id = 10006"],
-        "ordered": true
+        "ordered": true,
+        "duration": {
+          "unit": "day",
+          "representations": ["integer", "decimal", "interval"],
+          "subunit_precision_required": false
+        }
       }
     },
     {
@@ -128,7 +133,12 @@
       "reference": {
         "comparison_mode": "ordered",
         "required_filters": ["subject_id = 10006"],
-        "ordered": true
+        "ordered": true,
+        "duration": {
+          "unit": "day",
+          "representations": ["integer", "decimal", "interval"],
+          "subunit_precision_required": false
+        }
       }
     },
     {
@@ -146,7 +156,12 @@
       "reference": {
         "comparison_mode": "ordered",
         "required_filters": ["subject_id = 10006"],
-        "ordered": true
+        "ordered": true,
+        "duration": {
+          "unit": "day",
+          "representations": ["integer", "decimal", "interval"],
+          "subunit_precision_required": false
+        }
       }
     },
     {
@@ -164,7 +179,12 @@
       "reference": {
         "comparison_mode": "ordered",
         "required_filters": ["subject_id = 10006"],
-        "ordered": true
+        "ordered": true,
+        "duration": {
+          "unit": "day",
+          "representations": ["integer", "decimal", "interval"],
+          "subunit_precision_required": false
+        }
       }
     },
     {
@@ -325,7 +345,12 @@
       "reference": {
         "comparison_mode": "ordered",
         "required_filters": ["dischtime IS NOT NULL"],
-        "ordered": true
+        "ordered": true,
+        "duration": {
+          "unit": "day",
+          "representations": ["integer", "decimal", "interval"],
+          "subunit_precision_required": false
+        }
       }
     },
     {
@@ -343,7 +368,10 @@
         "comparison_mode": "ordered",
         "required_grouping": ["subject_id"],
         "ordered": true,
-        "limit": 10
+        "limit": 10,
+        "order_semantics": "ranked",
+        "rank_column_required": false,
+        "tie_aware": true
       }
     },
     {

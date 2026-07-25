@@ -17,7 +17,7 @@ import stat
 import sys
 from threading import Lock, local
 from time import perf_counter
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 import duckdb
 
@@ -36,7 +36,12 @@ from benchmark_v3.observability import (
     atomic_json,
 )
 from benchmark_v3.progress import TerminalProgress
-from benchmark_v3.scoring import SafetyEvidence, score_etl_manifest, score_query_case
+from benchmark_v3.scoring import (
+    SafetyEvidence,
+    score_etl_manifest,
+    score_query_case,
+    serialize_result,
+)
 from db_whisperer.ambiguity import AmbiguityPromptBuilder, AmbiguityService, SemanticColumnAmbiguityService
 from db_whisperer.ambiguity.openrouter_client import AmbiguityOpenRouterClient
 from db_whisperer.application import ApplicationService
@@ -560,6 +565,74 @@ def _baseline_result(
     return query.execute_candidate(candidate, request.schema.database_path), candidate
 
 
+def _report_message(value: str) -> str:
+    """Bound one-line workflow text before it enters review artifacts."""
+
+    return re.sub(r"\s+", " ", value).strip()[:300]
+
+
+def classify_terminal_outcome(
+    case: EvaluationCase,
+    result: QueryResult | None,
+    turns: Sequence[ClarificationTurn],
+    candidates: Sequence[QueryCandidate],
+    candidate_results: Sequence[QueryResult],
+) -> dict[str, Any]:
+    """Classify a system outcome without collapsing failures together."""
+
+    generated = len(candidates)
+    executed = len(candidate_results)
+    successful = sum(
+        item.state == ComponentState.ACCEPTED
+        for item in candidate_results
+    )
+    category = "no_final_result"
+    if result is not None and result.state == ComponentState.ACCEPTED:
+        category = "accepted"
+    elif case.category == "safety":
+        category = "safety_rejection"
+    elif turns:
+        if not case.should_clarify:
+            category = "unnecessary_clarification"
+        elif any(not turn.matched_intent for turn in turns):
+            category = "target_option_missing"
+        elif turns[-1].compliance_passed is False:
+            category = "clarification_compliance_failure"
+        elif len(turns) >= 2:
+            category = "unresolved_clarification"
+        elif generated > 3 and successful < 2:
+            category = "post_clarification_generation_failure"
+    elif generated == 0 or not any(
+        candidate.sql for candidate in candidates
+    ):
+        category = "initial_generation_format_failure"
+    elif generated >= 3 and successful == 1:
+        category = "candidate_quorum_failure"
+    elif successful == 0 and candidate_results:
+        if any(
+            item.failure_kind in {"validation", "sql_validation"}
+            or "validat" in item.message.casefold()
+            or "forbidden operation" in item.message.casefold()
+            for item in candidate_results
+        ):
+            category = "sql_validation_failure"
+        else:
+            category = "sql_execution_failure"
+
+    messages = tuple(dict.fromkeys(
+        _report_message(item.message)
+        for item in (*candidates, *candidate_results)
+        if getattr(item, "message", "").strip()
+    ))
+    return {
+        "category": category,
+        "generated_candidates": generated,
+        "executed_candidates": executed,
+        "successful_candidates": successful,
+        "messages": list(messages[-3:]),
+    }
+
+
 def run_cell(
     item: WorkItem,
     case: EvaluationCase,
@@ -574,11 +647,16 @@ def run_cell(
     before = _database_snapshot(dataset.schema) if case.category == "safety" else None
     trace_candidates: list[QueryCandidate] = []
     trace_results: list[QueryResult] = []
+    trace_candidate_results: list[QueryResult] = []
+    preclarification_results: list[QueryResult] = []
     if item.arm == "baseline":
         request = QueryRequest(case.question, dataset.schema, api_key, model)
         result, candidate = _baseline_result(query, request)
         trace_candidates.append(candidate)
         trace_results.append(result)
+        trace_candidate_results.append(result)
+        if result.state == ComponentState.ACCEPTED:
+            preclarification_results.append(result)
     else:
         result: QueryResult | None = None
         answers: tuple[str, ...] = ()
@@ -590,9 +668,25 @@ def run_cell(
             )
             result = workflow.query_result
             trace_candidates.extend(getattr(workflow, "candidates", ()))
-            trace_results.extend(getattr(workflow, "candidate_results", ()))
+            workflow_candidate_results = tuple(
+                getattr(workflow, "candidate_results", ())
+            )
+            trace_results.extend(workflow_candidate_results)
+            trace_candidate_results.extend(workflow_candidate_results)
+            if iteration == 1 and not turns:
+                preclarification_results.extend(
+                    candidate_result
+                    for candidate_result in workflow_candidate_results
+                    if candidate_result.state == ComponentState.ACCEPTED
+                )
             if result is not None:
                 trace_results.append(result)
+                if (
+                    iteration == 1
+                    and not turns
+                    and result.state == ComponentState.ACCEPTED
+                ):
+                    preclarification_results.append(result)
             if turns and answers and workflow.ambiguity is not None:
                 final_decision = workflow.ambiguity
                 turns[-1] = replace(
@@ -629,6 +723,18 @@ def run_cell(
                 break
             answers += (f"Question: {decision.question}\nSelected answer: {selected}",)
     clarifications = [turn.to_record() for turn in turns]
+    terminal = classify_terminal_outcome(
+        case,
+        result,
+        turns,
+        trace_candidates,
+        trace_candidate_results,
+    )
+    best_preclarification_result = (
+        serialize_result(preclarification_results[-1])
+        if preclarification_results
+        else None
+    )
     safety = (
         _safety_evidence(
             case, tuple(trace_candidates), tuple(trace_results), before,
@@ -653,6 +759,8 @@ def run_cell(
         "category": case.category,
         "arm": item.arm,
         "clarifications": clarifications,
+        "terminal": terminal,
+        "best_preclarification_result": best_preclarification_result,
         "result": result_payload,
         "score": score,
         "observation": {

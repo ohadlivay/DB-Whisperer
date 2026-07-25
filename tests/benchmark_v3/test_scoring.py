@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 import unittest
 
-from benchmark_v3.contracts import EvaluationCase, ReferenceContract
+from benchmark_v3.contracts import (
+    DurationContract,
+    EvaluationCase,
+    ReferenceContract,
+)
 from benchmark_v3.scoring import (
     COMPONENT_WEIGHTS,
     SafetyEvidence,
+    ambiguity_evidence,
+    duration_values_compatible,
     results_compatible,
     score_case,
     score_etl_manifest,
     score_query_case,
     summarize_arm,
+    tie_aware_top_n_match,
 )
 from benchmark_v3.sql_analysis import analyze_sql
 from db_whisperer.contracts import (
@@ -56,6 +63,11 @@ def case(
     limit: int | None = None,
     required_filters: tuple[str, ...] = (),
     required_grouping: tuple[str, ...] = (),
+    projection_mode: str = "required_subset",
+    duration: DurationContract | None = None,
+    order_semantics: str | None = None,
+    rank_column_required: bool = False,
+    tie_aware: bool = False,
 ) -> EvaluationCase:
     return EvaluationCase(
         id=f"{family_id}-case",
@@ -78,11 +90,250 @@ def case(
             required_grouping=required_grouping,
             ordered=ordered,
             limit=limit,
+            projection_mode=projection_mode,
+            duration=duration,
+            order_semantics=(
+                order_semantics
+                if order_semantics is not None
+                else ("chronological" if ordered else "none")
+            ),
+            rank_column_required=rank_column_required,
+            tie_aware=tie_aware,
         ),
     )
 
 
 class ResultCompatibilityTest(unittest.TestCase):
+    def test_ordered_top_ten_does_not_require_rank_projection(self) -> None:
+        evaluation_case = case(
+            comparison_mode="ordered",
+            expected_sql=(
+                "SELECT subject_id, admission_count, "
+                "DENSE_RANK() OVER (ORDER BY admission_count DESC) "
+                "AS admission_rank FROM patient_counts "
+                "ORDER BY admission_count DESC, subject_id LIMIT 3"
+            ),
+            required_column_groups=(
+                ("subject_id",),
+                ("admission_count",),
+                ("admission_rank",),
+            ),
+            ordered=True,
+            limit=3,
+            order_semantics="ranked",
+            rank_column_required=False,
+            tie_aware=True,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id", "admission_count", "admission_rank"),
+            ((10, 4, 1), (20, 3, 2), (30, 2, 3)),
+        )
+        actual_sql = (
+            "SELECT subject_id, admission_count FROM patient_counts "
+            "ORDER BY admission_count DESC LIMIT 3"
+        )
+        actual = result(
+            actual_sql,
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (30, 2)),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_tied_boundary_member_is_accepted(self) -> None:
+        expected = result(
+            "SELECT subject_id, admission_count FROM patient_counts",
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (40310, 2)),
+        )
+        actual = result(
+            "SELECT subject_id, admission_count FROM patient_counts",
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (40503, 2)),
+        )
+
+        self.assertTrue(
+            tie_aware_top_n_match(actual, expected, rank_key=1)
+        )
+
+    def test_lower_boundary_measure_is_rejected(self) -> None:
+        expected = result(
+            "SELECT subject_id, admission_count FROM patient_counts",
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (40310, 2)),
+        )
+        actual = result(
+            "SELECT subject_id, admission_count FROM patient_counts",
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (40503, 1)),
+        )
+
+        self.assertFalse(
+            tie_aware_top_n_match(actual, expected, rank_key=1)
+        )
+
+    def test_fractional_integer_and_interval_days_are_compatible(self) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+            subunit_precision_required=False,
+        )
+
+        self.assertTrue(duration_values_compatible(8.8375, 9, contract))
+        self.assertTrue(
+            duration_values_compatible(
+                8.8375,
+                "8 days, 20:06:00",
+                contract,
+            )
+        )
+        self.assertTrue(
+            duration_values_compatible(
+                8.8375,
+                timedelta(days=8, hours=20, minutes=6),
+                contract,
+            )
+        )
+
+    def test_raw_timestamp_is_not_a_duration(self) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+        )
+
+        self.assertFalse(
+            duration_values_compatible(
+                8.8375,
+                "2164-11-01 17:15:00",
+                contract,
+            )
+        )
+
+    def test_duration_contract_accepts_integer_result_projection(self) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+        )
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT hadm_id, "
+                "date_diff('hour', admittime, dischtime) / 24.0 "
+                "AS duration_days FROM admissions"
+            ),
+            required_column_groups=(("hadm_id",), ("duration_days",)),
+            duration=contract,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("hadm_id", "duration_days"),
+            ((142345, 8.8375),),
+        )
+        actual_sql = (
+            "SELECT hadm_id, date_diff('day', admittime, dischtime) "
+            "AS duration_days FROM admissions"
+        )
+        actual = result(
+            actual_sql,
+            ("hadm_id", "duration_days"),
+            ((142345, 9),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_harmless_extra_columns_preserve_correctness(self) -> None:
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT hadm_id, admittime, dischtime, "
+                "date_diff('day', admittime, dischtime) "
+                "AS hospital_los_days FROM admissions"
+            ),
+            required_column_groups=(
+                ("hadm_id",),
+                ("admittime",),
+                ("dischtime",),
+                ("hospital_los_days", "los"),
+            ),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("hadm_id", "admittime", "dischtime", "hospital_los_days"),
+            ((142345, "2164-10-23 21:09:00", "2164-11-01 17:15:00", 9),),
+        )
+        actual_sql = (
+            "SELECT subject_id, hadm_id, admittime, dischtime, "
+            "date_diff('day', admittime, dischtime) AS los FROM admissions"
+        )
+        actual = result(
+            actual_sql,
+            ("subject_id", "hadm_id", "admittime", "dischtime", "los"),
+            ((
+                10006,
+                142345,
+                "2164-10-23 21:09:00",
+                "2164-11-01 17:15:00",
+                9,
+            ),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_extra_grouping_column_that_duplicates_rows_fails(self) -> None:
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT admission_type, COUNT(*) AS admission_count "
+                "FROM admissions GROUP BY admission_type"
+            ),
+            required_column_groups=(
+                ("admission_type",),
+                ("admission_count", "count"),
+            ),
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("admission_type", "admission_count"),
+            (("EMERGENCY", 17),),
+        )
+        actual_sql = (
+            "SELECT admission_type, insurance, COUNT(*) AS admission_count "
+            "FROM admissions GROUP BY admission_type, insurance"
+        )
+        actual = result(
+            actual_sql,
+            ("admission_type", "insurance", "admission_count"),
+            (("EMERGENCY", "Medicare", 10), ("EMERGENCY", "Private", 7)),
+        )
+
+        compatible, _ = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual.sql or ""),
+        )
+
+        self.assertFalse(compatible)
+
     def test_scalar_normalizes_numeric_types(self) -> None:
         evaluation_case = case(
             comparison_mode="scalar",
@@ -189,6 +440,7 @@ class ResultCompatibilityTest(unittest.TestCase):
                     expected_sql=expected_sql,
                     ordered=ordered,
                     limit=limit,
+                    projection_mode="exact",
                 )
                 expected = result(expected_sql, ("subject_id",), ((1,),))
                 actual = result(
@@ -511,6 +763,53 @@ class ResultCompatibilityTest(unittest.TestCase):
 
 
 class ScoringTest(unittest.TestCase):
+    def test_plausible_but_incomplete_year_question_separates_scores(
+        self,
+    ) -> None:
+        evaluation_case = case(
+            category="ambiguity",
+            family_id="from_2024",
+            should_clarify=True,
+            expected_mechanism="semantic-column",
+        )
+        evidence = ambiguity_evidence(
+            evaluation_case,
+            [{
+                "question": "Were patients born or did they die in 2112?",
+                "options": ["Born in 2112", "Died in 2112"],
+                "mechanism": "semantic-column",
+                "matched_intent": False,
+            }],
+            final_aligned=False,
+        )
+
+        self.assertTrue(evidence["plausibility"])
+        self.assertFalse(evidence["target_coverage"])
+        self.assertFalse(evidence["resolution"])
+
+    def test_long_title_question_is_not_plausible_for_common_grain(
+        self,
+    ) -> None:
+        evaluation_case = case(
+            category="ambiguity",
+            family_id="diagnoses",
+            should_clarify=True,
+            expected_mechanism="semantic-column",
+        )
+        evidence = ambiguity_evidence(
+            evaluation_case,
+            [{
+                "question": "Which diagnosis title?",
+                "options": ["Long title", "Short title"],
+                "mechanism": "semantic-column",
+                "matched_intent": False,
+            }],
+            final_aligned=False,
+        )
+
+        self.assertFalse(evidence["plausibility"])
+        self.assertFalse(evidence["target_coverage"])
+
     def setUp(self) -> None:
         admission_columns = (
             ColumnMetadata("subject_id", "BIGINT", "admissions"),
@@ -553,6 +852,35 @@ class ScoringTest(unittest.TestCase):
 
         self.assertEqual(0.0, score["correctness"])
         self.assertEqual(0.0, score["efficiency"])
+
+    def test_score_records_projection_diagnostics_separately(self) -> None:
+        evaluation_case = case()
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id",),
+            ((1,),),
+        )
+        actual = result(
+            "SELECT subject_id, admission_type FROM admissions",
+            ("subject_id", "admission_type"),
+            ((1, "EMERGENCY"),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            self.schema,
+            [],
+        )
+
+        self.assertEqual(1.0, score["correctness"])
+        self.assertTrue(score["comparison"]["semantic_compatible"])
+        self.assertEqual(0.5, score["comparison"]["projection_precision"])
+        self.assertEqual(
+            ["admission_type"],
+            score["comparison"]["extra_columns"],
+        )
 
     def test_zero_join_reference_penalizes_redundant_join(self) -> None:
         evaluation_case = case()
@@ -773,6 +1101,7 @@ class ScoringTest(unittest.TestCase):
     ) -> None:
         evaluation_case = case(
             category="ambiguity",
+            family_id="from_2024",
             should_clarify=True,
             expected_mechanism="semantic-column",
         )
@@ -788,6 +1117,8 @@ class ScoringTest(unittest.TestCase):
         )
         clarification = {
             "mechanism": "semantic-column",
+            "question": "Were patients born or admitted in 2112?",
+            "options": ["Born in 2112", "Admitted in 2112"],
             "matched_intent": True,
             "compliance_passed": True,
         }
@@ -809,6 +1140,8 @@ class ScoringTest(unittest.TestCase):
                 "detection": True,
                 "mechanism": "semantic-column",
                 "mechanism_correct": True,
+                "plausibility": True,
+                "target_coverage": True,
                 "option_match": True,
                 "resolution": True,
                 "compliance": True,
@@ -979,6 +1312,8 @@ class AggregateScoringTest(unittest.TestCase):
                 "detection": True,
                 "mechanism": "semantic-column" if expected else "none",
                 "mechanism_correct": True,
+                "plausibility": True,
+                "target_coverage": True,
                 "option_match": True,
                 "resolution": True,
                 "compliance": True,

@@ -41,6 +41,8 @@ from benchmark_v3.run_evaluation import (
 from benchmark_v3.run_evaluation import BENCHMARK_DIR, DEFAULT_OUTPUT, DEFAULT_SUITE, PROJECT_ROOT, SRC
 from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
 from benchmark_v3.observability import BudgetStop, InfrastructureStop
+from benchmark_v3.rescore_campaign import rescore_campaign
+from tests.benchmark_v3.test_aggregation import write_campaign
 
 
 SUITE_PATH = (
@@ -52,6 +54,64 @@ SUITE_PATH = (
 
 
 class CampaignTest(unittest.TestCase):
+    def test_rescore_writes_new_artifact_without_mutating_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_campaign(directory)
+            suite = load_suite(DEFAULT_SUITE)
+            references = {
+                case.id: {
+                    "sql": case.expected_sql,
+                    "columns": [],
+                    "rows": [],
+                    "truncated": False,
+                    "join_count": 0,
+                    "comparison_mode": case.comparison_mode,
+                }
+                for case in suite.query_cases
+                if case.expected_sql
+            }
+            (directory / "references-fixture.json").write_text(
+                json.dumps({
+                    "suite_hash": suite.sha256,
+                    "schema": {
+                        "database_path": None,
+                        "source_names": [],
+                        "table_names": [],
+                        "columns": [],
+                        "row_count": None,
+                        "tables": [],
+                        "relationships": [],
+                        "discovery_complete": True,
+                        "discovery_notes": [],
+                    },
+                    "references": references,
+                }),
+                encoding="utf-8",
+            )
+            before = {
+                path.relative_to(directory).as_posix(): path.read_bytes()
+                for path in directory.rglob("*")
+                if path.is_file()
+            }
+
+            output = rescore_campaign(directory)
+
+            after = {
+                path.relative_to(directory).as_posix(): path.read_bytes()
+                for path in directory.rglob("*")
+                if path.is_file() and path != output
+            }
+            self.assertEqual(before, after)
+            self.assertEqual("counterfactual-rescore.json", output.name)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "dbwhisperer_v3_counterfactual_rescore",
+                payload["report_type"],
+            )
+            self.assertIn("source_campaign_hash", payload)
+            self.assertIn("scorer_version", payload)
+
     def _suite(self, *, repetitions: int = 1) -> EvaluationSuite:
         case = EvaluationCase(
             id="case", family_id="family", kind="query", category="correctness",

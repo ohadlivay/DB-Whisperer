@@ -9,7 +9,14 @@ import duckdb
 
 from benchmark_v3.contracts import load_suite
 from benchmark_v3.observability import CampaignObserver
-from benchmark_v3.run_evaluation import ARMS, CampaignDataset, WorkItem, build_schedule, build_services, run_cell
+from benchmark_v3.run_evaluation import (
+    ARMS,
+    CampaignDataset,
+    WorkItem,
+    build_schedule,
+    build_services,
+    run_cell,
+)
 from benchmark_v3.contracts import EvaluationCase
 from db_whisperer.contracts import AmbiguityDecision, ComponentState, QueryCandidate, QueryResult, SchemaMetadata
 from db_whisperer.querier import QueryService
@@ -24,6 +31,106 @@ SUITE_PATH = (
 
 
 class RunnerTest(unittest.TestCase):
+    def test_unnecessary_clarification_preserves_preclarification_result(
+        self,
+    ) -> None:
+        case = EvaluationCase(
+            id="control",
+            family_id="control",
+            kind="query",
+            category="control",
+            question="Explicit request",
+        )
+        accepted = QueryResult(
+            ComponentState.ACCEPTED,
+            "candidate",
+            sql="SELECT 1",
+            columns=("value",),
+            rows=((1,),),
+        )
+        pending = SimpleNamespace(
+            state=ComponentState.PENDING,
+            complete=False,
+            query_result=None,
+            candidates=(
+                QueryCandidate(1, ComponentState.ACCEPTED, "SELECT 1"),
+                QueryCandidate(2, ComponentState.ACCEPTED, "SELECT 1"),
+                QueryCandidate(3, ComponentState.ACCEPTED, "SELECT 1"),
+            ),
+            candidate_results=(accepted, accepted, accepted),
+            ambiguity=AmbiguityDecision(
+                state=ComponentState.ACCEPTED,
+                passed=False,
+                question="Which interpretation?",
+                options=("First", "Second"),
+                mechanism="semantic-column",
+            ),
+        )
+
+        record = run_cell(
+            WorkItem(1, case.id, case.family_id, case.category, "full"),
+            case,
+            CampaignDataset(SchemaMetadata(), "dataset", {}, {}),
+            SimpleNamespace(),
+            {"full": SimpleNamespace(submit_query=lambda **kwargs: pending)},
+            "offline",
+            "model",
+        )
+
+        self.assertEqual(
+            "unnecessary_clarification",
+            record["terminal"]["category"],
+        )
+        self.assertEqual(
+            "accepted",
+            record["best_preclarification_result"]["state"],
+        )
+
+    def test_one_of_three_successes_is_candidate_quorum_failure(self) -> None:
+        case = EvaluationCase(
+            id="query",
+            family_id="query",
+            kind="query",
+            category="correctness",
+            question="query",
+        )
+        candidates = tuple(
+            QueryCandidate(index, ComponentState.ACCEPTED, f"SELECT {index}")
+            for index in range(1, 4)
+        )
+        candidate_results = (
+            QueryResult(ComponentState.ACCEPTED, "ok", sql="SELECT 1"),
+            QueryResult(ComponentState.FAILED, "execution failed"),
+            QueryResult(ComponentState.FAILED, "execution failed"),
+        )
+        failed = SimpleNamespace(
+            state=ComponentState.FAILED,
+            complete=False,
+            query_result=None,
+            candidates=candidates,
+            candidate_results=candidate_results,
+            ambiguity=None,
+        )
+
+        record = run_cell(
+            WorkItem(1, case.id, case.family_id, case.category, "full"),
+            case,
+            CampaignDataset(SchemaMetadata(), "dataset", {}, {}),
+            SimpleNamespace(),
+            {"full": SimpleNamespace(submit_query=lambda **kwargs: failed)},
+            "offline",
+            "model",
+        )
+
+        self.assertEqual(
+            "candidate_quorum_failure",
+            record["terminal"]["category"],
+        )
+        self.assertEqual(
+            1,
+            record["terminal"]["successful_candidates"],
+        )
+
     def test_arm_configuration_matches_v3_funnel_and_k_three(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             observer = CampaignObserver(Path(temporary), (), 3.75)

@@ -26,6 +26,19 @@ Validate without network access:
 python -m benchmark_v3.validate_suite
 ```
 
+Saved campaign evidence can be rescored with the current deterministic scorer
+without changing any original checkpoint, run report, campaign file, or
+aggregate:
+
+```powershell
+python -m benchmark_v3.rescore_campaign benchmark_v3\results\runs\<campaign-id>
+```
+
+This writes `counterfactual-rescore.json`. It reuses saved SQL, results, and
+clarification transcripts, so it can quantify scoring-policy changes but
+cannot measure the new semantic detector or any changed model-facing prompt.
+Only a new live campaign measures those system changes.
+
 Run a live campaign only with an explicit key and budget approval:
 
 ```powershell

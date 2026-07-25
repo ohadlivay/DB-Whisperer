@@ -52,6 +52,33 @@ EXPECTED_CASE_IDS = {
 
 
 class EvaluationV3ContractTest(unittest.TestCase):
+    def test_duration_contract_loads_supported_representations(self) -> None:
+        case = next(
+            case
+            for case in load_suite(DEFAULT_SUITE).cases
+            if case.id == "admission_duration_null_safe"
+        )
+
+        self.assertEqual("day", case.reference.duration.unit)
+        self.assertEqual(
+            ("integer", "decimal", "interval"),
+            case.reference.duration.representations,
+        )
+        self.assertFalse(
+            case.reference.duration.subunit_precision_required
+        )
+
+    def test_rank_contract_does_not_require_numeric_rank_column(self) -> None:
+        case = next(
+            case
+            for case in load_suite(DEFAULT_SUITE).cases
+            if case.id == "patients_with_multiple_admissions_ranked"
+        )
+
+        self.assertEqual("ranked", case.reference.order_semantics)
+        self.assertFalse(case.reference.rank_column_required)
+        self.assertTrue(case.reference.tie_aware)
+
     def test_official_suite_has_broad_v3_coverage(self) -> None:
         suite = load_suite(DEFAULT_SUITE)
         self.assertEqual(24, len(suite.cases))

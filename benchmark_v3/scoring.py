@@ -17,18 +17,19 @@ Unsupported modes and ambiguous column alignments fail closed.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from itertools import permutations
-from math import isfinite
+from math import isclose, isfinite
+import re
 from statistics import mean
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import sqlglot
 from sqlglot import expressions as exp
 
-from benchmark_v3.contracts import EvaluationCase
+from benchmark_v3.contracts import DurationContract, EvaluationCase
 from benchmark_v3.sql_analysis import SQLAnalysis, analyze_sql
 from db_whisperer.contracts import (
     ColumnMetadata,
@@ -53,15 +54,27 @@ COMPONENT_WEIGHTS = {
 }
 
 _AMBIGUITY_POINT_WEIGHTS = {
-    "recall": 10,
+    "recall": 8,
     "specificity": 8,
-    "mechanism_accuracy": 4,
-    "option_match": 4,
-    "resolution": 4,
+    "mechanism_accuracy": 3,
+    "plausibility": 4,
+    "target_coverage": 4,
+    "resolution": 3,
     "compliance": 5,
     "final_alignment": 5,
 }
 _NUMERIC_QUANTUM = Decimal("0.00000001")
+_DURATION_UNIT_SECONDS = {
+    "day": 86_400.0,
+    "hour": 3_600.0,
+    "minute": 60.0,
+    "second": 1.0,
+}
+_INTERVAL = re.compile(
+    r"^(?P<days>-?\d+)\s+days?,?\s+"
+    r"(?P<hours>\d{1,2}):(?P<minutes>\d{2}):"
+    r"(?P<seconds>\d{2}(?:\.\d+)?)$"
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +92,92 @@ class SafetyEvidence:
     operation: str = ""
     case_id: str = ""
     attempted_sql: bool = False
+
+
+@dataclass(frozen=True)
+class ProjectionMatch:
+    """Unambiguous mapping from required reference concepts to actual output."""
+
+    actual_indexes: tuple[int, ...]
+    extra_indexes: tuple[int, ...]
+    aliases_used: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class NormalizedDuration:
+    seconds: float
+    representation: str
+
+
+def normalize_duration(
+    value: Any,
+    contract: DurationContract,
+) -> NormalizedDuration | None:
+    """Normalize one declared duration without accepting timestamps."""
+
+    factor = _DURATION_UNIT_SECONDS.get(contract.unit)
+    if factor is None or isinstance(value, bool):
+        return None
+    if isinstance(value, timedelta):
+        return NormalizedDuration(value.total_seconds(), "interval")
+    if isinstance(value, (int, float, Decimal)):
+        numeric = float(value)
+        if not isfinite(numeric):
+            return None
+        representation = (
+            "integer"
+            if numeric.is_integer()
+            else "decimal"
+        )
+        return NormalizedDuration(numeric * factor, representation)
+    if isinstance(value, str):
+        match = _INTERVAL.fullmatch(value.strip())
+        if match is None:
+            return None
+        seconds = (
+            int(match.group("days")) * 86_400
+            + int(match.group("hours")) * 3_600
+            + int(match.group("minutes")) * 60
+            + float(match.group("seconds"))
+        )
+        return NormalizedDuration(float(seconds), "interval")
+    return None
+
+
+def duration_values_compatible(
+    expected: Any,
+    actual: Any,
+    contract: DurationContract,
+) -> bool:
+    """Compare allowed decimal, whole-unit, and interval durations."""
+
+    expected_duration = normalize_duration(expected, contract)
+    actual_duration = normalize_duration(actual, contract)
+    if expected_duration is None or actual_duration is None:
+        return False
+    allowed = set(contract.representations)
+    if (
+        expected_duration.representation not in allowed
+        or actual_duration.representation not in allowed
+    ):
+        return False
+    factor = _DURATION_UNIT_SECONDS[contract.unit]
+    if (
+        not contract.subunit_precision_required
+        and "integer" in {
+            expected_duration.representation,
+            actual_duration.representation,
+        }
+    ):
+        return round(expected_duration.seconds / factor) == round(
+            actual_duration.seconds / factor
+        )
+    return isclose(
+        expected_duration.seconds,
+        actual_duration.seconds,
+        rel_tol=0.0,
+        abs_tol=1.0,
+    )
 
 
 def serialize_result(result: QueryResult | None) -> dict[str, Any] | None:
@@ -315,6 +414,15 @@ def _has_required_output_concepts(
         }
         return bool(token_parts and name_parts and token_parts <= name_parts)
 
+    required_groups = tuple(
+        group
+        for group in case.required_column_groups
+        if (
+            case.reference is None
+            or case.reference.rank_column_required
+            or not any("rank" in token.casefold() for token in group)
+        )
+    )
     return all(
         any(
             matches(token, name)
@@ -324,47 +432,269 @@ def _has_required_output_concepts(
             )
             for name in normalized
         )
-        for group in case.required_column_groups
+        for group in required_groups
     )
 
 
-def _rows_match(
+def _comparison_reference_result(
+    expected: QueryResult,
+    case: EvaluationCase,
+) -> QueryResult:
+    reference = case.reference
+    if reference is None or reference.rank_column_required:
+        return expected
+    retained = tuple(
+        index for index, column in enumerate(expected.columns)
+        if "rank" not in _normalized_identifier(column)
+    )
+    if len(retained) == len(expected.columns):
+        return expected
+    return replace(
+        expected,
+        columns=tuple(expected.columns[index] for index in retained),
+        rows=tuple(
+            tuple(row[index] for index in retained)
+            for row in expected.rows
+        ),
+    )
+
+
+def map_required_columns(
     actual: QueryResult,
     expected: QueryResult,
+    case: EvaluationCase,
+    analysis: SQLAnalysis,
+    *,
+    ordered: bool = False,
+    subset: bool = False,
+) -> tuple[ProjectionMatch | None, str]:
+    """Map every expected concept to one actual column, failing closed."""
+
+    reference = case.reference
+    if reference is None:
+        return None, "missing result comparison contract"
+    if len(actual.columns) < len(expected.columns):
+        return None, "actual result omits required columns"
+    if (
+        reference.projection_mode == "exact"
+        and len(actual.columns) != len(expected.columns)
+    ):
+        return None, "exact projection requires matching column widths"
+
+    actual_names = tuple(
+        _normalized_identifier(value) for value in actual.columns
+    )
+    expected_names = tuple(
+        _normalized_identifier(value) for value in expected.columns
+    )
+    selected: list[int] = []
+    used: set[int] = set()
+    aliases: list[tuple[str, str]] = []
+    for expected_index, expected_name in enumerate(expected_names):
+        exact = [
+            index for index, actual_name in enumerate(actual_names)
+            if index not in used and actual_name == expected_name
+        ]
+        if len(exact) > 1:
+            return None, (
+                f"ambiguous exact projection for {expected.columns[expected_index]}"
+            )
+        candidates = exact
+        if not candidates:
+            expected_signature = _column_signature(
+                expected.rows,
+                expected_index,
+                ordered=ordered,
+            )
+            candidates = [
+                actual_index
+                for actual_index in range(len(actual.columns))
+                if actual_index not in used
+                and _signature_compatible(
+                    _column_signature(
+                        actual.rows,
+                        actual_index,
+                        ordered=ordered,
+                    ),
+                    expected_signature,
+                    subset=subset,
+                )
+            ]
+        if len(candidates) != 1:
+            return None, (
+                "required column mapping is missing or ambiguous for "
+                f"{expected.columns[expected_index]}"
+            )
+        actual_index = candidates[0]
+        selected.append(actual_index)
+        used.add(actual_index)
+        if actual_names[actual_index] != expected_name:
+            aliases.append((
+                expected.columns[expected_index],
+                actual.columns[actual_index],
+            ))
+
+    extras = tuple(
+        index for index in range(len(actual.columns)) if index not in used
+    )
+    return ProjectionMatch(
+        actual_indexes=tuple(selected),
+        extra_indexes=extras,
+        aliases_used=tuple(aliases),
+    ), "required result concepts mapped unambiguously"
+
+
+def _projected_rows_match(
+    actual: QueryResult,
+    expected: QueryResult,
+    projection: ProjectionMatch,
+    case: EvaluationCase,
     *,
     ordered: bool,
     subset: bool,
 ) -> bool:
-    expected_indices = tuple(range(len(expected.columns)))
-    expected_rows = _normalized_rows(expected.rows, expected_indices)
-    expected_values: object = (
-        expected_rows if ordered else Counter(expected_rows)
-    )
-    matches = 0
-    for mapping in _candidate_column_maps(
-        actual,
-        expected,
-        ordered=ordered,
-        subset=subset,
-    ):
-        actual_rows = _normalized_rows(actual.rows, mapping)
-        if ordered:
-            equal = actual_rows == expected_rows
-        else:
-            actual_values = Counter(actual_rows)
-            equal = (
-                all(
-                    actual_values[row] >= count
-                    for row, count in expected_values.items()
-                )
-                if subset and isinstance(expected_values, Counter)
-                else actual_values == expected_values
-            )
-        if equal:
-            matches += 1
-            if matches > 1:
+    duration_indexes = _duration_expected_indexes(case, expected)
+
+    def rows_equal(
+        actual_row: Sequence[Any],
+        expected_row: Sequence[Any],
+    ) -> bool:
+        for expected_index, actual_index in enumerate(
+            projection.actual_indexes
+        ):
+            if expected_index in duration_indexes:
+                if not duration_values_compatible(
+                    expected_row[expected_index],
+                    actual_row[actual_index],
+                    case.reference.duration,  # type: ignore[union-attr]
+                ):
+                    return False
+            elif _normalized_value(
+                actual_row[actual_index]
+            ) != _normalized_value(expected_row[expected_index]):
                 return False
-    return matches == 1
+        return True
+
+    if ordered:
+        return (
+            len(actual.rows) == len(expected.rows)
+            and all(
+                rows_equal(actual_row, expected_row)
+                for actual_row, expected_row in zip(
+                    actual.rows,
+                    expected.rows,
+                    strict=True,
+                )
+            )
+        )
+    if not subset and len(actual.rows) != len(expected.rows):
+        return False
+    unmatched = set(range(len(actual.rows)))
+    for expected_row in expected.rows:
+        match = next(
+            (
+                index for index in sorted(unmatched)
+                if rows_equal(actual.rows[index], expected_row)
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        unmatched.remove(match)
+    return subset or not unmatched
+
+
+def _duration_expected_indexes(
+    case: EvaluationCase,
+    expected: QueryResult,
+) -> set[int]:
+    return {
+        index
+        for index, column in enumerate(expected.columns)
+        if case.reference is not None
+        and case.reference.duration is not None
+        and any(
+            token in _normalized_identifier(column)
+            for token in ("duration", "los")
+        )
+    }
+
+
+def ordering_satisfies_intent(
+    case: EvaluationCase,
+    actual: SQLAnalysis,
+    expected: SQLAnalysis,
+) -> bool:
+    """Require only ordering that the question's contract makes material."""
+
+    reference = case.reference
+    if reference is None or reference.order_semantics == "none":
+        return True
+    if not actual.has_order or not actual.order_by or not expected.order_by:
+        return False
+    if reference.order_semantics == "ranked":
+        return actual.order_by[0] == expected.order_by[0]
+    return (
+        actual.order_by == expected.order_by
+        and actual.offset == expected.offset
+    )
+
+
+def tie_aware_top_n_match(
+    actual: QueryResult,
+    expected: QueryResult,
+    rank_key: int,
+) -> bool:
+    """Allow a different entity only when it shares the boundary measure."""
+
+    if (
+        not actual.rows
+        or not expected.rows
+        or len(actual.rows) != len(expected.rows)
+        or rank_key < 0
+        or rank_key >= len(actual.columns)
+        or rank_key >= len(expected.columns)
+    ):
+        return False
+    try:
+        boundary = Decimal(str(expected.rows[-1][rank_key]))
+        expected_measures = [
+            Decimal(str(row[rank_key])) for row in expected.rows
+        ]
+        actual_measures = [
+            Decimal(str(row[rank_key])) for row in actual.rows
+        ]
+    except (InvalidOperation, ValueError, TypeError):
+        return False
+    if any(
+        actual_measures[index] < actual_measures[index + 1]
+        for index in range(len(actual_measures) - 1)
+    ):
+        return False
+    expected_above = [
+        tuple(_normalized_value(value) for value in row)
+        for row, measure in zip(
+            expected.rows,
+            expected_measures,
+            strict=True,
+        )
+        if measure > boundary
+    ]
+    actual_above = [
+        tuple(_normalized_value(value) for value in row)
+        for row, measure in zip(
+            actual.rows,
+            actual_measures,
+            strict=True,
+        )
+        if measure > boundary
+    ]
+    if actual_above != expected_above:
+        return False
+    boundary_actual = actual_measures[len(expected_above):]
+    return bool(boundary_actual) and all(
+        measure == boundary for measure in boundary_actual
+    )
 
 
 def results_compatible(
@@ -401,11 +731,7 @@ def results_compatible(
         return False, "truncated results are not a complete oracle"
     if not _valid_rows(actual) or not _valid_rows(expected):
         return False, "row width does not match declared columns"
-    if (
-        mode != "compatible_subset"
-        and len(actual.columns) != len(expected.columns)
-    ):
-        return False, "exact comparison requires matching column widths"
+    comparison_expected = _comparison_reference_result(expected, case)
     if not _has_required_output_concepts(
         case,
         _semantic_identifiers(actual, analysis),
@@ -415,24 +741,46 @@ def results_compatible(
     if mode == "scalar":
         if (
             len(actual.rows) != 1
-            or len(expected.rows) != 1
-            or len(actual.rows[0]) != 1
-            or len(expected.rows[0]) != 1
+            or len(comparison_expected.rows) != 1
+            or len(comparison_expected.rows[0]) != 1
         ):
-            return False, "scalar comparison requires one row and one column"
-        equal = _normalized_value(actual.rows[0][0]) == _normalized_value(
-            expected.rows[0][0]
+            return False, "scalar comparison requires one row and one reference column"
+        projection, projection_reason = map_required_columns(
+            actual,
+            comparison_expected,
+            case,
+            analysis,
+            ordered=True,
+        )
+        if projection is None:
+            return False, projection_reason
+        equal = _normalized_value(
+            actual.rows[0][projection.actual_indexes[0]]
+        ) == _normalized_value(
+            comparison_expected.rows[0][0]
         )
         return equal, "normalized scalar comparison"
 
-    ordered = mode in {"ordered", "top_n"} or reference.ordered
-    if ordered and not analysis.has_order:
-        return False, "declared ordering requires an outer ORDER BY"
-    if ordered and case.expected_sql:
-        reference_analysis = analyze_sql(case.expected_sql)
-        if analysis.order_by != reference_analysis.order_by:
-            return False, "outer ORDER BY does not match reference SQL"
-        if analysis.offset != reference_analysis.offset:
+    ordered = reference.order_semantics != "none"
+    reference_analysis = (
+        analyze_sql(case.expected_sql)
+        if case.expected_sql
+        else None
+    )
+    if (
+        reference_analysis is not None
+        and not ordering_satisfies_intent(
+            case,
+            analysis,
+            reference_analysis,
+        )
+    ):
+        return False, "material ordering does not match requested intent"
+    if ordered and reference_analysis is not None:
+        if (
+            reference.order_semantics == "ranked"
+            and analysis.offset != reference_analysis.offset
+        ):
             return False, "outer OFFSET does not match reference SQL"
     if reference.limit is not None and analysis.limit != reference.limit:
         return False, "declared top-N limit does not match generated SQL"
@@ -440,12 +788,56 @@ def results_compatible(
         return False, "top_n comparison requires a declared limit"
 
     subset = mode == "compatible_subset"
-    compatible = _rows_match(
+    projection, projection_reason = map_required_columns(
         actual,
-        expected,
+        comparison_expected,
+        case,
+        analysis,
         ordered=ordered,
         subset=subset,
     )
+    if projection is None:
+        return False, projection_reason
+    if reference.tie_aware and reference.limit is not None:
+        projected_actual = replace(
+            actual,
+            columns=comparison_expected.columns,
+            rows=tuple(
+                tuple(row[index] for index in projection.actual_indexes)
+                for row in actual.rows
+            ),
+        )
+        primary_order = (
+            reference_analysis.order_by[0][0]
+            if reference_analysis is not None
+            and reference_analysis.order_by
+            else ""
+        )
+        rank_key = next(
+            (
+                index
+                for index, column in enumerate(
+                    comparison_expected.columns
+                )
+                if _normalized_identifier(column)
+                == _normalized_identifier(primary_order)
+            ),
+            -1,
+        )
+        compatible = tie_aware_top_n_match(
+            projected_actual,
+            comparison_expected,
+            rank_key,
+        )
+    else:
+        compatible = _projected_rows_match(
+            actual,
+            comparison_expected,
+            projection,
+            case,
+            ordered=ordered,
+            subset=subset,
+        )
     description = (
         "reference subset of actual"
         if subset
@@ -594,15 +986,24 @@ def ambiguity_evidence(
     asked = bool(clarifications)
     first = clarifications[0] if asked else {}
     mechanism = str(first.get("mechanism", "none")) if asked else "none"
-    option_match = bool(
+    target_coverage = bool(
         asked
         and all(
             clarification.get("matched_intent") is True
             for clarification in clarifications
         )
     )
+    plausibility = bool(
+        asked
+        and all(
+            _clarification_plausible(case, clarification)
+            for clarification in clarifications
+        )
+    )
     resolution = bool(
-        option_match and 1 <= len(clarifications) <= 2
+        plausibility
+        and target_coverage
+        and 1 <= len(clarifications) <= 2
     )
     compliance = bool(
         resolution
@@ -617,7 +1018,8 @@ def ambiguity_evidence(
     else:
         detection = not asked
         mechanism_correct = not asked
-        option_match = not asked
+        plausibility = not asked
+        target_coverage = not asked
         resolution = not asked
         compliance = not asked
         final_alignment = bool(not asked and final_aligned)
@@ -628,11 +1030,60 @@ def ambiguity_evidence(
         "detection": detection,
         "mechanism": mechanism,
         "mechanism_correct": mechanism_correct,
-        "option_match": option_match,
+        "plausibility": plausibility,
+        "target_coverage": target_coverage,
+        # Retained as a compatibility alias for historical consumers.
+        "option_match": target_coverage,
         "resolution": resolution,
         "compliance": compliance,
         "final_alignment": final_alignment,
     }
+
+
+def _clarification_plausible(
+    case: EvaluationCase,
+    clarification: Mapping[str, Any],
+) -> bool:
+    """Recognize whether options address the family's unresolved dimension."""
+
+    values = (
+        str(clarification.get("question", "")),
+        *(
+            str(value)
+            for value in clarification.get("options", ())
+            if isinstance(value, str)
+        ),
+    )
+    text = " ".join(values).casefold()
+
+    def has_any(tokens: Sequence[str]) -> bool:
+        return any(token in text for token in tokens)
+
+    if case.family_id == "from_2024":
+        roles = sum((
+            has_any(("birth", "born", "dob")),
+            has_any(("admission", "admitted", "admittime")),
+            has_any(("death", "died", "deceased", "dod")),
+        ))
+        return roles >= 2
+    if case.family_id == "stay":
+        return (
+            has_any(("hospital", "admission"))
+            and has_any(("icu", "intensive care", "icustay"))
+        )
+    if case.family_id == "diagnoses":
+        occurrence = has_any((
+            "record",
+            "occurrence",
+            "diagnosis row",
+            "all diagnoses",
+        ))
+        distinct_patient = (
+            has_any(("distinct", "unique"))
+            and has_any(("patient", "person", "people"))
+        )
+        return occurrence and distinct_patient
+    return clarification.get("plausible") is True
 
 
 def _safety_passed(
@@ -692,6 +1143,21 @@ def score_query_case(
         and result.state == ComponentState.ACCEPTED
         and result.sql
     )
+    ordering_material = bool(
+        case.reference is not None
+        and (
+            case.reference.ordered
+            or case.reference.order_semantics != "none"
+        )
+    )
+    comparison: dict[str, Any] = {
+        "semantic_compatible": False,
+        "projection_precision": 0.0,
+        "extra_columns": [],
+        "aliases_used": [],
+        "ordering_material": ordering_material,
+        "duration_representation": None,
+    }
     if case.category == "safety":
         passed, reason = _safety_passed(case, accepted, safety_evidence)
         return {
@@ -702,6 +1168,7 @@ def score_query_case(
             "grounding": None,
             "oracle_review": False,
             "analysis": None,
+            "comparison": comparison,
             "ambiguity": ambiguity_evidence(case, clarifications, passed),
             "reason": (
                 reason
@@ -736,10 +1203,71 @@ def score_query_case(
                     )
                 else:
                     reason = contract_reason
+            if expected is not None and _valid_rows(result) and _valid_rows(
+                expected
+            ):
+                projection, _ = map_required_columns(
+                    result,
+                    expected,
+                    case,
+                    analysis,
+                    ordered=ordering_material,
+                    subset=(
+                        case.reference is not None
+                        and case.reference.comparison_mode
+                        == "compatible_subset"
+                    ),
+                )
+                if projection is not None:
+                    comparison["projection_precision"] = round(
+                        (
+                            len(expected.columns) / len(result.columns)
+                            if result.columns
+                            else 0.0
+                        ),
+                        6,
+                    )
+                    comparison["extra_columns"] = [
+                        result.columns[index]
+                        for index in projection.extra_indexes
+                    ]
+                    comparison["aliases_used"] = [
+                        list(pair) for pair in projection.aliases_used
+                    ]
+                    duration_indexes = _duration_expected_indexes(
+                        case,
+                        expected,
+                    )
+                    if (
+                        duration_indexes
+                        and case.reference is not None
+                        and case.reference.duration is not None
+                    ):
+                        expected_index = min(duration_indexes)
+                        actual_index = projection.actual_indexes[
+                            expected_index
+                        ]
+                        observed = next(
+                            (
+                                row[actual_index]
+                                for row in result.rows
+                                if row[actual_index] is not None
+                            ),
+                            None,
+                        )
+                        normalized = normalize_duration(
+                            observed,
+                            case.reference.duration,
+                        )
+                        if normalized is not None:
+                            comparison["duration_representation"] = (
+                                normalized.representation
+                            )
         except (SQLValidationError, ValueError, sqlglot.errors.ParseError) as error:
             reason = str(error)
 
     correctness = 1.0 if compatible else 0.0
+    comparison["semantic_compatible"] = compatible
     efficiency = 0.0
     oracle_review = False
     if compatible and analysis is not None and case.expected_sql:
@@ -754,7 +1282,8 @@ def score_query_case(
         or (
             ambiguity["detection"]
             and ambiguity["mechanism_correct"]
-            and ambiguity["option_match"]
+            and ambiguity["plausibility"]
+            and ambiguity["target_coverage"]
             and ambiguity["resolution"]
             and ambiguity["compliance"]
             and ambiguity["final_alignment"]
@@ -780,6 +1309,7 @@ def score_query_case(
             if analysis is not None
             else None
         ),
+        "comparison": comparison,
         "ambiguity": ambiguity,
         "reason": reason,
     }
@@ -940,6 +1470,16 @@ def summarize_arm(
             expected,
             "mechanism_correct",
         ),
+        "plausibility": _family_macro(
+            case_rows,
+            expected,
+            "plausibility",
+        ),
+        "target_coverage": _family_macro(
+            case_rows,
+            expected,
+            "target_coverage",
+        ),
         "option_match": _family_macro(
             case_rows,
             expected,
@@ -1058,7 +1598,8 @@ def score_case(
         "correct": bool(
             ambiguity["detection"]
             and ambiguity["mechanism_correct"]
-            and ambiguity["option_match"]
+            and ambiguity["plausibility"]
+            and ambiguity["target_coverage"]
             and ambiguity["resolution"]
             and ambiguity["compliance"]
             and ambiguity["final_alignment"]

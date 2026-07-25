@@ -28,6 +28,8 @@ def _score(*, passed: bool, recall: bool, oracle: bool = False) -> dict[str, obj
             "applicable": True,
             "detection": recall,
             "mechanism_correct": recall,
+            "plausibility": recall,
+            "target_coverage": recall,
             "option_match": recall,
             "resolution": recall,
             "compliance": recall,
@@ -61,6 +63,21 @@ def _report(repetition: int, *, macro_fixture: bool = False) -> dict[str, object
             records.append({
                 "run": repetition, "case_id": case.id, "family_id": case.family_id,
                 "category": case.category, "arm": arm, "clarifications": [],
+                "terminal": {
+                    "category": "accepted",
+                    "generated_candidates": 1 if arm == "baseline" else 3,
+                    "executed_candidates": 1 if arm == "baseline" else 3,
+                    "successful_candidates": 1 if arm == "baseline" else 3,
+                    "messages": [],
+                },
+                "best_preclarification_result": {
+                    "state": "accepted",
+                    "message": "ok",
+                    "sql": "SELECT 1",
+                    "columns": [],
+                    "rows": [],
+                    "truncated": False,
+                },
                 "result": {"state": "accepted", "sql": "SELECT 1", "columns": [], "rows": []},
                 "score": score, "duration_seconds": 0.5,
                 "observation": {

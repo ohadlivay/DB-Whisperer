@@ -121,9 +121,22 @@ The admission-year control is revised from `Show patients admitted in the year
 2112.` to `Show patients admitted to the hospital in the year 2112.` so the
 control explicitly resolves hospital versus ICU admission.
 
-These are approved design changes pending implementation. The complete design,
+These scoring and evidence changes are implemented. The complete design,
 tests, replay requirements, and reporting implications are documented in
 `docs/superpowers/specs/2026-07-25-semantic-intent-and-evaluation-scoring-design.md`.
+
+### Frozen result versus counterfactual rescore
+
+The originally published campaign score remains frozen and is never rewritten.
+`python -m benchmark_v3.rescore_campaign <campaign-dir>` creates a separate
+`counterfactual-rescore.json` from the saved SQL, results, clarification
+transcripts, and frozen reference artifact. It records both the source
+campaign hash and current scorer hash.
+
+The counterfactual artifact answers how the saved outputs score under the
+revised deterministic rules. It does not claim that the updated semantic
+detector would have asked the same questions or produced the same SQL. A new
+live four-arm campaign is required to measure those production changes.
 
 ### Review before HTML publication
 

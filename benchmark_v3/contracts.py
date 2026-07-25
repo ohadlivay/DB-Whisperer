@@ -37,6 +37,10 @@ ALLOWED_COMPARISON_MODES = {
     "top_n",
     "compatible_subset",
 }
+PROJECTION_MODES = {"exact", "required_subset"}
+ORDER_SEMANTICS = {"none", "ranked", "chronological"}
+DURATION_REPRESENTATIONS = {"integer", "decimal", "interval"}
+DURATION_UNITS = {"day", "hour", "minute", "second"}
 REQUIRED_CAPABILITIES = {
     "scalar",
     "grouping",
@@ -83,12 +87,24 @@ EXPECTED_CASE_IDS = {
 
 
 @dataclass(frozen=True)
+class DurationContract:
+    unit: str
+    representations: tuple[str, ...]
+    subunit_precision_required: bool = False
+
+
+@dataclass(frozen=True)
 class ReferenceContract:
     comparison_mode: str
     required_filters: tuple[str, ...] = ()
     required_grouping: tuple[str, ...] = ()
     ordered: bool = False
     limit: int | None = None
+    projection_mode: str = "required_subset"
+    order_semantics: str = "none"
+    rank_column_required: bool = False
+    tie_aware: bool = False
+    duration: DurationContract | None = None
 
 
 @dataclass(frozen=True)
@@ -160,6 +176,19 @@ def _string_groups(values: Any) -> tuple[tuple[str, ...], ...]:
 def _load_reference(payload: Any) -> ReferenceContract | None:
     if payload is None:
         return None
+    raw_duration = payload.get("duration")
+    duration = None
+    if raw_duration is not None:
+        duration = DurationContract(
+            unit=str(raw_duration.get("unit", "")).strip(),
+            representations=tuple(
+                str(value).strip()
+                for value in raw_duration.get("representations", ())
+            ),
+            subunit_precision_required=bool(
+                raw_duration.get("subunit_precision_required", False)
+            ),
+        )
     return ReferenceContract(
         comparison_mode=str(payload.get("comparison_mode", "")).strip(),
         required_filters=tuple(
@@ -176,6 +205,17 @@ def _load_reference(payload: Any) -> ReferenceContract | None:
             if payload.get("limit") is not None
             else None
         ),
+        projection_mode=str(
+            payload.get("projection_mode", "required_subset")
+        ).strip(),
+        order_semantics=str(
+            payload.get("order_semantics", "none")
+        ).strip(),
+        rank_column_required=bool(
+            payload.get("rank_column_required", False)
+        ),
+        tie_aware=bool(payload.get("tie_aware", False)),
+        duration=duration,
     )
 
 
@@ -358,6 +398,32 @@ def validate_suite_shape(suite: EvaluationSuite) -> None:
                     errors.append(
                         f"{case.id}: unsupported reference comparison mode"
                     )
+                if case.reference.projection_mode not in PROJECTION_MODES:
+                    errors.append(
+                        f"{case.id}: unsupported projection mode"
+                    )
+                if case.reference.order_semantics not in ORDER_SEMANTICS:
+                    errors.append(
+                        f"{case.id}: unsupported order semantics"
+                    )
+                if case.reference.duration is not None:
+                    duration = case.reference.duration
+                    if duration.unit not in DURATION_UNITS:
+                        errors.append(
+                            f"{case.id}: unsupported duration unit"
+                        )
+                    if (
+                        not duration.representations
+                        or len(duration.representations)
+                        != len(set(duration.representations))
+                        or any(
+                            value not in DURATION_REPRESENTATIONS
+                            for value in duration.representations
+                        )
+                    ):
+                        errors.append(
+                            f"{case.id}: unsupported duration representations"
+                        )
         if case.should_clarify != case.ambiguous:
             errors.append(
                 f"{case.id}: ambiguous and should_clarify must agree"
