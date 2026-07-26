@@ -75,6 +75,7 @@ _INTERVAL = re.compile(
     r"(?P<hours>\d{1,2}):(?P<minutes>\d{2}):"
     r"(?P<seconds>\d{2}(?:\.\d+)?)$"
 )
+_DURATION_NAME_TOKENS = frozenset({"duration", "length", "los", "stay"})
 
 
 @dataclass(frozen=True)
@@ -169,9 +170,10 @@ def duration_values_compatible(
             actual_duration.representation,
         }
     ):
-        return round(expected_duration.seconds / factor) == round(
-            actual_duration.seconds / factor
-        )
+        return abs(
+            expected_duration.seconds / factor
+            - actual_duration.seconds / factor
+        ) < 1.0
     return isclose(
         expected_duration.seconds,
         actual_duration.seconds,
@@ -197,6 +199,34 @@ def serialize_result(result: QueryResult | None) -> dict[str, Any] | None:
 
 def _normalized_identifier(value: str) -> str:
     return value.strip().strip('"').casefold().rsplit(".", 1)[-1]
+
+
+def _duration_named_column(
+    result: QueryResult,
+    index: int,
+    contract: DurationContract,
+) -> bool:
+    name_parts = {
+        part
+        for part in _normalized_identifier(
+            result.columns[index]
+        ).replace("-", "_").split("_")
+        if part
+    }
+    if not name_parts.intersection(_DURATION_NAME_TOKENS):
+        return False
+    allowed = set(contract.representations)
+    normalized = [
+        normalize_duration(row[index], contract)
+        for row in result.rows
+    ]
+    return bool(
+        normalized
+        and all(
+            value is not None and value.representation in allowed
+            for value in normalized
+        )
+    )
 
 
 def _normalized_temporal_text(value: str) -> tuple[str, str] | None:
@@ -451,12 +481,53 @@ def _comparison_reference_result(
     case: EvaluationCase,
 ) -> QueryResult:
     reference = case.reference
-    if reference is None or reference.rank_column_required:
+    if reference is None:
         return expected
-    retained = tuple(
-        index for index, column in enumerate(expected.columns)
-        if "rank" not in _normalized_identifier(column)
+    expected_names = tuple(
+        _normalized_identifier(column) for column in expected.columns
     )
+
+    def matches(token: str, name: str) -> bool:
+        if token == name:
+            return True
+        token_parts = {
+            part
+            for part in token.replace("-", "_").replace(" ", "_").split("_")
+            if part
+        }
+        name_parts = {
+            part
+            for part in name.replace("-", "_").replace(" ", "_").split("_")
+            if part
+        }
+        return bool(token_parts and name_parts and token_parts <= name_parts)
+
+    retained_list: list[int] = []
+    for group in case.required_column_groups:
+        if (
+            not reference.rank_column_required
+            and any("rank" in token.casefold() for token in group)
+        ):
+            continue
+        candidates = [
+            index
+            for index, name in enumerate(expected_names)
+            if any(
+                matches(_normalized_identifier(token), name)
+                for token in group
+            )
+        ]
+        if len(candidates) == 1 and candidates[0] not in retained_list:
+            retained_list.append(candidates[0])
+    retained = tuple(retained_list)
+    if not retained:
+        retained = tuple(
+            index for index, column in enumerate(expected.columns)
+            if (
+                reference.rank_column_required
+                or "rank" not in _normalized_identifier(column)
+            )
+        )
     if len(retained) == len(expected.columns):
         return expected
     return replace(
@@ -516,7 +587,17 @@ def map_required_columns(
                 expected_index in duration_indexes
                 and reference.duration is not None
             ):
-                candidates = [
+                named_candidates = [
+                    actual_index
+                    for actual_index in range(len(actual.columns))
+                    if actual_index not in used
+                    and _duration_named_column(
+                        actual,
+                        actual_index,
+                        reference.duration,
+                    )
+                ]
+                candidates = named_candidates or [
                     actual_index
                     for actual_index in range(len(actual.columns))
                     if actual_index not in used
@@ -711,7 +792,17 @@ def ordering_satisfies_intent(
     if not actual.has_order or not actual.order_by or not expected.order_by:
         return False
     if reference.order_semantics == "ranked":
-        return actual.order_by[0] == expected.order_by[0]
+        actual_key, actual_direction = actual.order_by[0]
+        expected_key, expected_direction = expected.order_by[0]
+        if actual_direction != expected_direction:
+            return False
+        if actual_key == expected_key:
+            return True
+        expected_identifier = _normalized_identifier(expected_key)
+        return (
+            dict(actual.outer_alias_expressions).get(expected_identifier)
+            == actual_key
+        )
     return (
         actual.order_by == expected.order_by
         and actual.offset == expected.offset
@@ -767,7 +858,7 @@ def tie_aware_top_n_match(
         )
         if measure > boundary
     ]
-    if actual_above != expected_above:
+    if Counter(actual_above) != Counter(expected_above):
         return False
     boundary_actual = actual_measures[len(expected_above):]
     return bool(boundary_actual) and all(
@@ -1304,9 +1395,13 @@ def score_query_case(
             if expected is not None and _valid_rows(result) and _valid_rows(
                 expected
             ):
+                diagnostic_expected = _comparison_reference_result(
+                    expected,
+                    case,
+                )
                 projection, _ = map_required_columns(
                     result,
-                    expected,
+                    diagnostic_expected,
                     case,
                     analysis,
                     ordered=ordering_material,
@@ -1319,7 +1414,8 @@ def score_query_case(
                 if projection is not None:
                     comparison["projection_precision"] = round(
                         (
-                            len(expected.columns) / len(result.columns)
+                            len(diagnostic_expected.columns)
+                            / len(result.columns)
                             if result.columns
                             else 0.0
                         ),
@@ -1334,7 +1430,7 @@ def score_query_case(
                     ]
                     duration_indexes = _duration_expected_indexes(
                         case,
-                        expected,
+                        diagnostic_expected,
                     )
                     if (
                         duration_indexes

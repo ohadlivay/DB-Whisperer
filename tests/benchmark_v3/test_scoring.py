@@ -14,6 +14,7 @@ from benchmark_v3.scoring import (
     SafetyEvidence,
     ambiguity_evidence,
     duration_values_compatible,
+    map_required_columns,
     results_compatible,
     score_case,
     score_etl_manifest,
@@ -148,6 +149,50 @@ class ResultCompatibilityTest(unittest.TestCase):
 
         self.assertTrue(compatible, reason)
 
+    def test_ranked_order_accepts_aggregate_alias_as_primary_key(self) -> None:
+        evaluation_case = case(
+            comparison_mode="ordered",
+            expected_sql=(
+                "WITH patient_counts AS ("
+                "SELECT subject_id, COUNT(*) AS admission_count "
+                "FROM admissions GROUP BY subject_id"
+                ") SELECT subject_id, admission_count FROM patient_counts "
+                "ORDER BY admission_count DESC, subject_id LIMIT 3"
+            ),
+            required_column_groups=(
+                ("subject_id",),
+                ("admission_count",),
+            ),
+            ordered=True,
+            limit=3,
+            order_semantics="ranked",
+            tie_aware=True,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (30, 2)),
+        )
+        actual_sql = (
+            "SELECT subject_id, COUNT(hadm_id) AS admission_count "
+            "FROM admissions GROUP BY subject_id "
+            "ORDER BY admission_count DESC LIMIT 3"
+        )
+        actual = result(
+            actual_sql,
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (30, 2)),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+
+        self.assertTrue(compatible, reason)
+
     def test_tied_boundary_member_is_accepted(self) -> None:
         expected = result(
             "SELECT subject_id, admission_count FROM patient_counts",
@@ -158,6 +203,22 @@ class ResultCompatibilityTest(unittest.TestCase):
             "SELECT subject_id, admission_count FROM patient_counts",
             ("subject_id", "admission_count"),
             ((10, 4), (20, 3), (40503, 2)),
+        )
+
+        self.assertTrue(
+            tie_aware_top_n_match(actual, expected, rank_key=1)
+        )
+
+    def test_tied_rows_above_boundary_may_use_a_different_order(self) -> None:
+        expected = result(
+            "SELECT subject_id, admission_count FROM patient_counts",
+            ("subject_id", "admission_count"),
+            ((10, 4), (20, 3), (30, 3), (40, 2)),
+        )
+        actual = result(
+            "SELECT subject_id, admission_count FROM patient_counts",
+            ("subject_id", "admission_count"),
+            ((10, 4), (30, 3), (20, 3), (50, 2)),
         )
 
         self.assertTrue(
@@ -202,6 +263,17 @@ class ResultCompatibilityTest(unittest.TestCase):
                 contract,
             )
         )
+
+    def test_whole_day_boundary_count_is_compatible_without_subunit_precision(
+        self,
+    ) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+            subunit_precision_required=False,
+        )
+
+        self.assertTrue(duration_values_compatible(12.5, 13, contract))
 
     def test_raw_timestamp_is_not_a_duration(self) -> None:
         contract = DurationContract(
@@ -298,6 +370,167 @@ class ResultCompatibilityTest(unittest.TestCase):
                 "2164-10-23 21:09:00",
                 "2164-11-01 17:15:00",
                 timedelta(days=8, hours=20, minutes=6),
+            ),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_duration_maps_only_user_required_reference_concepts(self) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+        )
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT hadm_id, admittime, dischtime, "
+                "date_diff('hour', admittime, dischtime) / 24.0 "
+                "AS duration_days FROM admissions"
+            ),
+            required_column_groups=(("hadm_id",), ("duration_days",)),
+            duration=contract,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("hadm_id", "admittime", "dischtime", "duration_days"),
+            ((
+                142345,
+                "2164-10-23 21:09:00",
+                "2164-11-05 09:09:00",
+                12.5,
+            ),),
+        )
+        actual_sql = (
+            "SELECT subject_id, hadm_id, admittime, dischtime, "
+            "date_diff('day', admittime, dischtime) "
+            "AS admission_duration_days FROM admissions"
+        )
+        actual = result(
+            actual_sql,
+            (
+                "subject_id",
+                "hadm_id",
+                "admittime",
+                "dischtime",
+                "admission_duration_days",
+            ),
+            ((
+                10006,
+                142345,
+                "2164-10-23 21:09:00",
+                "2164-11-05 09:09:00",
+                13,
+            ),),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+
+        self.assertTrue(compatible, reason)
+
+    def test_unordered_duration_mapping_uses_semantic_alias_before_values(
+        self,
+    ) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+        )
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT hadm_id, "
+                "date_diff('hour', admittime, dischtime) / 24.0 "
+                "AS duration_days FROM admissions"
+            ),
+            required_column_groups=(("hadm_id",), ("duration_days",)),
+            duration=contract,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("hadm_id", "duration_days"),
+            ((10, 0.2), (20, 1.1)),
+        )
+        actual_sql = (
+            "SELECT subject_id, hadm_id, "
+            "date_diff('day', admittime, dischtime) "
+            "AS admission_duration_days FROM admissions"
+        )
+        actual = result(
+            actual_sql,
+            ("subject_id", "hadm_id", "admission_duration_days"),
+            ((2, 20, 1), (1, 10, 0)),
+        )
+
+        compatible, reason = results_compatible(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+
+        projection, projection_reason = map_required_columns(
+            actual,
+            expected,
+            evaluation_case,
+            analyze_sql(actual_sql),
+        )
+        self.assertIsNotNone(projection, projection_reason)
+        self.assertEqual((1, 2), projection.actual_indexes)
+        self.assertTrue(compatible, reason)
+
+    def test_hospital_duration_does_not_require_reference_context_columns(
+        self,
+    ) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+        )
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT hadm_id, admittime, dischtime, "
+                "date_diff('hour', admittime, dischtime) / 24.0 "
+                "AS hospital_los_days FROM admissions"
+            ),
+            required_column_groups=(("hospital_los_days",),),
+            duration=contract,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("hadm_id", "admittime", "dischtime", "hospital_los_days"),
+            ((
+                142345,
+                "2164-10-23 21:09:00",
+                "2164-11-01 17:15:00",
+                8.8375,
+            ),),
+        )
+        actual_sql = (
+            "SELECT subject_id, admittime, dischtime, "
+            "date_diff('day', admittime, dischtime) "
+            "AS hospital_stay_duration_days FROM admissions"
+        )
+        actual = result(
+            actual_sql,
+            (
+                "subject_id",
+                "admittime",
+                "dischtime",
+                "hospital_stay_duration_days",
+            ),
+            ((
+                10006,
+                "2164-10-23 21:09:00",
+                "2164-11-01 17:15:00",
+                9,
             ),),
         )
 
@@ -958,6 +1191,74 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(0.5, score["comparison"]["projection_precision"])
         self.assertEqual(
             ["admission_type"],
+            score["comparison"]["extra_columns"],
+        )
+
+    def test_score_diagnostics_use_only_required_reference_concepts(
+        self,
+    ) -> None:
+        contract = DurationContract(
+            unit="day",
+            representations=("integer", "decimal", "interval"),
+        )
+        evaluation_case = case(
+            expected_sql=(
+                "SELECT hadm_id, admittime, dischtime, "
+                "date_diff('hour', admittime, dischtime) / 24.0 "
+                "AS duration_days FROM admissions"
+            ),
+            required_column_groups=(("hadm_id",), ("duration_days",)),
+            duration=contract,
+        )
+        expected = result(
+            evaluation_case.expected_sql,
+            ("hadm_id", "admittime", "dischtime", "duration_days"),
+            ((142345, "start", "end", 12.5),),
+        )
+        actual_sql = (
+            "SELECT subject_id, hadm_id, admittime, dischtime, "
+            "date_diff('day', admittime, dischtime) "
+            "AS admission_duration_days FROM admissions"
+        )
+        actual = result(
+            actual_sql,
+            (
+                "subject_id",
+                "hadm_id",
+                "admittime",
+                "dischtime",
+                "admission_duration_days",
+            ),
+            ((10006, 142345, "start", "end", 13),),
+        )
+        columns = (
+            ColumnMetadata("subject_id", "BIGINT", "admissions"),
+            ColumnMetadata("hadm_id", "BIGINT", "admissions"),
+            ColumnMetadata("admittime", "TIMESTAMP", "admissions"),
+            ColumnMetadata("dischtime", "TIMESTAMP", "admissions"),
+        )
+        schema = SchemaMetadata(
+            table_names=("admissions",),
+            columns=columns,
+            tables=(TableSchema("admissions", columns, 1),),
+        )
+
+        score = score_query_case(
+            evaluation_case,
+            actual,
+            expected,
+            schema,
+            [],
+        )
+
+        self.assertEqual(1.0, score["correctness"])
+        self.assertEqual(0.4, score["comparison"]["projection_precision"])
+        self.assertEqual(
+            [["duration_days", "admission_duration_days"]],
+            score["comparison"]["aliases_used"],
+        )
+        self.assertEqual(
+            ["subject_id", "admittime", "dischtime"],
             score["comparison"]["extra_columns"],
         )
 

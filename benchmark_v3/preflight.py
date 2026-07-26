@@ -64,6 +64,8 @@ def _copy_rescore_inputs(source: Path, target: Path) -> None:
             continue
         if not (
             path.name == "campaign.json"
+            or path.name == "status.json"
+            or path.name == "aggregate.json"
             or path.name.startswith("run-") and path.suffix == ".json"
             or path.name.startswith("references-") and path.suffix == ".json"
         ):

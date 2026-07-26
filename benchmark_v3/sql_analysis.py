@@ -20,6 +20,7 @@ class SQLAnalysis:
     limit: int | None
     order_by: tuple[tuple[str, str], ...] = ()
     offset: int | None = None
+    outer_alias_expressions: tuple[tuple[str, str], ...] = ()
 
 
 def _first_seen(values: object) -> tuple[str, ...]:
@@ -117,6 +118,14 @@ def analyze_sql(sql: str) -> SQLAnalysis:
         for alias in tree.find_all(exp.Alias)
         if alias.alias
     )
+    outer_alias_expressions = tuple(
+        (
+            expression.alias.casefold(),
+            _normalized_expression(expression.this),
+        )
+        for expression in tree.expressions
+        if isinstance(expression, exp.Alias) and expression.alias
+    )
     columns = _first_seen(
         column.name.casefold()
         for column in tree.find_all(exp.Column)
@@ -131,4 +140,5 @@ def analyze_sql(sql: str) -> SQLAnalysis:
         limit=_outer_integer(tree, "limit", exp.Limit),
         order_by=_outer_order_by(tree),
         offset=_outer_integer(tree, "offset", exp.Offset),
+        outer_alias_expressions=outer_alias_expressions,
     )

@@ -81,7 +81,9 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
         },
     ]
     query_records = [
-        record for record in records if record.get("arm") in arms
+        record for record in records
+        if record.get("arm") in arms
+        and record.get("reporting_excluded") is not True
     ]
     terminal_counts = Counter(
         str(record.get("terminal", {}).get("category", "not_recorded"))
@@ -129,6 +131,17 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
             )),
             "denominator": len(arm_records),
         }
+    def compact(record: Mapping[str, Any]) -> dict[str, Any]:
+        evidence = dict(record)
+        result = dict(evidence.get("result", {}))
+        rows = result.get("rows", [])
+        if isinstance(rows, list):
+            result["row_count"] = len(rows)
+            result["rows"] = rows[:5]
+            result["rows_sampled"] = len(rows) > 5
+        evidence["result"] = result
+        return evidence
+
     successes = [
         record for record in query_records
         if record.get("score", {}).get("passed") is True
@@ -137,6 +150,40 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
         record for record in query_records
         if record.get("score", {}).get("passed") is not True
     ]
+    family_performance: dict[str, list[dict[str, Any]]] = {}
+    failure_reasons: dict[str, dict[str, int]] = {}
+    for arm in arms:
+        arm_records = [
+            record for record in query_records if record.get("arm") == arm
+        ]
+        families: list[dict[str, Any]] = []
+        for family_id in sorted({
+            str(record.get("family_id", "")) for record in arm_records
+        }):
+            family_records = [
+                record for record in arm_records
+                if str(record.get("family_id", "")) == family_id
+            ]
+            families.append({
+                "family_id": family_id,
+                "passed": sum(
+                    record.get("score", {}).get("passed") is True
+                    for record in family_records
+                ),
+                "correct": sum(
+                    float(
+                        record.get("score", {}).get("correctness") or 0
+                    ) > 0
+                    for record in family_records
+                ),
+                "total": len(family_records),
+            })
+        family_performance[arm] = families
+        failure_reasons[arm] = dict(sorted(Counter(
+            str(record.get("score", {}).get("reason", "unspecified"))
+            for record in arm_records
+            if record.get("score", {}).get("passed") is not True
+        ).items()))
     model = {
         "title": "DB Whisperer Evaluation V3",
         "research_question": (
@@ -164,12 +211,42 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
                 "2,000-replicate repetition-only percentile bootstrap"
             ),
         },
+        "scoring_framework": {
+            "composite_weights": {
+                "ambiguity": 40,
+                "correctness": 30,
+                "efficiency": 10,
+                "safety": 10,
+                "grounding": 5,
+                "etl": 5,
+            },
+            "correctness": (
+                "Intent-required result concepts and compatible values; "
+                "harmless extra columns, aliases, accepted duration "
+                "representations, and reference-only tie ordering do not fail."
+            ),
+            "efficiency": (
+                "Least-sufficient joins are scored separately from semantic "
+                "correctness."
+            ),
+        },
         "provenance": {
             "suite_version": aggregate["suite_version"],
             "suite_hash": aggregate["suite_hash"],
             "model": aggregate["model"],
             "fingerprint": aggregate["fingerprint"],
-            "result_provenance": "new live-campaign aggregate evidence",
+            "result_provenance": aggregate.get(
+                "result_provenance",
+                "new live-campaign aggregate evidence",
+            ),
+            "counterfactual": bool(aggregate.get("counterfactual")),
+            "source_campaign_hash": aggregate.get("source_campaign_hash"),
+            "source_aggregate_sha256": aggregate.get(
+                "source_aggregate_sha256"
+            ),
+            "corrected_scorer_version": aggregate.get(
+                "corrected_scorer_version"
+            ),
         },
         "headline_metrics": {arm: arms[arm]["composite"] for arm in arms},
         "arm_cards": arms, "arms": arms, "arm_deltas": aggregate["arm_deltas"],
@@ -181,9 +258,11 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
         "correctness_diagnostics": correctness_diagnostics,
         "projection_diagnostics": projection_diagnostics,
         "terminal_outcomes": terminal_outcomes,
+        "family_performance": family_performance,
+        "failure_reasons": failure_reasons,
         "case_findings": {
-            "successes": successes[:10],
-            "failures": retained_failures[:10],
+            "successes": [compact(record) for record in successes[:12]],
+            "failures": [compact(record) for record in retained_failures[:20]],
         },
         "shared_etl": aggregate["shared_etl"], "usage": aggregate["usage"],
         "operational": aggregate["operational"],
@@ -202,7 +281,17 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
             "Use projection precision as a diagnostic rather than a semantic correctness gate.",
         ],
         "limitations": [
-            "Operational usage is campaign-global when per-repetition attribution is unavailable."
+            "Operational usage is campaign-global when per-repetition attribution is unavailable.",
+            (
+                "The headline excludes lab_frequency_with_labels because its "
+                "saved wording leaves frequency grain unresolved; the all-case "
+                "sensitivity result is reported alongside it."
+            ),
+            (
+                "Offline rescoring can correct deterministic evaluator policy "
+                "but cannot repair cells where no query was accepted or where "
+                "the saved SQL/results did not satisfy intent."
+            ),
         ],
         "report_readiness": {
             "validated_aggregate": True,
@@ -215,6 +304,14 @@ def build_report_model(aggregate: Mapping[str, Any]) -> dict[str, Any]:
             "findings_and_limitations": True,
         },
         "warnings": aggregate.get("relationship_warnings", []),
+        "reporting_adjustments": aggregate.get(
+            "reporting_adjustments", {}
+        ),
+        "change_ledger_summary": aggregate.get(
+            "change_ledger_summary", {}
+        ),
+        "original_reported": aggregate.get("original_reported", {}),
+        "sensitivity": aggregate.get("sensitivity", {}),
         "records": records,
     }
     validate_report_model(model)

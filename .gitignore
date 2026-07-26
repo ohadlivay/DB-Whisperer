@@ -6,3 +6,6 @@ logs/*.jsonl
 /.streamlit/secrets.toml
 /.idea
 /.worktrees/
+/.evaluation-artifacts/
+/.report-qa/
+/.test-tmp*/

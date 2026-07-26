@@ -189,17 +189,15 @@ def _usage(report: Mapping[str, Any]) -> Mapping[str, Any]:
     return usage if isinstance(usage, Mapping) else {}
 
 
-def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
-    campaign_path = campaign_dir / "campaign.json"
-    if not campaign_path.exists():
-        raise ValueError("campaign metadata is missing")
-    campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
-    reports = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(campaign_dir.glob("run-*.json"))]
-    validate_reports(reports, campaign)
-    status_path = campaign_dir / "status.json"
-    if not status_path.exists():
-        raise ValueError("authoritative campaign status is missing")
-    status = json.loads(status_path.read_text(encoding="utf-8"))
+def aggregate_reports(
+    reports: Sequence[Mapping[str, Any]],
+    campaign: Mapping[str, Any],
+    status: Mapping[str, Any],
+    *,
+    excluded_case_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Aggregate validated reports, optionally excluding declared case IDs."""
+
     required_usage = (
         "model_calls", "retries", "prompt_tokens", "completion_tokens",
         "cost_usd", "elapsed_seconds",
@@ -219,7 +217,10 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     oracle_reviews: list[dict[str, Any]] = []
     for report in reports:
-        records = report["records"]
+        records = [
+            record for record in report["records"]
+            if str(record.get("case_id")) not in excluded_case_ids
+        ]
         etl_score = mean(
             float(record["score"].get("score", 0.0))
             for record in records if record["arm"] == "etl"
@@ -234,8 +235,18 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
                 failures.append(dict(record))
             if record["score"].get("oracle_review") is True:
                 oracle_reviews.append(dict(record))
+    metric_reports = [
+        {
+            **dict(report),
+            "records": [
+                record for record in report["records"]
+                if str(record.get("case_id")) not in excluded_case_ids
+            ],
+        }
+        for report in reports
+    ]
     bootstrap_estimates, bootstrap_deltas = (
-        _bootstrap_campaign_estimates(reports, etl_scores)
+        _bootstrap_campaign_estimates(metric_reports, etl_scores)
     )
     arms: dict[str, dict[str, Any]] = {}
     for arm in ARMS:
@@ -278,10 +289,24 @@ def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
         "failures": failures, "oracle_reviews": oracle_reviews,
         "relationship_warnings": warnings,
         "records": [record for report in reports for record in report["records"]],
-        "run_reports": reports, "campaign": campaign,
+        "run_reports": list(reports), "campaign": dict(campaign),
     }
     validate_aggregate(aggregate)
     return aggregate
+
+
+def aggregate_campaign(campaign_dir: Path) -> dict[str, Any]:
+    campaign_path = campaign_dir / "campaign.json"
+    if not campaign_path.exists():
+        raise ValueError("campaign metadata is missing")
+    campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+    reports = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(campaign_dir.glob("run-*.json"))]
+    validate_reports(reports, campaign)
+    status_path = campaign_dir / "status.json"
+    if not status_path.exists():
+        raise ValueError("authoritative campaign status is missing")
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    return aggregate_reports(reports, campaign, status)
 
 
 def aggregate(paths: list[Path]) -> dict[str, Any]:
@@ -291,4 +316,11 @@ def aggregate(paths: list[Path]) -> dict[str, Any]:
     return aggregate_campaign(paths[0].parent)
 
 
-__all__ = ["aggregate", "aggregate_campaign", "bootstrap_ci", "distribution", "validate_aggregate"]
+__all__ = [
+    "aggregate",
+    "aggregate_campaign",
+    "aggregate_reports",
+    "bootstrap_ci",
+    "distribution",
+    "validate_aggregate",
+]

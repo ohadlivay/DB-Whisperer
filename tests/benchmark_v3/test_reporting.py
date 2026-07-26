@@ -28,6 +28,7 @@ def fixture_model() -> dict:
         for arm in ("baseline", "candidate_only", "semantic_only", "full")
     }
     case = {"case_id": "unsafe<script>alert(1)</script>", "family_id": "safe", "category": "safety", "arm": "full", "run": 1,
+            "question": "Show the unsafe result.", "expected_sql": "SELECT expected_value FROM expected_table",
             "result": {"sql": "SELECT 1", "columns": ["answer"], "rows": [[1]]},
             "terminal": {"category": "no_final_result"},
             "score": {"passed": False, "reason": "failure", "comparison": {"semantic_compatible": False, "extra_columns": []}, "ambiguity": {"candidate_support": [["a", 2]], "compliance": False}},
@@ -52,7 +53,29 @@ def fixture_model() -> dict:
             "limitations": ["No live campaign claim."],
             "report_readiness": {"metrics": True, "cases": True, "provenance": True, "findings": True},
             "warnings": ["relationship warning"],
-            "charts": {}, "tables": {}}
+            "charts": {}, "tables": {},
+            "reporting_adjustments": {
+                "excluded_case_ids": ["lab_frequency_with_labels"],
+                "exclusion_reason": "Frequency grain was unresolved.",
+            },
+            "change_ledger_summary": {
+                "score_changes": 12,
+                "pass_status_flips": 7,
+                "correction_rules": {"intent_aligned_required_concepts": 12},
+            },
+            "original_reported": {
+                "baseline": {"composite": {"mean": 40.0}},
+                "full": {"composite": {"mean": 70.0}},
+            },
+            "sensitivity": {
+                "all_cases": {
+                    "baseline": {"composite": {"mean": 41.0}},
+                    "full": {"composite": {"mean": 74.0}},
+                },
+            },
+            "family_performance": {
+                "full": [{"family_id": "stay", "passed": 8, "total": 10}],
+            }}
 
 
 class ReportingTest(unittest.TestCase):
@@ -60,27 +83,37 @@ class ReportingTest(unittest.TestCase):
         one_page = render_one_page(fixture_model())
         full = render_full_report(fixture_model())
         for section in (
-            "Research question",
-            "Experimental design",
-            "Scoring framework",
-            "Headline results",
-            "Ambiguity funnel",
-            "Correctness diagnostics",
-            "Principal findings",
-            "Limitations",
+            "What we tested—and what we learned",
+            "The question we wanted to answer",
+            "How the test worked",
+            "What the four versions did",
+            "What the latest results show",
+            "What we learned",
+            "How to interpret the results",
+            "Decisions to make together",
+            "A practical way forward",
         ):
             self.assertIn(section, one_page)
         for section in (
-            "Methodology",
+            "Overview",
             "System Comparison",
-            "Ambiguity Funnel",
-            "Correctness & Projection",
-            "Terminal Outcomes",
-            "Case Evidence",
-            "Safety, ETL & Operations",
-            "Limitations",
+            "Results by Question",
+            "Quality Dimensions",
+            "Clarifications",
+            "Reliability",
+            "ETL Validation",
+            "Failure Analysis",
+            "Methodology",
+            "Detailed Results",
         ):
             self.assertIn(section, full)
+        for section in (
+            "Deterministic offline rescore",
+            "Original vs corrected",
+            "Sensitivity analysis",
+            "No model calls",
+        ):
+            self.assertIn(section, one_page + full)
 
     def test_report_model_contains_every_approved_information_type(self) -> None:
         model = fixture_model()
@@ -145,9 +178,9 @@ class ReportingTest(unittest.TestCase):
         self.assertIn("Candidate Only", one_page)
         self.assertIn("Semantic Only", one_page)
         self.assertIn("Full System", one_page)
-        self.assertIn("Ambiguity funnel", full)
-        self.assertIn("Clarification compliance", full)
-        self.assertEqual(8, len(REPORT_TABS))
+        self.assertIn("Clarification quality", full)
+        self.assertIn("Detailed Results", full)
+        self.assertEqual(10, len(REPORT_TABS))
 
     def test_reports_have_all_tabs_and_no_v2_language(self) -> None:
         combined = render_one_page(fixture_model()) + render_full_report(fixture_model())
@@ -169,8 +202,6 @@ class ReportingTest(unittest.TestCase):
         self.assertIn('aria-controls="panel-overview"', rendered)
         self.assertIn('aria-selected="true"', rendered)
         self.assertIn('hidden', rendered)
-        self.assertIn('id="theme"', rendered)
-        self.assertIn('id="print"', rendered)
         for key in ("ArrowRight", "ArrowLeft", "Home", "End", "activateTab"):
             self.assertIn(key, rendered)
 
@@ -186,11 +217,29 @@ class ReportingTest(unittest.TestCase):
     def test_report_layout_keeps_mobile_metrics_clear_and_tabs_scrollable(self) -> None:
         rendered = render_one_page(fixture_model()) + render_full_report(fixture_model())
         for contract in (
-            ".tablist{display:flex;min-width:0;flex:1 1 auto;overflow-x:auto",
+            "overflow-x:auto",
             ".numbers{margin:18px 0 30px}",
-            ".tablist{order:2;flex-basis:100%}",
+            "grid-template-columns:1fr",
         ):
             self.assertIn(contract, rendered)
+
+    def test_detailed_results_document_every_saved_record(self) -> None:
+        model = fixture_model()
+        rendered = render_full_report(model)
+        self.assertEqual(
+            len(model["cases"]),
+            rendered.count('class="detail-record"'),
+        )
+        for required in (
+            "Expected SQL",
+            "Generated SQL",
+            "Pass",
+            "Why it passed or failed",
+            "SELECT expected_value FROM expected_table",
+            "SELECT 1",
+            "failure",
+        ):
+            self.assertIn(required, rendered)
 
     def test_model_evidence_is_escaped_and_rendering_does_not_mutate_it(self) -> None:
         model = fixture_model(); case = model["cases"][0]

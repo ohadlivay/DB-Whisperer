@@ -41,7 +41,15 @@ from benchmark_v3.run_evaluation import (
 from benchmark_v3.run_evaluation import BENCHMARK_DIR, DEFAULT_OUTPUT, DEFAULT_SUITE, PROJECT_ROOT, SRC
 from db_whisperer.contracts import ComponentState, QueryResult, SchemaMetadata
 from benchmark_v3.observability import BudgetStop, InfrastructureStop
-from benchmark_v3.rescore_campaign import rescore_campaign
+from benchmark_v3.rescore_campaign import (
+    CORRECTED_AGGREGATE_NAME,
+    LEDGER_NAME,
+    OUTPUT_NAME,
+    _counterfactual_case,
+    _query_result,
+    _source_hash,
+    rescore_campaign,
+)
 from tests.benchmark_v3.test_aggregation import write_campaign
 from benchmark_v3.aggregate_results import aggregate_campaign
 from benchmark_v3.review_package import write_review_package
@@ -50,7 +58,7 @@ from benchmark_v3.publication import (
     publish_approved_campaign,
     sha256_file,
 )
-from benchmark_v3.preflight import run_preflight
+from benchmark_v3.preflight import _copy_rescore_inputs, run_preflight
 
 
 SUITE_PATH = (
@@ -62,6 +70,74 @@ SUITE_PATH = (
 
 
 class CampaignTest(unittest.TestCase):
+    def test_preflight_copy_includes_complete_rescore_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            target = root / "target"
+            source.mkdir()
+            for name in (
+                "campaign.json",
+                "status.json",
+                "aggregate.json",
+                "run-01.json",
+                "references-fixture.json",
+            ):
+                (source / name).write_text("{}", encoding="utf-8")
+            (source / CORRECTED_AGGREGATE_NAME).write_text(
+                "{}",
+                encoding="utf-8",
+            )
+
+            _copy_rescore_inputs(source, target)
+
+            self.assertEqual(
+                {
+                    "aggregate.json",
+                    "campaign.json",
+                    "references-fixture.json",
+                    "run-01.json",
+                    "status.json",
+                },
+                {path.name for path in target.iterdir()},
+            )
+
+    def test_rescore_ignores_reference_only_order_for_duration_cases(self) -> None:
+        suite = load_suite(DEFAULT_SUITE)
+
+        for case_id in (
+            "admission_duration_null_safe",
+            "stay_hospital",
+            "stay_icu",
+            "ctl_stay_hospital",
+            "ctl_stay_icu",
+        ):
+            with self.subTest(case_id=case_id):
+                original = next(
+                    case for case in suite.cases if case.id == case_id
+                )
+                corrected = _counterfactual_case(original)
+
+                self.assertEqual("none", corrected.reference.order_semantics)
+                self.assertFalse(corrected.reference.ordered)
+                self.assertEqual(
+                    original.expected_sql,
+                    corrected.expected_sql,
+                )
+
+    def test_rescore_treats_cached_reference_evidence_as_accepted(self) -> None:
+        cached_reference = {
+            "sql": "SELECT COUNT(*) AS admission_count FROM admissions",
+            "columns": ["admission_count"],
+            "rows": [[129]],
+            "truncated": False,
+        }
+
+        loaded = _query_result(cached_reference, assume_accepted=True)
+
+        self.assertEqual(ComponentState.ACCEPTED, loaded.state)
+        self.assertEqual(((129,),), loaded.rows)
+
     def test_preflight_is_offline_and_checks_report_readiness(self) -> None:
         with patch(
             "requests.Session.post",
@@ -183,10 +259,15 @@ class CampaignTest(unittest.TestCase):
 
             output = rescore_campaign(directory)
 
+            derived_names = {
+                OUTPUT_NAME,
+                CORRECTED_AGGREGATE_NAME,
+                LEDGER_NAME,
+            }
             after = {
                 path.relative_to(directory).as_posix(): path.read_bytes()
                 for path in directory.rglob("*")
-                if path.is_file() and path != output
+                if path.is_file() and path.name not in derived_names
             }
             self.assertEqual(before, after)
             self.assertEqual("counterfactual-rescore.json", output.name)
@@ -197,6 +278,58 @@ class CampaignTest(unittest.TestCase):
             )
             self.assertIn("source_campaign_hash", payload)
             self.assertIn("scorer_version", payload)
+            (directory / "corrected-review").mkdir()
+            (directory / "corrected-review" / "review-package.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                payload["source_campaign_hash"],
+                _source_hash(directory),
+            )
+            corrected = json.loads(
+                (directory / CORRECTED_AGGREGATE_NAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            ledger = json.loads(
+                (directory / LEDGER_NAME).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                "dbwhisperer_v3_corrected_aggregate",
+                corrected["derived_report_type"],
+            )
+            self.assertEqual(
+                ["lab_frequency_with_labels"],
+                corrected["reporting_adjustments"]["excluded_case_ids"],
+            )
+            self.assertEqual(20, sum(
+                record.get("reporting_excluded") is True
+                for record in corrected["records"]
+            ))
+            self.assertIn("all_cases", corrected["sensitivity"])
+            self.assertIn(
+                "pass_status_flips",
+                corrected["change_ledger_summary"],
+            )
+            self.assertIn(
+                "correction_rules",
+                corrected["change_ledger_summary"],
+            )
+            self.assertTrue(ledger["score_changes"])
+            self.assertEqual(
+                [{
+                    "case_id": "lab_frequency_with_labels",
+                    "action": "excluded_from_corrected_headline_metrics",
+                    "reason": (
+                        "The saved question leaves frequency grain unresolved "
+                        "but the case was classified as non-ambiguous and has "
+                        "no simulated clarification answer."
+                    ),
+                    "affected_cells": 20,
+                }],
+                ledger["denominator_adjustments"],
+            )
 
     def _suite(self, *, repetitions: int = 1) -> EvaluationSuite:
         case = EvaluationCase(

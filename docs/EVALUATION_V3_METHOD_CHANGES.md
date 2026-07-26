@@ -274,3 +274,82 @@ This transport change is fingerprinted. The 98 completed checkpoints remain
 diagnostic evidence, but they are not mixed with post-fix cells in an official
 aggregate; the reliable campaign starts under a new campaign ID and runtime
 fingerprint.
+
+### 2026-07-26 offline correction and report publication
+
+The completed 450-cell campaign
+`v3-official-provider-retry-20260725` was not rerun. Its saved SQL, result
+tables, clarification transcripts, schema, and reference results were
+deterministically rescored. No OpenRouter or other model calls occur during
+this operation. Original campaign files and `aggregate.json` remain unchanged;
+the correction writes separate `counterfactual-rescore.json`,
+`corrected-aggregate.json`, and `rescore-change-ledger.json` artifacts.
+
+The correction implements the decisions reviewed in this session:
+
+- correctness evaluates the concepts and values required by user intent;
+  optional context columns and harmless aliases are diagnostics, not failure
+  gates;
+- integer, decimal, and interval/timedelta duration outputs are accepted when
+  the case contract allows them and sub-unit precision is not required;
+- calendar-boundary whole-day durations may differ from elapsed decimal days
+  by less than one declared day;
+- duration columns are mapped by semantic duration aliases before value-only
+  matching, preventing patient identifiers from accidentally matching small
+  duration values;
+- row ordering in the hospital-stay, ICU-stay, their explicit controls, and
+  completed-admission-duration cases is treated as reference reproducibility
+  rather than user intent;
+- ranked outputs must use the requested primary measure and direction, but an
+  omitted identity tie-break and a different order among equal-count patients
+  do not fail; and
+- join count remains an efficiency measure. A semantically correct result does
+  not fail correctness merely because it used an unnecessary valid join.
+
+The frozen `lab_frequency_with_labels` question leaves the meaning and grain
+of “frequency” unresolved, but the case was classified as non-ambiguous and
+has no simulated clarification answer. It is therefore excluded from corrected
+headline denominators rather than retroactively assigned an answer. The report
+also presents an all-cases sensitivity analysis so readers can see the effect
+of including it. All 20 saved cells remain in the evidence and are marked with
+the exclusion reason.
+
+The corrected headline results are:
+
+| Arm | Composite | Pass rate | Correctness |
+| --- | ---: | ---: | ---: |
+| Baseline | 44.53 | 47.62% | 67.06% |
+| Candidate Only | 45.62 | 47.62% | 70.59% |
+| Semantic Only | 67.43 | 60.95% | 81.18% |
+| Full System | 76.54 | 69.52% | 83.53% |
+
+Full System exceeds Baseline by 32.01 composite points; the paired 95%
+bootstrap interval is +15.79 to +44.82. The ledger contains 120 score-record
+changes and 53 overall pass-status flips. These counts describe deterministic
+scoring changes, not newly generated system outputs.
+
+The duration correction passes all 18 completed-admission cells that returned
+accepted SQL. The two Semantic Only cells that returned no accepted query
+remain failures. Ranking passes 19 previously mis-scored accepted outputs; the
+remaining Candidate Only ranking failure is a genuine schema-grounding
+failure. Likewise, offline scoring does not repair missing final queries,
+wrong tables, wrong ambiguity decisions, or incompatible values.
+
+The two approved HTML outputs are regenerated from
+`corrected-aggregate.json`:
+
+- `docs/evaluation_method_one_page.html` is the concise method, headline,
+  correction, sensitivity, findings, and limitations view.
+- `docs/evaluation_report.html` is the detailed four-arm evidence report with
+  family results, failure reasons, funnel stages, operations, provenance, and
+  representative SQL/clarification drill-down.
+
+The detailed report samples result rows and representative cases rather than
+embedding every raw result twice. Complete evidence remains in the campaign
+artifacts and corrected review package. This reduces the report from roughly
+40 MB to a reader-usable artifact without changing the scored evidence.
+
+Historical preflight replay now copies `campaign.json`, `status.json`,
+`aggregate.json`, all five run reports, and the matching reference artifact
+into its isolated workspace. This keeps the independent offline replay aligned
+with the corrected aggregator's complete evidence contract.
