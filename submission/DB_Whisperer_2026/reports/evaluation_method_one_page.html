@@ -1,0 +1,138 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What we tested—and what we learned</title><style>
+:root{--ink:#193340;--muted:#607580;--cream:#f7f5ee;--card:#fff;--line:#d9e2de;
+--teal:#076b66;--deep:#0d3c48;--mint:#d9eee8;--gold:#d49a2a;--shadow:0 14px 34px #19334016}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:var(--cream);
+font:16px/1.62 Inter,Segoe UI,Arial,sans-serif}body.dark{--ink:#eaf4f2;--muted:#b5c8c6;
+--cream:#0d1c22;--card:#132a31;--line:#2d4b50;--mint:#183d3c;--teal:#70d4c8;--deep:#eaf4f2;
+--shadow:0 14px 34px #0005}h1,h2,h3{line-height:1.16}h2{font-size:clamp(26px,3vw,38px);
+margin:0 0 16px}h3{font-size:19px;margin:0 0 8px}.skip{position:absolute;left:-999px}.skip:focus{
+left:16px;top:12px;z-index:100;background:#fff;padding:8px}.hero{position:relative;overflow:hidden;color:#fff;
+padding:62px max(24px,calc((100vw - 1080px)/2)) 76px;background:linear-gradient(135deg,#0b3542,#0b6967)}
+.hero:after{content:"";position:absolute;width:340px;height:340px;border-radius:50%;right:-95px;top:-145px;
+border:54px solid #ffffff12}.eyebrow{font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
+color:#a9e4dc}.hero h1{position:relative;margin:7px 0 13px;max-width:750px;font-size:clamp(38px,6vw,68px);
+letter-spacing:-.035em}.hero p:last-child{max-width:700px;margin:0;font-size:18px;color:#d9f1ed}.toolbar{
+position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--cream) 94%,transparent);
+border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}.toolbar-inner{max-width:1120px;margin:auto;
+padding:10px 22px;display:flex;gap:9px;align-items:center}.context{margin-right:auto;color:var(--muted);
+font-size:13px;font-weight:750}.button,.detail-link{border:1px solid var(--line);border-radius:9px;
+background:var(--card);color:var(--ink);padding:8px 11px;font:inherit;font-size:13px;font-weight:750;
+text-decoration:none;cursor:pointer}main{max-width:1080px;margin:auto;padding:0 22px 72px}.numbers{position:relative;
+display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0 42px}.number{padding:18px;
+border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}.number strong{
+display:block;color:var(--teal);font-size:31px;line-height:1}.number span{display:block;margin-top:7px;color:var(--muted);
+font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}section{margin-top:58px}.question-card,
+.takeaway{padding:28px;border-radius:17px;background:var(--card);box-shadow:var(--shadow);border:1px solid var(--line);
+border-left:6px solid var(--teal)}.question-card{font-size:23px;font-weight:750;line-height:1.42}.steps,
+.versions,.results,.lessons,.decisions{display:grid;gap:14px}.steps,.versions{grid-template-columns:repeat(4,1fr)}
+.results,.lessons{grid-template-columns:1fr 1fr}.decisions{grid-template-columns:repeat(3,1fr)}.card{
+padding:21px;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
+.step-no{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--teal);color:#fff;
+font-weight:800}.card p{margin:7px 0 0;color:var(--muted)}.tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:15px}
+.tag{padding:5px 10px;border-radius:999px;background:var(--mint);color:var(--teal);font-size:12px;font-weight:800}
+.version{border-top:5px solid var(--teal)}.version strong{display:block;font-size:19px}.headline{
+padding:27px;border-radius:17px;background:var(--deep);color:#fff}.headline h3{font-size:25px}.headline p{
+color:#deefed}.score-pair{display:grid;grid-template-columns:1fr auto 1fr;gap:15px;align-items:center;margin-top:18px}
+.score-box{padding:18px;border-radius:13px;background:var(--card);border:1px solid var(--line)}.score-box strong{
+display:block;color:var(--teal);font-size:34px}.versus{font-weight:900;color:var(--muted)}.bar-card{margin-top:16px;
+padding:22px;border:1px solid var(--line);border-radius:14px;background:var(--card)}.bar-row{margin:15px 0}
+.bar-label{display:flex;justify-content:space-between;gap:15px}.bar-track{height:12px;margin-top:5px;border-radius:999px;
+background:#dce7e4;overflow:hidden}.bar-track span{display:block;height:100%;border-radius:inherit;
+background:linear-gradient(90deg,#0b6967,#2da89b)}.bar-row small{display:block;color:var(--muted);margin-top:4px}
+.fact strong{display:block;color:var(--teal);font-size:28px}.notice{margin-top:16px;padding:18px 20px;
+border-radius:13px;background:#e9f4ff;color:#214963;border:1px solid #c8dff1}.plain-list{margin:0;padding-left:20px}
+.plain-list li{margin:8px 0}.two-sides{display:grid;grid-template-columns:1fr 1fr;gap:15px}.side{
+padding:22px;border-radius:14px;background:var(--card);border:1px solid var(--line)}.side h3{color:var(--teal)}
+.next{border-left-color:var(--gold)}footer{max-width:1080px;margin:0 auto 50px;padding:24px 22px;
+border-top:1px solid var(--line);color:var(--muted);display:flex;justify-content:space-between;gap:16px}
+@media(max-width:780px){.hero{padding:46px 24px 68px}.toolbar-inner{flex-wrap:wrap}.context{flex:1 0 100%}
+.numbers{margin:18px 0 30px}.numbers,.steps,.versions,.results,.lessons,.decisions,.two-sides,
+.score-pair{grid-template-columns:1fr}.versus{text-align:center}section{margin-top:42px}}
+@media print{.toolbar{display:none}.hero{color:#111;background:#fff;border-bottom:2px solid #111}.hero p:last-child,
+.eyebrow{color:#333}.numbers{margin:18px 0}.card,.number,.question-card,.takeaway{box-shadow:none}}
+</style></head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="hero"><p class="eyebrow">DB Whisperer · Team Discussion Brief</p>
+<h1>What we tested—and what we learned</h1>
+<p>A plain-language overview of the evaluation method, the latest results, and the choices we need to make next.</p>
+</header>
+<nav class="toolbar" aria-label="Page tools"><div class="toolbar-inner">
+<span class="context">Evaluation V3 overview</span>
+<a class="detail-link" href="evaluation_report.html">Detailed report</a>
+<button class="button" id="theme">Theme</button><button class="button" id="print">Print</button>
+</div></nav>
+<main id="main">
+<div class="numbers">
+<div class="number"><strong>22</strong><span>Database questions</span></div>
+<div class="number"><strong>4</strong><span>System versions</span></div>
+<div class="number"><strong>5×</strong><span>Each question repeated</span></div>
+<div class="number"><strong>450</strong><span>Total checks</span></div>
+</div>
+<section><h2>The question we wanted to answer</h2>
+<div class="question-card">Can DB Whisperer turn everyday database questions into correct, safe answers—and does asking one focused follow-up question help when a request could mean more than one thing?</div>
+</section>
+<section><h2>How the test worked</h2>
+<p>Every version faced the same questions and was checked in the same way.</p>
+<div class="steps">
+<article class="card"><span class="step-no">1</span><h3>Ask 22 questions</h3><p>The set included clear, unclear, ordinary, comparative, and unsafe requests.</p></article>
+<article class="card"><span class="step-no">2</span><h3>Compare 4 versions</h3><p>Each version switched specific ambiguity features on or off.</p></article>
+<article class="card"><span class="step-no">3</span><h3>Repeat 5 times</h3><p>AI answers can vary, so every question was tried more than once.</p></article>
+<article class="card"><span class="step-no">4</span><h3>Check the answer</h3><p>Automatic rules compared each result with a known-good database result.</p></article>
+</div>
+<div class="tags"><span class="tag">Unclear wording</span><span class="tag">Clear comparisons</span>
+<span class="tag">Ordinary questions</span><span class="tag">Unsafe requests</span>
+<span class="tag">2 CSV loading checks</span></div>
+</section>
+<section><h2>What the four versions did</h2><div class="versions"><article class="card version"><strong>Baseline</strong><p>Produces one answer without an ambiguity check.</p></article><article class="card version"><strong>Candidate Only</strong><p>Tries three answers and compares the successful results.</p></article><article class="card version"><strong>Semantic Only</strong><p>Checks whether vague wording could point to different database fields.</p></article><article class="card version"><strong>Full System</strong><p>Combines the three-answer comparison with the semantic check.</p></article></div></section>
+<section><h2>What the latest results show</h2>
+<div class="headline"><h3>The Full System performed best in this evaluation.</h3>
+<p>It passed more complete tests than the simpler versions and achieved the strongest overall score.</p></div>
+<div class="score-pair">
+<article class="score-box"><span>Baseline pass rate</span><strong>47.62%</strong><p>The simplest version.</p></article>
+<div class="versus">compared with</div>
+<article class="score-box"><span>Full System pass rate</span><strong>69.52%</strong><p>All ambiguity features enabled.</p></article>
+</div>
+<div class="bar-card"><h3>Share of tests that passed</h3><div class="bar-row"><div class="bar-label"><span>Baseline</span><strong>47.62%</strong></div><div class="bar-track"><span style="width:47.62%"></span></div><small></small></div><div class="bar-row"><div class="bar-label"><span>Candidate Only</span><strong>47.62%</strong></div><div class="bar-track"><span style="width:47.62%"></span></div><small></small></div><div class="bar-row"><div class="bar-label"><span>Semantic Only</span><strong>60.95%</strong></div><div class="bar-track"><span style="width:60.95%"></span></div><small></small></div><div class="bar-row"><div class="bar-label"><span>Full System</span><strong>69.52%</strong></div><div class="bar-track"><span style="width:69.52%"></span></div><small></small></div>
+<p class="muted">A test passed only when the final outcome met all rules that applied to that question.</p></div>
+<div class="results">
+<article class="card fact"><strong>+21.90</strong><h3>percentage points</h3><p>The Full System’s pass-rate improvement over the Baseline.</p></article>
+<article class="card fact"><strong>76.54/100</strong><h3>overall score</h3><p>A weighted summary of answer quality, clarification behavior, safety, grounding, and data loading.</p></article>
+<article class="card fact"><strong>83.33%</strong><h3>clarification recall</h3><p>How often the Full System asked when a clarification was needed.</p></article>
+<article class="card fact"><strong>93.33%</strong><h3>clarification specificity</h3><p>How often it stayed quiet when no clarification was needed.</p></article>
+</div>
+<div class="notice"><strong>About the offline correction.</strong> No model calls were made during rescoring.
+We rechecked the saved answers after fixing rules that had been stricter than the user’s intent. One lab-frequency question is excluded from the headline because its wording did not define the intended frequency. Including it does not change which system performed best.</div>
+</section>
+<section><h2>What we learned</h2><div class="lessons">
+<article class="card"><h3>Combining both ambiguity checks helped most</h3><p>The Full System had the highest pass rate and composite score.</p></article>
+<article class="card"><h3>The semantic check produced most of the gain</h3><p>Semantic Only was much stronger than Baseline; Candidate Only was close to Baseline.</p></article>
+<article class="card"><h3>Clarification behavior improved, but was not perfect</h3><p>The Full System usually asked at the right time, yet some answers still ended without an accepted query.</p></article>
+<article class="card"><h3>The result is not just a scoring artifact</h3><p>The same ordering remains when the excluded lab-frequency question is restored.</p></article>
+</div></section>
+<section><h2>How to interpret the results</h2><div class="two-sides">
+<article class="side"><h3>What they tell us</h3><ul class="plain-list">
+<li>On this fixed MIMIC-III test set, explicit ambiguity handling improved performance.</li>
+<li>The Full System was the strongest of the four versions tested.</li>
+<li>The saved evidence is detailed enough to audit every pass and failure.</li></ul></article>
+<article class="side"><h3>What they do not prove</h3><ul class="plain-list">
+<li>That the same scores will hold for every database or every user.</li>
+<li>That every clarification is phrased as clearly as a person would want.</li>
+<li>That a higher score removes the need for more user testing.</li></ul></article>
+</div></section>
+<section><h2>Decisions to make together</h2><div class="decisions">
+<article class="card"><h3>Prioritize reliability</h3><p>Improve cases where the system produced no accepted query.</p></article>
+<article class="card"><h3>Improve follow-up questions</h3><p>Make semantic clarifications more consistently address the distinction the user actually meant.</p></article>
+<article class="card"><h3>Broaden the evidence</h3><p>Repeat the study with more datasets, question styles, and real users.</p></article>
+</div></section>
+<section><h2>A practical way forward</h2><div class="takeaway next">
+Keep the Full System as the leading design, fix the remaining no-query and clarification failures, then validate the same evaluation method on a broader set of databases and users.
+</div></section>
+</main>
+<footer><span>Evaluation V3 · Corrected offline publication</span>
+<span>Campaign cost: $1.19 · 450 saved checks</span></footer>
+<script>const body=document.body;const theme=document.getElementById('theme');
+if(localStorage.getItem('dbw-report-theme')==='dark')body.classList.add('dark');
+theme.onclick=()=>{body.classList.toggle('dark');localStorage.setItem('dbw-report-theme',
+body.classList.contains('dark')?'dark':'light')};document.getElementById('print').onclick=()=>window.print();</script></body></html>

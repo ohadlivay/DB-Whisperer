@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DB Whisperer Project Site</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-dark: #1e40af;
+      --accent: #06b6d4;
+      --accent-dark: #0891b2;
+      --bg: #f8fafc;
+      --bg-soft: #eff6ff;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #64748b;
+      --border: #dbeafe;
+      --shadow: 0 18px 45px rgba(30, 64, 175, 0.12);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: Inter, Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: linear-gradient(135deg, #eff6ff 0%, #ecfeff 45%, #ffffff 100%);
+      line-height: 1.6;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    .site {
+      min-height: 100vh;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.1;
+      font-weight: 800;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .brand-subtitle {
+      margin: 3px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 18px;
+      font-size: 14px;
+      font-weight: 650;
+      color: #475569;
+    }
+
+    nav a:hover { color: var(--primary); }
+
+    section {
+      padding: 76px 24px;
+    }
+
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 92px 24px 72px;
+      text-align: center;
+    }
+
+    .hero h2 {
+      margin: 0 auto 18px;
+      max-width: 980px;
+      font-size: clamp(42px, 7vw, 78px);
+      line-height: 1.02;
+      font-weight: 900;
+      letter-spacing: -0.055em;
+      background: linear-gradient(90deg, var(--primary), var(--accent), var(--primary-dark));
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .hero .subtitle {
+      margin: 0 0 28px;
+      font-size: clamp(18px, 2.5vw, 25px);
+      color: #475569;
+      font-weight: 550;
+    }
+
+    .hero-card {
+      max-width: 910px;
+      margin: 0 auto 26px;
+      padding: 30px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.78);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-card p {
+      margin: 0;
+      font-size: 18px;
+      color: #334155;
+    }
+
+    .chips, .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 15px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-weight: 750;
+      font-size: 13px;
+      border: 1px solid #bfdbfe;
+    }
+
+    .chip:nth-child(even) {
+      background: #cffafe;
+      color: #0e7490;
+      border-color: #a5f3fc;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 18px;
+      border-radius: 12px;
+      font-weight: 800;
+      font-size: 14px;
+      border: 1px solid transparent;
+      background: var(--primary);
+      color: white;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px rgba(37, 99, 235, .18);
+      background: var(--primary-dark);
+    }
+
+    .button.secondary {
+      background: white;
+      color: var(--primary);
+      border-color: #bfdbfe;
+    }
+
+    .button.secondary:hover {
+      background: #eff6ff;
+    }
+
+    .section-soft {
+      background: rgba(255, 255, 255, 0.48);
+    }
+
+    .section-blue {
+      background: linear-gradient(120deg, rgba(239, 246, 255, .92), rgba(236, 254, 255, .92));
+    }
+
+    .section-title {
+      text-align: center;
+      margin: 0 0 44px;
+    }
+
+    .section-title h3 {
+      margin: 0 0 12px;
+      font-size: clamp(32px, 4vw, 46px);
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    .section-title p {
+      margin: 0 auto;
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 22px;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card {
+      background: rgba(255, 255, 255, .86);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 28px rgba(30, 64, 175, .08);
+      padding: 26px;
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+      border-color: #93c5fd;
+      box-shadow: 0 18px 45px rgba(30, 64, 175, .14);
+    }
+
+    .card h4 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      line-height: 1.18;
+      color: var(--primary-dark);
+    }
+
+    .card p {
+      margin: 0 0 14px;
+      color: #475569;
+    }
+
+    .card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .member {
+      text-align: center;
+      min-height: 190px;
+    }
+
+    .avatar {
+      width: 78px;
+      height: 78px;
+      margin: 0 auto 16px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-size: 29px;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      box-shadow: 0 12px 30px rgba(37, 99, 235, .2);
+    }
+
+    .member h4 {
+      color: var(--text);
+      font-size: 20px;
+    }
+
+    .paper-card h4 {
+      color: var(--primary-dark);
+      min-height: 64px;
+    }
+
+    .paper-meta {
+      margin-bottom: 16px;
+      color: var(--accent-dark);
+      font-weight: 750;
+      font-size: 14px;
+    }
+
+    .flow-card {
+      text-align: center;
+    }
+
+    .step-num {
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 17px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      color: white;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 26px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+      color: #475569;
+    }
+
+    li { margin-bottom: 9px; }
+
+    .code {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 16px;
+      padding: 18px;
+      overflow-x: auto;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 14px;
+      margin: 14px 0 0;
+    }
+
+    .callout {
+      background: #ecfdf5;
+      border-color: #bbf7d0;
+    }
+
+    .warning {
+      background: #fff7ed;
+      border-color: #fed7aa;
+    }
+
+    .evaluation-hero {
+      display: grid;
+      grid-template-columns: minmax(240px, .72fr) 1.28fr;
+      gap: 28px;
+      align-items: center;
+      padding: 34px;
+      border-radius: var(--radius);
+      color: white;
+      background: linear-gradient(135deg, var(--primary-dark), var(--primary) 62%, var(--accent-dark));
+      box-shadow: var(--shadow);
+    }
+
+    .evaluation-kicker {
+      margin: 0 0 8px;
+      color: #bfdbfe;
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .evaluation-score {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin: 0;
+    }
+
+    .evaluation-score strong {
+      font-size: clamp(62px, 9vw, 96px);
+      line-height: .95;
+      letter-spacing: -.06em;
+    }
+
+    .evaluation-score span {
+      color: #bfdbfe;
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    .evaluation-score-label {
+      margin: 12px 0 0;
+      color: #e0f2fe;
+      font-weight: 750;
+    }
+
+    .evaluation-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .evaluation-metric {
+      padding: 18px;
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 15px;
+      background: rgba(255,255,255,.1);
+    }
+
+    .evaluation-metric strong {
+      display: block;
+      font-size: 27px;
+      line-height: 1.1;
+    }
+
+    .evaluation-metric span {
+      display: block;
+      margin-top: 6px;
+      color: #dbeafe;
+      font-size: 13px;
+    }
+
+    .evaluation-note {
+      margin: 18px 0 0;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .evaluation-heading {
+      margin: 52px 0 20px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+
+    .score-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: white;
+      box-shadow: 0 10px 28px rgba(30, 64, 175, .07);
+    }
+
+    .score-table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+    }
+
+    .score-table caption {
+      padding: 18px 20px 10px;
+      color: var(--muted);
+      text-align: left;
+    }
+
+    .score-table th,
+    .score-table td {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .score-table th {
+      color: var(--primary-dark);
+      background: var(--bg-soft);
+    }
+
+    .score-table tbody tr:last-child th,
+    .score-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .footer {
+      padding: 62px 24px;
+      color: white;
+      background: linear-gradient(90deg, var(--primary-dark), var(--primary), var(--accent-dark));
+      text-align: center;
+    }
+
+    .footer h3 {
+      margin: 0 0 10px;
+      font-size: 32px;
+    }
+
+    .footer p {
+      margin: 0 0 26px;
+      color: #dbeafe;
+    }
+
+    .footer .button {
+      background: white;
+      color: var(--primary-dark);
+    }
+
+    .footer-note {
+      margin-top: 34px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255,255,255,.25);
+      color: #dbeafe;
+      font-size: 14px;
+    }
+
+    @media (max-width: 920px) {
+      header { position: static; }
+      .nav { flex-direction: column; align-items: flex-start; }
+      nav { justify-content: flex-start; }
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-3, .grid-2, .split { grid-template-columns: 1fr; }
+      .evaluation-hero { grid-template-columns: 1fr; }
+      section { padding: 58px 18px; }
+      .hero { padding-top: 64px; }
+    }
+
+    @media (max-width: 560px) {
+      .grid-4 { grid-template-columns: 1fr; }
+      .evaluation-metrics { grid-template-columns: 1fr; }
+      .evaluation-hero { padding: 25px; }
+      .hero-card { padding: 22px; }
+      .card { padding: 22px; }
+      nav { gap: 12px; font-size: 13px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="site">
+    <header>
+      <div class="nav">
+        <div>
+          <h1 class="brand-title">DB Whisperer</h1>
+          <p class="brand-subtitle">Software Engineering in the Age of AI · Seminar 2026</p>
+        </div>
+        <nav>
+          <a href="#home">Home</a>
+          <a href="#team">Team</a>
+          <a href="#research">Research</a>
+          <a href="#system">System</a>
+          <a href="#process">Process</a>
+          <a href="#evaluation">Evaluation</a>
+          <a href="#conclusion">Conclusion</a>
+          <a href="#manual">Manual</a>
+          <a href="#materials">Materials</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section id="home" class="hero">
+        <div class="container">
+          <h2>Interactive Natural-Language Database Exploration</h2>
+          <p class="subtitle">Query CSV-based databases with LLM-generated SQL, schema context, and ambiguity clarification.</p>
+          <div class="hero-card">
+            <p>
+              DB Whisperer allows users to explore CSV-based databases using natural language.
+              The system loads data into DuckDB, generates read-only SQL through an LLM-based workflow,
+              detects ambiguous requests, and displays query results through a Streamlit interface.
+            </p>
+          </div>
+          <div class="chips" aria-label="Technology stack">
+            <span class="chip">Python</span>
+            <span class="chip">Streamlit</span>
+            <span class="chip">DuckDB</span>
+            <span class="chip">OpenRouter</span>
+            <span class="chip">SQL</span>
+            <span class="chip">LLMs</span>
+            <span class="chip">CSV Data</span>
+          </div>
+          <div class="buttons" style="margin-top: 26px;">
+            <a class="button" href="https://db-whisperer.streamlit.app/" target="_blank" rel="noopener">Open Live App</a>
+            <a class="button secondary" href="https://github.com/ohadlivay/DB-Whisperer" target="_blank" rel="noopener">GitHub Repository</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="team" class="section-soft">
+        <div class="container">
+          <div class="section-title">
+            <h3>Team Members</h3>
+            <p>
+              This project was developed as part of the Software Engineering in the Age of AI seminar.
+              The team investigated whether explicit ambiguity detection and focused clarification
+              improve natural-language database querying.
+            </p>
+          </div>
+          <div class="grid grid-4">
+            <article class="card member"><div class="avatar">O</div><h4>Ohad Livay</h4></article>
+            <article class="card member"><div class="avatar">Y</div><h4>Yotam Katz</h4></article>
+            <article class="card member"><div class="avatar">T</div><h4>Tali Ratner</h4></article>
+            <article class="card member"><div class="avatar">L</div><h4>Liran Becher</h4></article>
+          </div>
+        </div>
+      </section>
+
+      <section id="research">
+        <div class="container">
+          <div class="section-title">
+            <h3>Research Direction</h3>
+            <p>
+              DB Whisperer investigates accessible database exploration without hiding uncertainty from the user.
+            </p>
+          </div>
+          <div class="grid grid-3">
+            <article class="card">
+              <h4>Research Question</h4>
+              <p>
+                "To what extent can an LLM-based natural-language-to-SQL system help non-technical users
+                explore multi-table, multi-column databases while reducing misinterpretation through
+                explicit ambiguity detection and clarification?"
+              </p>
+            </article>
+            <article class="card">
+              <h4>Expected Artifact</h4>
+              <p>
+                An easy-to-use web application where users upload CSV tables and ask questions about their
+                data. The system either returns a validated SQL result table or asks one targeted question
+                when the available evidence supports multiple plausible interpretations.
+              </p>
+            </article>
+            <article class="card">
+              <h4>Why This Is Software Engineering</h4>
+              <p>
+                The project integrates ingestion, schema discovery, LLM-based SQL generation, validation,
+                execution, ambiguity detection, and a user interface. Making these components safe,
+                testable, transparent, and usable required explicit architectural and interaction decisions.
+              </p>
+            </article>
+          </div>
+
+          <h4 class="evaluation-heading">Papers We Studied</h4>
+          <div class="grid grid-2">
+            <article class="card paper-card">
+              <h4>CODEXGRAPH: Bridging Large Language Models and Code Repositories via Code Graph Databases</h4>
+              <div class="paper-meta">Presented by: Ohad Livay, Yotam Katz</div>
+              <p>
+                CODEXGRAPH connects LLM agents to graph databases extracted from code repositories. Instead
+                of relying only on similarity search or task-specific tools, the agent constructs graph queries
+                for structure-aware retrieval and navigation. Across CrossCodeEval, SWE-bench, EvoCodeBench,
+                and five practical applications, the approach demonstrated competitive performance and broad applicability.
+              </p>
+              <p>
+                <strong>Contribution to our project:</strong>
+                It reinforced our decision to give the LLM structured schema metadata and discovered table
+                relationships instead of treating uploaded tables as unstructured text. We applied the same
+                principle of separating structured retrieval context from the model's final generation task.
+              </p>
+              <div class="buttons" style="justify-content:flex-start;">
+                <a class="button secondary" href="papers/codexgraph.pdf">Paper PDF</a>
+              </div>
+            </article>
+
+            <article class="card paper-card">
+              <h4>ClarifyGPT: Empowering LLM-based Code Generation with Intention Clarification</h4>
+              <div class="paper-meta">Presented by: Tali Ratner, Liran Becher</div>
+              <p>
+                ClarifyGPT detects ambiguous requirements through code-consistency checks, generates a targeted
+                clarification, refines the requirement with the user's answer, and then generates code. Its human
+                evaluation increased GPT-4 Pass@1 on MBPP-sanitized from 70.96% to 80.80%; larger simulated-user
+                evaluations also improved GPT-4 and ChatGPT averages across four benchmarks.
+              </p>
+              <p>
+                <strong>Contribution to our project:</strong>
+                The paper motivated selective clarification and the use of multiple generated outputs as evidence
+                of an intent gap. DB Whisperer adapts this idea by comparing executed SQL/results, combining them
+                with grounded semantic evidence, and requiring the final query to comply with the user's answer.
+              </p>
+              <div class="buttons" style="justify-content:flex-start;">
+                <a class="button secondary" href="papers/clarifygpt.pdf">Paper PDF</a>
+                <a class="button secondary" href="presentations/clarifygpt.pptx">Presentation pptx</a>
+                <a class="button secondary" href="presentations/clarifygpt_slides.pdf">Presentation PDF</a>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="system" class="section-blue">
+        <div class="container">
+          <div class="section-title">
+            <h3>The System We Built</h3>
+            <p>
+              DB Whisperer is organized around CSV ingestion, schema analysis, SQL generation, ambiguity detection, and result display.
+            </p>
+          </div>
+
+          <div class="grid grid-3">
+            <article class="card flow-card">
+              <div class="step-num">1</div>
+              <h4>CSV Input</h4>
+              <p>The user provides one or more CSV files to explore.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">2</div>
+              <h4>Ingestion and Schema Discovery</h4>
+              <p>Each CSV becomes a DuckDB table. The ETL layer extracts metadata and proposes relationships using naming hints confirmed by value overlap.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">3</div>
+              <h4>User Question</h4>
+              <p>The user asks a natural-language question about the data.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">4</div>
+              <h4>Candidate Generation</h4>
+              <p>Semantic intent is analyzed, then the Querier generates and executes several read-only SQL candidates in parallel using selected schema context.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">5</div>
+              <h4>Unified Ambiguity Decision</h4>
+              <p>A judge compares successful SQL/results and supporting semantic evidence, discards implausible differences, and selects at most one two-option clarification.</p>
+            </article>
+            <article class="card flow-card">
+              <div class="step-num">6</div>
+              <h4>Verified Result or Clarification</h4>
+              <p>The application returns a result or applies the user's answer as a binding constraint. A result that cannot be verified against that answer is withheld.</p>
+            </article>
+          </div>
+
+          <div class="split" style="margin-top: 28px;">
+            <article class="card">
+              <h4>Technologies</h4>
+              <ul>
+                <li><strong>Python</strong> for the implementation.</li>
+                <li><strong>Streamlit</strong> for the user interface.</li>
+                <li><strong>DuckDB</strong> for CSV-based analytical querying.</li>
+                <li><strong>OpenRouter</strong> for LLM access.</li>
+                <li><strong>SQLGlot</strong> and DuckDB validation for read-only SQL safety.</li>
+                <li><strong>Requests</strong> and <strong>pytz</strong> as supporting dependencies.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <h4>Architecture and Safety Boundaries</h4>
+              <ul>
+                <li>The GUI delegates workflow decisions to the application service.</li>
+                <li>The ETL layer alone creates tables and discovers relationships.</li>
+                <li>The Querier alone builds prompts, validates SQL, and executes queries.</li>
+                <li>The ambiguity layer judges executed alternatives but does not generate or run SQL.</li>
+                <li>Only one SELECT statement is accepted; writes and external file or network scans are rejected.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="process">
+        <div class="container">
+          <div class="section-title">
+            <h3>Development Process and Human-in-the-Loop Engineering</h3>
+            <p>The system and its evaluation changed through implementation, observed failures, and deliberate team review.</p>
+          </div>
+
+          <div class="grid grid-4">
+            <article class="card">
+              <h4>1. End-to-End Foundation</h4>
+              <p>We first separated CSV ingestion, schema-aware prompting, safe SQL execution, ambiguity judgment, and the Streamlit interface into testable components.</p>
+            </article>
+            <article class="card">
+              <h4>2. Relational Data</h4>
+              <p>Single-CSV support expanded to multiple tables. We added relationship discovery, connected schema context, robust CSV fallbacks, and visible relationship metadata.</p>
+            </article>
+            <article class="card">
+              <h4>3. Ambiguity Refinement</h4>
+              <p>We moved from join-route multiplicity to a unified decision based on plausible executed alternatives and grounded semantic intent, because graph differences were not always user-intent differences.</p>
+            </article>
+            <article class="card">
+              <h4>4. Evidence and Evaluation</h4>
+              <p>Observed failures led to binding clarification compliance, fail-closed behavior, four isolated benchmark arms, repeated runs, and reviewable case-level evidence.</p>
+            </article>
+          </div>
+
+          <h4 class="evaluation-heading">Key dilemmas and decisions</h4>
+          <div class="grid grid-3">
+            <article class="card">
+              <h4>Candidate diversity vs. model outliers</h4>
+              <p>
+                Different SQL outputs can reveal real ambiguity, but one unusual output is not automatically a
+                valid interpretation. We kept support counts as confidence and added a plausibility check instead
+                of using hard majority voting, which could erase a legitimate minority interpretation.
+              </p>
+            </article>
+            <article class="card">
+              <h4>Early clarification vs. unbiased generation</h4>
+              <p>
+                Letting semantic findings steer the first SQL batch could make every candidate repeat the same
+                interpretation. We therefore keep initial generation blind to those findings, then use them as
+                supporting evidence after execution. Answered clarifications may pin the required schema tables.
+              </p>
+            </article>
+            <article class="card">
+              <h4>Best effort vs. user-aligned output</h4>
+              <p>
+                An executable query may still ignore the user's clarification. We chose to verify compliance,
+                retry once with binding instructions, and withhold the result if alignment remains unproven rather
+                than displaying a convenient but potentially misleading answer.
+              </p>
+            </article>
+          </div>
+
+          <article class="card callout" style="margin-top: 24px;">
+            <h4>What we learned</h4>
+            <p>
+              Ambiguity is a property of plausible user intentions, not merely different SQL syntax or schema paths.
+              Executed evidence is more useful than raw generations, clarification answers must affect final acceptance,
+              and modular boundaries made it possible to revise one decision mechanism without rebuilding the whole application.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="evaluation">
+        <div class="container">
+          <div class="section-title">
+            <h3>Evaluation and Results</h3>
+            <p>
+              Evaluation V3 compared four system variants on a fixed MIMIC-III test set and retained
+              every SQL result, clarification sequence, and scoring decision for review.
+            </p>
+          </div>
+
+          <div class="evaluation-hero">
+            <div>
+              <p class="evaluation-kicker">Final corrected V3 result &middot; Full System</p>
+              <p class="evaluation-score"><strong>76.54</strong><span>/100</span></p>
+              <p class="evaluation-score-label">Weighted composite score</p>
+            </div>
+            <div class="evaluation-metrics">
+              <div class="evaluation-metric"><strong>69.52%</strong><span>headline pass rate</span></div>
+              <div class="evaluation-metric"><strong>83.53%</strong><span>semantic correctness</span></div>
+              <div class="evaluation-metric"><strong>+32.01</strong><span>composite points over Baseline</span></div>
+              <div class="evaluation-metric"><strong>+21.90 pp</strong><span>pass-rate gain over Baseline</span></div>
+            </div>
+          </div>
+          <h4 class="evaluation-heading">Results at a glance</h4>
+          <div class="score-table-wrap">
+            <table class="score-table">
+              <caption>The same questions were evaluated in four configurations.</caption>
+              <thead>
+                <tr><th scope="col">System variant</th><th scope="col">Composite</th><th scope="col">Pass rate</th><th scope="col">Purpose</th></tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row">Baseline</th><td>44.53</td><td>47.62%</td><td>No ambiguity layer</td></tr>
+                <tr><th scope="row">Candidate Only</th><td>45.62</td><td>47.62%</td><td>Compares executed SQL alternatives</td></tr>
+                <tr><th scope="row">Semantic Only</th><td>67.43</td><td>60.95%</td><td>Checks vague terms against similar columns</td></tr>
+                <tr><th scope="row">Full System</th><td><strong>76.54</strong></td><td><strong>69.52%</strong></td><td>Combines both ambiguity signals</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="evaluation-note">
+            The main gain came from semantic ambiguity detection; combining it with candidate comparison performed best.
+            The Full System also reached 83.33% clarification recall and 93.33% clarification specificity.
+          </p>
+
+          <h4 class="evaluation-heading">What the measures mean</h4>
+          <div class="grid grid-2">
+            <article class="card">
+              <h4>Composite score</h4>
+              <p>
+                A weighted score out of 100: ambiguity handling 40%, correctness 30%, join efficiency 10%,
+                safety 10%, schema grounding 5%, and ETL 5%. It shows both strengths and weaknesses instead
+                of reducing every run to pass or fail.
+              </p>
+            </article>
+            <article class="card">
+              <h4>Pass rate and confidence</h4>
+              <p>
+                A pass means every rule relevant to that case was satisfied. The suite produced 450 saved
+                observations from 22 queries, four variants, five repetitions, and repeated ETL checks.
+                The Full System's +32.01 composite improvement had a paired 95% bootstrap interval of +15.79 to +44.82.
+              </p>
+            </article>
+          </div>
+
+          <h4 class="evaluation-heading">Evaluation evolution: the development team in the loop</h4>
+          <p>
+            Benchmark V3 was not only a new test run. It records how our interpretation of a fair evaluation
+            changed as the system evolved, and where human engineering judgment was required.
+          </p>
+          <div class="grid grid-3">
+            <article class="card">
+              <h4>Dilemma: what counts as ambiguity?</h4>
+              <p>
+                V2 treated multiple schema-graph join paths as ambiguity. In practice, alternate routes did not
+                always represent different user intentions. We changed V3 to evaluate the mechanisms used by the
+                final system: executed candidate differences and validated semantic-column alternatives.
+              </p>
+            </article>
+            <article class="card">
+              <h4>Dilemma: correct intent or exact formatting?</h4>
+              <p>
+                Early rules could reject equivalent results because of aliases, extra context columns, duration
+                formats, ordering, or ties. We reviewed these failures and revised the scorer to prioritize the
+                requested concepts and values, while measuring efficiency separately.
+              </p>
+            </article>
+            <article class="card">
+              <h4>Human review and accountability</h4>
+              <p>
+                The team inspected case-level evidence, challenged misleading scores, documented exclusions, and
+                approved corrected reports against frozen hashes. The final correction rescored saved runs without
+                new model calls, keeping the original campaign intact and the decision trail auditable.
+              </p>
+            </article>
+          </div>
+          <p class="evaluation-note">
+            The four evaluation arms were retained so we could distinguish which design decision caused each gain,
+            rather than crediting the full pipeline as a black box. Older benchmark reports remain development evidence,
+            but only V3 represents the final system.
+          </p>
+
+          <h4 class="evaluation-heading">Limitations</h4>
+          <ul>
+            <li>The results come from one fixed MIMIC-III suite and do not establish performance on every database or with every user.</li>
+            <li>Safety scored only 15.00%, and some clarification flows still ended without an accepted query.</li>
+            <li>One under-specified case was excluded from the headline denominator; restoring it does not change the system ranking.</li>
+          </ul>
+          <div class="buttons" style="margin-top: 28px;">
+            <a class="button" href="reports/evaluation_method_one_page.html">Evaluation Overview</a>
+            <a class="button secondary" href="reports/evaluation_report.html">Detailed Evidence Report</a>
+            <a class="button secondary" href="reports/EVALUATION_V3_METHOD_CHANGES.md">V3 Evolution Notes</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="conclusion" class="section-blue">
+        <div class="container">
+          <div class="section-title">
+            <h3>Conclusions and Future Work</h3>
+            <p>What the completed artifact demonstrates, where it remains limited, and what should come next.</p>
+          </div>
+          <div class="grid grid-3">
+            <article class="card callout">
+              <h4>Main Conclusion</h4>
+              <p>
+                The project demonstrates that an explicit ambiguity layer can improve an end-to-end NL-to-SQL
+                workflow. On the fixed V3 suite, the Full System outperformed the direct baseline in both pass rate
+                and composite score, while still exposing its SQL and asking users to resolve uncertain intent.
+              </p>
+            </article>
+            <article class="card">
+              <h4>Advantages</h4>
+              <ul>
+                <li>Natural-language access for non-technical users.</li>
+                <li>Multi-table CSV ingestion and relationship discovery.</li>
+                <li>Targeted clarification instead of silent guessing.</li>
+                <li>Visible SQL, results, schema context, and conversation history.</li>
+                <li>Modular components and conservative read-only execution.</li>
+              </ul>
+            </article>
+            <article class="card warning">
+              <h4>Disadvantages and Limitations</h4>
+              <ul>
+                <li>Several model calls increase latency, cost, and variability.</li>
+                <li>Discovered relationships are evidence, not guaranteed database constraints.</li>
+                <li>Clarification and SQL quality still depend on the selected model.</li>
+                <li>V3 uses one frozen clinical dataset and is not a substitute for a real-user study.</li>
+                <li>Safety and unsuccessful clarification recovery require further improvement.</li>
+              </ul>
+            </article>
+          </div>
+          <article class="card" style="margin-top: 24px;">
+            <h4>Future Work</h4>
+            <p>
+              The next priorities are evaluation with additional domains and non-technical users, stronger safety
+              behavior, better recovery when no candidate satisfies a clarification, improved semantic intent
+              detection, clearer privacy controls for prompt logs, and optional human-confirmation checkpoints for
+              high-impact queries. Entity resolution and semantic pruning of relationship evidence are also natural
+              extensions for noisier real-world databases.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="manual" class="section-soft">
+        <div class="container">
+          <div class="section-title">
+            <h3>User Manual</h3>
+            <p>Basic usage instructions for the live App and local execution.</p>
+          </div>
+
+          <div class="grid grid-2">
+            <article class="card">
+              <h4>Requirements and Dependencies</h4>
+              <ul>
+                <li>A modern web browser for the hosted application.</li>
+                <li>For local use: Python, Git, and the packages in <code>requirements.txt</code>.</li>
+                <li>An OpenRouter API key, unless the hosted default model is available.</li>
+                <li>One or more CSV files with header rows, or one of the bundled demonstration datasets.</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <h4>Using the Live App</h4>
+              <ol>
+                <li>Open the application and select a bundled dataset or upload related CSV files.</li>
+                <li>Review the detected tables, columns, previews, and relationships.</li>
+                <li>Choose an OpenRouter model and enter an API key when required.</li>
+                <li>Ask a question about the loaded data in natural language.</li>
+                <li>If a clarification appears, select the interpretation that matches your intent.</li>
+                <li>Review the result table and the SQL that produced it.</li>
+              </ol>
+            </article>
+
+            <article class="card">
+              <h4>Running Locally</h4>
+              <p>From the repository root, install the pinned dependency ranges and start Streamlit:</p>
+              <pre class="code">python -m pip install -r requirements.txt
+streamlit run app.py</pre>
+              <p>
+                Set <code>OPENROUTER_API_KEY</code> or enter the key in the interface. The optional
+                <code>OPENROUTER_MODEL</code> variable changes the default model.
+              </p>
+            </article>
+
+            <article class="card">
+              <h4>Automatic Processing</h4>
+              <ol>
+                <li>Load CSVs into a read-only DuckDB workflow and inspect their schemas.</li>
+                <li>Discover likely relationships and select relevant schema context.</li>
+                <li>Generate, validate, and execute SQL candidates.</li>
+                <li>Judge whether their plausible meanings require clarification.</li>
+                <li>Return a verified result or apply the selected clarification and try again.</li>
+              </ol>
+            </article>
+
+            <article class="card">
+              <h4>Inputs and Outputs</h4>
+              <ul>
+                <li><strong>Inputs:</strong> CSV tables, a natural-language question, model configuration, and any clarification answer.</li>
+                <li><strong>Outputs:</strong> a result table with generated SQL, or one targeted two-option clarification.</li>
+                <li><strong>Failure output:</strong> a clear error when ingestion, generation, validation, execution, or clarification compliance fails.</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <h4>Repository Structure</h4>
+              <pre class="code">app.py                 Streamlit entry point
+src/db_whisperer/
+  application/         Workflow orchestration
+  etler/               CSV ingestion and relationships
+  querier/             Prompting, SQL validation, execution
+  ambiguity/           Intent and candidate evaluation
+  gui/                 Streamlit presentation
+  contracts.py         Shared data contracts
+benchmark_v3/          Current controlled evaluation
+tests/                 Automated test suite
+docs/                  Evaluation and design records</pre>
+            </article>
+          </div>
+          <p class="evaluation-note">
+            API keys are not saved by the application. Prompt logs may contain generated SQL, schema context,
+            samples from uploaded data, model responses, and failure details; treat them as sensitive.
+          </p>
+        </div>
+      </section>
+
+      <section id="materials">
+        <div class="container">
+          <div class="section-title">
+            <h3>Materials and Downloads</h3>
+            <p>Available project, research, presentation, and evaluation materials.</p>
+          </div>
+          <div class="grid grid-3">
+            <article class="card">
+              <h4>Project Repository</h4>
+              <p>Source code and project files.</p>
+              <a class="button secondary" href="https://github.com/ohadlivay/DB-Whisperer" target="_blank" rel="noopener">Open GitHub</a>
+            </article>
+            <article class="card">
+              <h4>Live App</h4>
+              <p>Streamlit application.</p>
+              <a class="button secondary" href="https://db-whisperer.streamlit.app/" target="_blank" rel="noopener">Open App</a>
+            </article>
+            <article class="card">
+              <h4>Evaluation Overview</h4>
+              <p>A concise explanation of the V3 method, comparison, findings, and limitations.</p>
+              <a class="button secondary" href="reports/evaluation_method_one_page.html">Open Overview</a>
+            </article>
+            <article class="card">
+              <h4>Detailed Evaluation Report</h4>
+              <p>The complete four-arm evidence report with methodology, metrics, failure analysis, and case-level records.</p>
+              <a class="button secondary" href="reports/evaluation_report.html">Open Report</a>
+            </article>
+            <article class="card">
+              <h4>V3 Method Evolution</h4>
+              <p>Why V2 no longer matched production and how the V3 suite, scoring, validation, and publication process evolved.</p>
+              <a class="button secondary" href="reports/EVALUATION_V3_METHOD_CHANGES.md">Open Method Notes</a>
+            </article>
+            <article class="card">
+              <h4>ClarifyGPT Presentation</h4>
+              <p>The seminar presentation about intention clarification in LLM-based code generation.</p>
+              <div class="buttons" style="justify-content:flex-start;">
+                <a class="button secondary" href="presentations/clarifygpt_slides.pdf">Open PDF</a>
+                <a class="button secondary" href="presentations/clarifygpt.pptx">Download PPTX</a>
+              </div>
+            </article>
+            <article class="card">
+              <h4>CODEXGRAPH Paper</h4>
+              <a class="button secondary" href="papers/codexgraph.pdf">Open Paper</a>
+            </article>
+            <article class="card">
+              <h4>ClarifyGPT Paper</h4>
+              <p>The original research paper by Mu et al.</p>
+              <a class="button secondary" href="papers/clarifygpt.pdf">Open Paper</a>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <h3>DB Whisperer</h3>
+        <p>Interactive natural-language exploration for CSV-based databases.</p>
+        <div class="buttons">
+          <a class="button" href="https://db-whisperer.streamlit.app/" target="_blank" rel="noopener">Live App</a>
+          <a class="button" href="https://github.com/ohadlivay/DB-Whisperer" target="_blank" rel="noopener">GitHub</a>
+          <a class="button" href="#materials">Materials</a>
+        </div>
+        <div class="footer-note">
+          Software Engineering in the Age of AI · Seminar 2026
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
