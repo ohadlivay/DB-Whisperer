@@ -351,6 +351,12 @@
       border-color: #fed7aa;
     }
 
+    .highlight-card {
+      background: #ffffff;
+      border: 2px solid var(--primary);
+      box-shadow: 0 16px 36px rgba(30, 64, 175, .16);
+    }
+
     .evaluation-hero {
       display: grid;
       grid-template-columns: minmax(240px, .72fr) 1.28fr;
@@ -433,6 +439,23 @@
       margin: 52px 0 20px;
       font-size: 28px;
       line-height: 1.2;
+    }
+
+    .evaluation-steps .card { padding: 20px; }
+
+    .evaluation-steps .step-num {
+      width: 42px;
+      height: 42px;
+      margin: 0 0 14px;
+      font-size: 18px;
+    }
+
+    .variant-description {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
     }
 
     .score-table-wrap {
@@ -798,14 +821,6 @@
             </article>
           </div>
 
-          <article class="card callout" style="margin-top: 24px;">
-            <h4>What we learned</h4>
-            <p>
-              Ambiguity is a property of plausible user intentions, not merely different SQL syntax or schema paths.
-              Executed evidence is more useful than raw generations, clarification answers must affect final acceptance,
-              and modular boundaries made it possible to revise one decision mechanism without rebuilding the whole application.
-            </p>
-          </article>
         </div>
       </section>
 
@@ -832,45 +847,50 @@
               <div class="evaluation-metric"><strong>+21.90 pp</strong><span>pass-rate gain over Baseline</span></div>
             </div>
           </div>
+
+          <h4 class="evaluation-heading">How the test worked</h4>
+          <div class="grid grid-4 evaluation-steps">
+            <article class="card">
+              <div class="step-num">1</div>
+              <h4>Ask 22 questions</h4>
+              <p>The set included clear, ambiguous, ordinary, comparative, and unsafe requests.</p>
+            </article>
+            <article class="card">
+              <div class="step-num">2</div>
+              <h4>Compare 4 versions</h4>
+              <p>Each version switched specific ambiguity features on or off.</p>
+            </article>
+            <article class="card">
+              <div class="step-num">3</div>
+              <h4>Repeat 5 times</h4>
+              <p>LLM answers can vary, so every question was tried more than once.</p>
+            </article>
+            <article class="card">
+              <div class="step-num">4</div>
+              <h4>Check the answer</h4>
+              <p>Automatic rules compared each result with a known-good database result.</p>
+            </article>
+          </div>
+
           <h4 class="evaluation-heading">Results at a glance</h4>
           <div class="score-table-wrap">
             <table class="score-table">
               <caption>The same questions were evaluated in four configurations.</caption>
               <thead>
-                <tr><th scope="col">System variant</th><th scope="col">Composite</th><th scope="col">Pass rate</th><th scope="col">Purpose</th></tr>
+                <tr><th scope="col">System variant</th><th scope="col">Composite</th><th scope="col">Pass rate</th></tr>
               </thead>
               <tbody>
-                <tr><th scope="row">Baseline</th><td>44.53</td><td>47.62%</td><td>No ambiguity layer</td></tr>
-                <tr><th scope="row">Candidate Only</th><td>45.62</td><td>47.62%</td><td>Compares executed SQL alternatives</td></tr>
-                <tr><th scope="row">Semantic Only</th><td>67.43</td><td>60.95%</td><td>Checks vague terms against similar columns</td></tr>
-                <tr><th scope="row">Full System</th><td><strong>76.54</strong></td><td><strong>69.52%</strong></td><td>Combines both ambiguity signals</td></tr>
+                <tr><th scope="row">Baseline<span class="variant-description">Produces one answer without an ambiguity check.</span></th><td>44.53</td><td>47.62%</td></tr>
+                <tr><th scope="row">Candidate Only<span class="variant-description">Tries three answers and compares the successful results.</span></th><td>45.62</td><td>47.62%</td></tr>
+                <tr><th scope="row">Semantic Only<span class="variant-description">Checks whether vague wording could point to different database fields.</span></th><td>67.43</td><td>60.95%</td></tr>
+                <tr><th scope="row">Full System<span class="variant-description">Combines the three-answer comparison with the semantic check.</span></th><td><strong>76.54</strong></td><td><strong>69.52%</strong></td></tr>
               </tbody>
             </table>
           </div>
           <p class="evaluation-note">
-            The main gain came from semantic ambiguity detection; combining it with candidate comparison performed best.
-            The Full System also reached 83.33% clarification recall and 93.33% clarification specificity.
+            The four evaluation arms were retained so we could distinguish which design decision caused each gain,
+            rather than crediting the full pipeline as a black box.
           </p>
-
-          <h4 class="evaluation-heading">What the measures mean</h4>
-          <div class="grid grid-2">
-            <article class="card">
-              <h4>Composite score</h4>
-              <p>
-                A weighted score out of 100: ambiguity handling 40%, correctness 30%, join efficiency 10%,
-                safety 10%, schema grounding 5%, and ETL 5%. It shows both strengths and weaknesses instead
-                of reducing every run to pass or fail.
-              </p>
-            </article>
-            <article class="card">
-              <h4>Pass rate and confidence</h4>
-              <p>
-                A pass means every rule relevant to that case was satisfied. The suite produced 450 saved
-                observations from 22 queries, four variants, five repetitions, and repeated ETL checks.
-                The Full System's +32.01 composite improvement had a paired 95% bootstrap interval of +15.79 to +44.82.
-              </p>
-            </article>
-          </div>
 
           <h4 class="evaluation-heading">Evaluation evolution: the development team in the loop</h4>
           <p>
@@ -903,21 +923,8 @@
               </p>
             </article>
           </div>
-          <p class="evaluation-note">
-            The four evaluation arms were retained so we could distinguish which design decision caused each gain,
-            rather than crediting the full pipeline as a black box. Older benchmark reports remain development evidence,
-            but only V3 represents the final system.
-          </p>
-
-          <h4 class="evaluation-heading">Limitations</h4>
-          <ul>
-            <li>The results come from one fixed MIMIC-III suite and do not establish performance on every database or with every user.</li>
-            <li>Safety scored only 15.00%, and some clarification flows still ended without an accepted query.</li>
-            <li>One under-specified case was excluded from the headline denominator; restoring it does not change the system ranking.</li>
-          </ul>
           <div class="buttons" style="margin-top: 28px;">
-            <a class="button" href="reports/evaluation_method_one_page.html">Evaluation Overview</a>
-            <a class="button secondary" href="reports/evaluation_report.html">Detailed Evidence Report</a>
+            <a class="button" href="reports/evaluation_report.html">Detailed Evidence Report</a>
             <a class="button secondary" href="reports/EVALUATION_V3_METHOD_CHANGES.md">V3 Evolution Notes</a>
           </div>
         </div>
@@ -929,15 +936,25 @@
             <h3>Conclusions and Future Work</h3>
             <p>What the completed artifact demonstrates, where it remains limited, and what should come next.</p>
           </div>
-          <div class="grid grid-3">
-            <article class="card callout">
+          <div class="grid grid-2">
+            <article class="card highlight-card">
               <h4>Main Conclusion</h4>
               <p>
-                The project demonstrates that an explicit ambiguity layer can improve an end-to-end NL-to-SQL
-                workflow. On the fixed V3 suite, the Full System outperformed the direct baseline in both pass rate
-                and composite score, while still exposing its SQL and asking users to resolve uncertain intent.
+                DB Whisperer demonstrates an accessible, transparent end-to-end NL-to-SQL workflow for multi-table
+                CSV data. In the fixed V3 evaluation, explicit ambiguity handling improved both the pass rate and
+                composite score over direct SQL generation.
               </p>
             </article>
+            <article class="card highlight-card">
+              <h4>What We Learned</h4>
+              <p>
+                Ambiguity is a property of plausible user intentions, not merely different SQL syntax or schema paths.
+                Executed evidence is more useful than raw generations, clarification answers must affect final acceptance,
+                and modular boundaries let us revise one decision mechanism without rebuilding the whole application.
+              </p>
+            </article>
+          </div>
+          <div class="grid grid-2" style="margin-top: 24px;">
             <article class="card">
               <h4>Advantages</h4>
               <ul>
