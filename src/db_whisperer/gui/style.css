@@ -31,14 +31,23 @@ body,
 }
 
 [data-testid="stSidebar"] {
-    width: auto !important;
-    min-width: 320px !important;
     background: var(--surface);
     border-right: 1px solid var(--outline);
     padding-top: 0px !important;
 }
 
-[data-testid="stSidebar"]>div:first-child {
+[data-testid="stSidebar"][aria-expanded="true"] {
+    width: auto !important;
+    min-width: 320px !important;
+}
+
+[data-testid="stSidebar"][aria-expanded="false"] {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: 0;
+}
+
+[data-testid="stSidebar"][aria-expanded="true"]>div:first-child {
     width: 320px !important;
 }
 
@@ -67,7 +76,7 @@ body,
 }
 
 .block-container {
-    max-width: 960px;
+    max-width: 1400px;
     padding: 2rem 0.5rem 2rem;
 }
 
@@ -253,14 +262,8 @@ body,
     white-space: nowrap;
 }
 
-.st-key-chat_window [data-testid="stVerticalBlockBorderWrapper"] {
-    scrollbar-width: thin;
-    scrollbar-color: var(--outline) transparent;
-    scrollbar-gutter: stable;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    padding: 1rem 0.75rem 1.25rem !important;
-    scroll-padding-top: 1rem;
+.st-key-chat_window {
+    overflow: visible !important;
 }
 
 .st-key-chat_window [data-testid="stDataFrame"] {
@@ -271,6 +274,7 @@ body,
 .message-row {
     display: flex;
     width: 100%;
+    margin-bottom: 0.5rem;
 }
 
 .message-row.user {

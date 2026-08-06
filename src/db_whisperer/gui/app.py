@@ -308,6 +308,7 @@ def _initialize_state() -> None:
         "workflow_result": None,
         "clarifications": (),
         "clarification_history": (),
+        "pending_clarification": None,
         "chat_history": (),
         "schema_browser_table": "",
         "active_candidate_count": 3,
@@ -417,6 +418,7 @@ def _ingest_sources(
     st.session_state.workflow_result = None
     st.session_state.clarifications = ()
     st.session_state.clarification_history = ()
+    st.session_state.pending_clarification = None
     st.session_state.chat_history = ()
     st.session_state.schema_browser_table = ""
     st.session_state.query_pending = False
@@ -696,19 +698,9 @@ def _queue_query(
     state["workflow_result"] = None
     state["clarifications"] = ()
     state["clarification_history"] = ()
+    state["pending_clarification"] = None
     state["active_candidate_count"] = candidate_count
     state["query_pending"] = True
-
-
-def _chat_window_height(
-    state: MutableMapping[str, Any],
-) -> int | str:
-    """Enable a bounded scroll area only after history exists."""
-    history_count = len(state.get("chat_history", ()))
-
-    if history_count:
-        return 620
-    return "content"
 
 
 def _render_query_result(
@@ -854,6 +846,7 @@ def _reset_conversation() -> None:
     st.session_state.workflow_result = None
     st.session_state.clarifications = ()
     st.session_state.clarification_history = ()
+    st.session_state.pending_clarification = None
     st.session_state.chat_history = ()
     st.session_state.schema_browser_table = ""
     st.session_state.query_pending = False
@@ -898,21 +891,24 @@ def _render_workflow_response(
             st.error("The ambiguity response did not provide two options.")
             return
 
-        selected_answer = None
+        selected_answer = st.session_state.pending_clarification
         option_columns = st.columns(2)
         for option_index, option in enumerate(options):
             with option_columns[option_index]:
-                if st.button(
+                st.button(
                     option,
                     key=(
                         f"clarification-{workflow.iteration}-"
                         f"option-{option_index}"
                     ),
                     use_container_width=True,
-                ):
-                    selected_answer = option
+                    disabled=selected_answer is not None,
+                    on_click=st.session_state.__setitem__,
+                    args=("pending_clarification", option),
+                )
 
         if selected_answer is not None:
+            st.session_state.pending_clarification = None
             clarification = _format_clarification(
                 internal_question or "",
                 selected_answer,
@@ -953,7 +949,6 @@ def _render_chat(
     candidate_count: int,
 ) -> None:
     with st.container(
-        height=_chat_window_height(st.session_state),
         border=False,
         key="chat_window",
     ):

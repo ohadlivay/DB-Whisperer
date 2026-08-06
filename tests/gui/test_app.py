@@ -31,7 +31,6 @@ from db_whisperer.gui.app import (
     SESSION_DATABASE_ROOT_ENV,
     ModelOption,
     _application_service,
-    _chat_window_height,
     _configured_model_option,
     _default_openrouter_api_key,
     _display_clarification_question,
@@ -207,6 +206,7 @@ class GuiWorkflowTest(unittest.TestCase):
             "workflow_result": object(),
             "clarifications": ("old",),
             "clarification_history": (("old question", "old answer"),),
+            "pending_clarification": "old answer",
             "active_candidate_count": 2,
             "query_pending": False,
         }
@@ -217,22 +217,9 @@ class GuiWorkflowTest(unittest.TestCase):
         self.assertIsNone(state["workflow_result"])
         self.assertEqual((), state["clarifications"])
         self.assertEqual((), state["clarification_history"])
+        self.assertIsNone(state["pending_clarification"])
         self.assertEqual(5, state["active_candidate_count"])
         self.assertTrue(state["query_pending"])
-
-    def test_chat_scrolls_only_after_history_exists(self) -> None:
-        state = {
-            "active_query": "",
-            "workflow_result": None,
-            "chat_history": (),
-        }
-        self.assertEqual("content", _chat_window_height(state))
-
-        state["active_query"] = "Analyze the data"
-        self.assertEqual("content", _chat_window_height(state))
-
-        state["chat_history"] = ({"query": "Earlier"},)
-        self.assertEqual(620, _chat_window_height(state))
 
     def test_chat_history_displays_previous_and_active_results(self) -> None:
         app = self._app()
