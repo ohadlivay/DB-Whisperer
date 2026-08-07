@@ -16,6 +16,11 @@ Exploring your database has never been easier. We introduce an interactive and i
 
 The API key is sent to OpenRouter for the current session and is not saved in any way. 
 
+## Design
+
+- [Application architecture](ARCHITECTURE.md)
+- [Evaluation architecture](EVALUATION.md)
+
 ## Run Locally
 
 ```powershell

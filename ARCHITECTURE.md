@@ -6,6 +6,8 @@ DB Whisperer loads one or more CSV files into DuckDB and answers natural-languag
 questions with validated read-only SQL. Streamlit owns presentation,
 ApplicationService owns orchestration, and OpenRouter supplies model calls.
 
+![DB Whisperer NL-to-SQL application architecture](docs/diagrams/nl-to-sql-architecture.svg)
+
 ## Components
 
 ### Component A: ETL

@@ -303,6 +303,41 @@
       text-align: center;
     }
 
+    .architecture-figure {
+      margin: 0 0 34px;
+      padding: 14px 14px 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, .9);
+      box-shadow: var(--shadow);
+    }
+
+    .architecture-figure a {
+      display: block;
+      overflow: hidden;
+      border-radius: 15px;
+      background: #f8fbff;
+    }
+
+    .architecture-figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      transition: transform .2s ease;
+    }
+
+    .architecture-figure a:hover img {
+      transform: scale(1.006);
+    }
+
+    .architecture-figure figcaption {
+      margin: 12px 8px 2px;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+    }
+
     .step-num {
       width: 58px;
       height: 58px;
@@ -671,6 +706,8 @@
               </p>
               <div class="buttons" style="justify-content:flex-start;">
                 <a class="button secondary" href="papers/codexgraph.pdf">Paper PDF</a>
+                <a class="button secondary" href="presentations/codexgraph-class-presentation-ohad-yotam.pdf">Presentation PDF (in Hebrew)</a>
+                <a class="button secondary" href="presentations/codexgraph-class-presentation-ohad-yotam.pptx">Presentation PPTX (in Hebrew)</a>
               </div>
             </article>
 
@@ -707,6 +744,22 @@
               DB Whisperer is organized around CSV ingestion, schema analysis, SQL generation, ambiguity detection, and result display.
             </p>
           </div>
+
+          <figure class="architecture-figure">
+            <a href="assets/nl-to-sql-architecture.svg" aria-label="Open the NL-to-SQL application architecture diagram at full size">
+              <img
+                src="assets/nl-to-sql-architecture.svg"
+                alt="DB Whisperer NL-to-SQL application architecture showing Streamlit, orchestration, ETL, querying, ambiguity handling, OpenRouter, and DuckDB"
+                width="1600"
+                height="900"
+                loading="lazy"
+                decoding="async"
+              />
+            </a>
+            <figcaption>
+              Runtime component boundaries and the clarification loop. Solid arrows show execution; dashed arrows show supporting evidence.
+            </figcaption>
+          </figure>
 
           <div class="grid grid-3">
             <article class="card flow-card">
@@ -847,6 +900,22 @@
               <div class="evaluation-metric"><strong>+21.90 pp</strong><span>pass-rate gain over Baseline</span></div>
             </div>
           </div>
+
+          <figure class="architecture-figure" style="margin-top: 34px;">
+            <a href="assets/evaluation-v3-architecture.svg" aria-label="Open the Evaluation V3 architecture diagram at full size">
+              <img
+                src="assets/evaluation-v3-architecture.svg"
+                alt="DB Whisperer Evaluation V3 architecture showing the campaign runner, four evaluation arms, simulated user, deterministic scoring, and publication flow"
+                width="1600"
+                height="900"
+                loading="lazy"
+                decoding="async"
+              />
+            </a>
+            <figcaption>
+              The frozen V3 campaign drives four comparable arms, simulated clarification, deterministic scoring, and review-gated publication.
+            </figcaption>
+          </figure>
 
           <h4 class="evaluation-heading">How the test worked</h4>
           <div class="grid grid-4 evaluation-steps">
@@ -1110,6 +1179,14 @@ docs/                  Evaluation and design records</pre>
               <div class="buttons" style="justify-content:flex-start;">
                 <a class="button secondary" href="presentations/clarifygpt_slides.pdf">Open PDF</a>
                 <a class="button secondary" href="presentations/clarifygpt.pptx">Download PPTX</a>
+              </div>
+            </article>
+            <article class="card">
+              <h4>CODEXGRAPH Class Presentation</h4>
+              <p>Ohad Livay and Yotam Katz's 18-slide seminar presentation about graph-based context for LLM software-engineering agents.</p>
+              <div class="buttons" style="justify-content:flex-start;">
+                <a class="button secondary" href="presentations/codexgraph-class-presentation-ohad-yotam.pdf">Open PDF (in Hebrew)</a>
+                <a class="button secondary" href="presentations/codexgraph-class-presentation-ohad-yotam.pptx">Download PPTX (in Hebrew)</a>
               </div>
             </article>
             <article class="card">

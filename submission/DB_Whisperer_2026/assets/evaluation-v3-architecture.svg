@@ -1,0 +1,303 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">DB Whisperer Evaluation V3 architecture</title>
+  <desc id="desc">A component diagram showing the frozen evaluation suite and datasets, campaign scheduler, dataset and reference builder, four system-under-test arms, simulated user, deterministic scorer, campaign evidence, aggregation, review, and publication.</desc>
+
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset="1" stop-color="#eef6ff"/>
+    </linearGradient>
+    <linearGradient id="sutPanel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7fbff"/>
+      <stop offset="1" stop-color="#eef6ff"/>
+    </linearGradient>
+    <linearGradient id="scorePanel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ecfeff"/>
+      <stop offset="1" stop-color="#effcf7"/>
+    </linearGradient>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.25" fill="#bfdbfe" opacity="0.35"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#17365d" flood-opacity="0.10"/>
+    </filter>
+    <filter id="smallShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#17365d" flood-opacity="0.08"/>
+    </filter>
+
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0891b2"/>
+    </marker>
+    <marker id="arrowGold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c58a18"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#059669"/>
+    </marker>
+
+    <style>
+      text { font-family: Inter, "Segoe UI", Arial, sans-serif; fill: #0b1c30; }
+      .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; fill: #2563eb; }
+      .title { font-size: 32px; font-weight: 750; letter-spacing: -0.7px; }
+      .subtitle { font-size: 17px; fill: #526171; }
+      .boundary-label { font-size: 12px; font-weight: 750; letter-spacing: 1.35px; fill: #1e40af; }
+      .component-kicker { font-size: 11.5px; font-weight: 750; letter-spacing: 1.1px; }
+      .component-title { font-size: 20px; font-weight: 720; letter-spacing: -0.2px; }
+      .component-copy { font-size: 14.5px; fill: #43546a; }
+      .component-copy-strong { font-size: 14.5px; font-weight: 650; fill: #243b53; }
+      .small { font-size: 13px; fill: #526171; }
+      .tiny { font-size: 11.5px; fill: #607287; }
+      .edge-label { font-size: 12.5px; font-weight: 650; fill: #4b6179; }
+      .legend { font-size: 12.5px; fill: #526171; }
+      .number { font-size: 12px; font-weight: 800; fill: #ffffff; text-anchor: middle; dominant-baseline: middle; }
+      .card { fill: #ffffff; stroke: #d8e5f4; stroke-width: 1.4; }
+      .runtime { fill: none; stroke: #2563eb; stroke-width: 2.4; marker-end: url(#arrowBlue); }
+      .evidence { fill: none; stroke: #0891b2; stroke-width: 2.1; stroke-dasharray: 7 6; marker-end: url(#arrowCyan); }
+      .feedback { fill: none; stroke: #c58a18; stroke-width: 2.6; marker-end: url(#arrowGold); }
+      .feedback-loop { fill: none; stroke: #c58a18; stroke-width: 2.4; marker-start: url(#arrowGold); marker-end: url(#arrowGold); }
+      .feedback-bus { fill: none; stroke: #c58a18; stroke-width: 2.4; }
+      .outcome { fill: none; stroke: #059669; stroke-width: 2.5; marker-end: url(#arrowGreen); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#page)"/>
+  <rect width="1600" height="900" fill="url(#dots)"/>
+
+  <g id="heading">
+    <text class="eyebrow" x="54" y="48">SYSTEM ARCHITECTURE · EVALUATION V3</text>
+    <text class="title" x="54" y="84">One frozen campaign drives four DB Whisperer variants</text>
+    <text class="subtitle" x="54" y="113">Identical cases, data, model, and reference contracts flow through each arm before deterministic scoring.</text>
+    <g transform="translate(1336 44)">
+      <rect width="210" height="34" rx="17" fill="#eaf2ff" stroke="#bfd4f3"/>
+      <circle cx="19" cy="17" r="5" fill="#2563eb"/>
+      <text x="33" y="22" font-size="13" font-weight="750" fill="#1e40af">CURRENT · FOUR ARMS</text>
+    </g>
+  </g>
+
+  <g id="evaluation-boundary">
+    <rect x="294" y="142" width="1262" height="708" rx="30" fill="#ffffff" stroke="#cfe0f5" stroke-width="1.6" filter="url(#shadow)"/>
+    <rect x="294" y="142" width="1262" height="708" rx="30" fill="url(#dots)" opacity="0.30"/>
+    <g transform="translate(324 159)">
+      <rect width="214" height="29" rx="14.5" fill="#eaf2ff"/>
+      <text class="boundary-label" x="15" y="19">CAMPAIGN ENGINE</text>
+    </g>
+    <g transform="translate(1370 159)">
+      <rect width="154" height="29" rx="14.5" fill="#f1f5f9"/>
+      <text x="16" y="19" font-size="11.5" font-weight="750" letter-spacing="1" fill="#64748b">NO STREAMLIT</text>
+    </g>
+  </g>
+
+  <!-- Frozen inputs -->
+  <g id="suite-input" filter="url(#smallShadow)">
+    <rect class="card" x="42" y="211" width="215" height="217" rx="22"/>
+    <rect x="42" y="211" width="215" height="8" rx="4" fill="#2563eb"/>
+    <circle cx="80" cy="256" r="19" fill="#eaf2ff"/>
+    <path d="M72 247h13l4 4v16H72zM85 247v5h4M76 257h9M76 262h9" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="component-kicker" x="110" y="248" fill="#2563eb">FROZEN INPUT</text>
+    <text class="component-title" x="110" y="274">V3 suite</text>
+    <line x1="65" y1="294" x2="234" y2="294" stroke="#e1eaf4"/>
+    <text class="component-copy-strong" x="66" y="321">22 query + 2 ETL cases</text>
+    <text class="component-copy" x="66" y="349">Questions + declared intent</text>
+    <text class="component-copy" x="66" y="377">Gold SQL/result contracts</text>
+    <text class="component-copy" x="66" y="405">Model · K=3 · 5 repetitions</text>
+  </g>
+
+  <g id="data-input" filter="url(#smallShadow)">
+    <rect class="card" x="42" y="477" width="215" height="162" rx="22"/>
+    <rect x="42" y="477" width="215" height="8" rx="4" fill="#06b6d4"/>
+    <circle cx="80" cy="521" r="19" fill="#e7f9fc"/>
+    <ellipse cx="80" cy="515" rx="10" ry="4" fill="none" stroke="#0891b2" stroke-width="2"/>
+    <path d="M70 515v13c0 5 20 5 20 0v-13M70 522c0 5 20 5 20 0" fill="none" stroke="#0891b2" stroke-width="2"/>
+    <text class="component-kicker" x="110" y="514" fill="#0891b2">DATA INPUTS</text>
+    <text class="component-title" x="110" y="540">CSV fixtures</text>
+    <text class="component-copy" x="66" y="574">MIMIC demo → query arms</text>
+    <text class="component-copy" x="66" y="601">ETL fixtures → ETL cells</text>
+    <text class="small" x="66" y="625">Separate, fingerprinted fixture paths</text>
+  </g>
+
+  <!-- Campaign orchestration -->
+  <g id="campaign-runner" filter="url(#smallShadow)">
+    <rect class="card" x="326" y="211" width="248" height="203" rx="22"/>
+    <rect x="326" y="211" width="7" height="203" rx="3.5" fill="#2563eb"/>
+    <circle cx="368" cy="253" r="19" fill="#eaf2ff"/>
+    <path d="M358 253h20M368 243v20" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round"/>
+    <circle cx="546" cy="234" r="14" fill="#2563eb"/>
+    <text class="number" x="546" y="234">1</text>
+    <text class="component-kicker" x="398" y="245" fill="#2563eb">ORCHESTRATION</text>
+    <text class="component-title" x="398" y="271">Campaign runner</text>
+    <line x1="350" y1="291" x2="550" y2="291" stroke="#e1eaf4"/>
+    <text class="component-copy-strong" x="350" y="319">Fingerprint + schedule</text>
+    <text class="component-copy" x="350" y="346">Counterbalanced arm order</text>
+    <text class="component-copy" x="350" y="373">Up to two cells concurrently</text>
+    <text class="component-copy" x="350" y="399">Resume matching checkpoints</text>
+  </g>
+
+  <g id="reference-builder" filter="url(#smallShadow)">
+    <rect class="card" x="326" y="467" width="248" height="173" rx="22"/>
+    <rect x="326" y="467" width="7" height="173" rx="3.5" fill="#0891b2"/>
+    <circle cx="368" cy="509" r="19" fill="#e7f9fc"/>
+    <ellipse cx="368" cy="503" rx="10" ry="4" fill="none" stroke="#0891b2" stroke-width="2"/>
+    <path d="M358 503v13c0 5 20 5 20 0v-13M358 510c0 5 20 5 20 0" fill="none" stroke="#0891b2" stroke-width="2"/>
+    <circle cx="546" cy="490" r="14" fill="#0891b2"/>
+    <text class="number" x="546" y="490">2</text>
+    <text class="component-kicker" x="398" y="501" fill="#0891b2">CONTROL DATA</text>
+    <text class="component-title" x="398" y="527">Reference builder</text>
+    <text class="component-copy" x="350" y="559">ETL → campaign DuckDB</text>
+    <text class="component-copy" x="350" y="586">Cache schema + gold results</text>
+    <text class="component-copy" x="350" y="613">Carry discovery warnings</text>
+  </g>
+
+  <!-- Four arms -->
+  <g id="system-under-test">
+    <rect x="620" y="171" width="565" height="469" rx="26" fill="url(#sutPanel)" stroke="#c9dcf3" stroke-width="1.5"/>
+    <text class="component-kicker" x="648" y="202" fill="#1e40af">EVALUATION CELLS</text>
+    <text x="817" y="202" font-size="12.5" font-weight="650" fill="#607287">same question · schema · database · model across all 4 arms</text>
+
+    <g id="baseline-arm" filter="url(#smallShadow)">
+      <rect x="648" y="226" width="244" height="118" rx="17" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.4"/>
+      <rect x="648" y="226" width="6" height="118" rx="3" fill="#64748b"/>
+      <text class="component-kicker" x="671" y="252" fill="#64748b">ARM 1</text>
+      <text class="component-title" x="671" y="278">Baseline</text>
+      <text class="component-copy" x="671" y="305">QueryService directly · 1 candidate</text>
+      <text class="small" x="671" y="328">No ambiguity or clarification</text>
+    </g>
+
+    <g id="candidate-arm" filter="url(#smallShadow)">
+      <rect x="916" y="226" width="241" height="118" rx="17" fill="#ffffff" stroke="#bfd4f3" stroke-width="1.4"/>
+      <rect x="916" y="226" width="6" height="118" rx="3" fill="#2563eb"/>
+      <text class="component-kicker" x="939" y="252" fill="#2563eb">ARM 2</text>
+      <text class="component-title" x="939" y="278">Candidate-only</text>
+      <text class="component-copy" x="939" y="305">ApplicationService · K=3</text>
+      <text class="small" x="939" y="328">Executed alternatives are evidence</text>
+    </g>
+
+    <g id="semantic-arm" filter="url(#smallShadow)">
+      <rect x="648" y="367" width="244" height="118" rx="17" fill="#ffffff" stroke="#d7c7fa" stroke-width="1.4"/>
+      <rect x="648" y="367" width="6" height="118" rx="3" fill="#7c3aed"/>
+      <text class="component-kicker" x="671" y="393" fill="#7c3aed">ARM 3</text>
+      <text class="component-title" x="671" y="419">Semantic-only</text>
+      <text class="component-copy" x="671" y="446">ApplicationService · K=3</text>
+      <text class="small" x="671" y="469">Semantic findings + schema context</text>
+    </g>
+
+    <g id="full-arm" filter="url(#smallShadow)">
+      <rect x="916" y="367" width="241" height="118" rx="17" fill="#f8fffc" stroke="#a7ddc8" stroke-width="1.5"/>
+      <rect x="916" y="367" width="6" height="118" rx="3" fill="#059669"/>
+      <text class="component-kicker" x="939" y="393" fill="#047857">ARM 4</text>
+      <text class="component-title" x="939" y="419">Full hybrid</text>
+      <text class="component-copy" x="939" y="443">ApplicationService · K=3</text>
+      <text class="small" x="939" y="461">Candidate + semantic evidence</text>
+      <text class="tiny" x="939" y="478">Direct relationships support</text>
+    </g>
+
+    <g id="simulated-user">
+      <rect x="648" y="509" width="244" height="106" rx="16" fill="#fff9ec" stroke="#ecd197"/>
+      <circle cx="674" cy="538" r="12" fill="#c58a18"/>
+      <text class="number" x="674" y="538">3</text>
+      <text class="component-kicker" x="696" y="535" fill="#9a6810">SIMULATED USER</text>
+      <text class="small" x="671" y="564">Receive one question + two options</text>
+      <text class="small" x="671" y="584">Return the case-declared intent</text>
+      <text class="tiny" x="671" y="603">Harness actor for ambiguity arms</text>
+    </g>
+
+    <g id="shared-etl">
+      <rect x="916" y="509" width="241" height="106" rx="16" fill="#f0fbfd" stroke="#b9e5ec"/>
+      <circle cx="942" cy="538" r="12" fill="#0891b2"/>
+      <text class="number" x="942" y="538">A</text>
+      <text class="component-kicker" x="964" y="535" fill="#08758d">SHARED ETL CHECKS</text>
+      <text class="small" x="939" y="564">Run ETLService on two fixtures</text>
+      <text class="small" x="939" y="584">Compare schema to manifests</text>
+      <text class="tiny" x="939" y="603">Fresh fixture DB · not an arm</text>
+    </g>
+  </g>
+
+  <!-- Deterministic scoring and evidence pipeline -->
+  <g id="deterministic-scorer" filter="url(#smallShadow)">
+    <rect x="1224" y="211" width="299" height="221" rx="22" fill="url(#scorePanel)" stroke="#b9e0dd" stroke-width="1.5"/>
+    <rect x="1224" y="211" width="7" height="221" rx="3.5" fill="#059669"/>
+    <circle cx="1268" cy="254" r="19" fill="#e8f7f1"/>
+    <path d="M1259 254l6 6 12-15" fill="none" stroke="#059669" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="1494" cy="234" r="14" fill="#059669"/>
+    <text class="number" x="1494" y="234">4</text>
+    <text class="component-kicker" x="1299" y="246" fill="#047857">FIXED ORACLE</text>
+    <text class="component-title" x="1299" y="272">Deterministic scorer</text>
+    <line x1="1249" y1="292" x2="1498" y2="292" stroke="#c9e7df"/>
+    <text class="component-copy" x="1249" y="320">Result ↔ reference compatibility</text>
+    <text class="component-copy" x="1249" y="347">Ambiguity → compliance → alignment</text>
+    <text class="component-copy" x="1249" y="374">Grounding + join efficiency</text>
+    <text class="component-copy" x="1249" y="401">Safety + ETL manifest checks</text>
+    <text class="tiny" x="1249" y="420">No LLM is used for scoring</text>
+  </g>
+
+  <g id="observer" filter="url(#smallShadow)">
+    <rect class="card" x="1224" y="469" width="299" height="118" rx="20"/>
+    <rect x="1224" y="469" width="7" height="118" rx="3.5" fill="#64748b"/>
+    <text class="component-kicker" x="1249" y="495" fill="#64748b">EVIDENCE + OPERATIONS</text>
+    <text class="component-title" x="1249" y="521">Observer &amp; checkpoints</text>
+    <text class="component-copy" x="1249" y="548">Budget · retries · usage · progress</text>
+    <text class="small" x="1249" y="572">Safe logs + atomic valid observations</text>
+  </g>
+
+  <g id="aggregator" filter="url(#smallShadow)">
+    <rect class="card" x="1224" y="623" width="299" height="92" rx="20"/>
+    <rect x="1224" y="623" width="7" height="92" rx="3.5" fill="#2563eb"/>
+    <text class="component-kicker" x="1249" y="650" fill="#2563eb">AGGREGATION</text>
+    <text class="component-title" x="1249" y="676">Metrics + uncertainty</text>
+    <text class="small" x="1249" y="699">Arm deltas + paired bootstrap intervals</text>
+  </g>
+
+  <g id="publication" filter="url(#smallShadow)">
+    <rect x="1224" y="751" width="299" height="76" rx="20" fill="#fff9ec" stroke="#ecd197" stroke-width="1.4"/>
+    <text class="component-kicker" x="1249" y="778" fill="#9a6810">HUMAN REVIEW GATE</text>
+    <text class="component-title" x="1249" y="804">Approve → 2 HTML reports</text>
+  </g>
+
+  <!-- Connections -->
+  <g id="connections">
+    <path class="runtime" d="M257 304 H326"/>
+    <text class="edge-label" x="268" y="291">cases + settings</text>
+    <path class="runtime" d="M257 550 H326"/>
+    <text class="edge-label" x="265" y="537">MIMIC CSVs</text>
+    <path class="runtime" d="M150 428 V447 H450 V467"/>
+    <text class="edge-label" x="195" y="440">gold SQL + contracts</text>
+    <path class="runtime" d="M150 639 V674 H1037 V615"/>
+    <text class="edge-label" x="684" y="694">separate ETL fixture cells</text>
+
+    <path class="runtime" d="M574 300 H598 Q620 300 620 284"/>
+    <text class="edge-label" x="580" y="268">case × arm cells</text>
+    <path class="evidence" d="M574 556 H620"/>
+    <text class="edge-label" x="583" y="578" fill="#08758d">schema + DuckDB</text>
+    <path class="evidence" d="M574 603 H598 Q608 603 608 659 H1178 Q1194 659 1194 337 H1224"/>
+    <text class="edge-label" x="823" y="649" fill="#08758d">cached gold result tables</text>
+
+    <path class="runtime" d="M1185 320 H1224"/>
+    <text class="edge-label" x="1187" y="307">results</text>
+    <path class="runtime" d="M1157 562 H1197 Q1211 562 1211 390 H1224"/>
+    <text class="edge-label" x="1167" y="584">ETL score</text>
+
+    <path class="feedback-loop" d="M648 562 H632 V355"/>
+    <path class="feedback-bus" d="M632 355 H1168 M770 355 V367 M1037 344 V367"/>
+
+    <path class="outcome" d="M1374 432 V469"/>
+    <text class="edge-label" x="1387" y="456" fill="#047857">scored record</text>
+    <path class="runtime" d="M1374 587 V623"/>
+    <path class="outcome" d="M1374 715 V751"/>
+
+    <path d="M574 378 Q600 378 600 730 H1200 Q1212 730 1212 528 H1224" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="3 6" marker-end="url(#arrowBlue)"/>
+    <text class="edge-label" x="731" y="722">usage · progress · checkpoint identity</text>
+  </g>
+
+  <!-- Legend -->
+  <g id="legend" transform="translate(54 866)">
+    <path d="M0 0h42" stroke="#2563eb" stroke-width="2.4" marker-end="url(#arrowBlue)"/>
+    <text class="legend" x="54" y="5">campaign flow</text>
+    <path d="M176 0h42" stroke="#0891b2" stroke-width="2.1" stroke-dasharray="7 6" marker-end="url(#arrowCyan)"/>
+    <text class="legend" x="230" y="5">shared reference evidence</text>
+    <path d="M436 0h42" stroke="#c58a18" stroke-width="2.6" marker-end="url(#arrowGold)"/>
+    <text class="legend" x="490" y="5">simulated-user feedback</text>
+    <text class="legend" x="1108" y="5" font-weight="650">Relationship paths are not an evaluated ambiguity type.</text>
+  </g>
+</svg>

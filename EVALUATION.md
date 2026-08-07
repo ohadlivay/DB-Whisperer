@@ -4,6 +4,8 @@ The current evaluation is `benchmark_v3`. It compares four arms—baseline,
 candidate-only, semantic-only, and full hybrid—against the same cases and
 database fixtures.
 
+![DB Whisperer Evaluation V3 architecture](docs/diagrams/evaluation-v3-architecture.svg)
+
 See:
 
 - [`benchmark_v3/README.md`](benchmark_v3/README.md) for execution and outputs;
