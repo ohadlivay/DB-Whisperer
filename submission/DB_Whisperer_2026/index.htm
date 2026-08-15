@@ -318,6 +318,10 @@
       margin-inline: auto;
     }
 
+    .materials-center-card {
+      grid-column: 2;
+    }
+
     .architecture-figure a {
       display: block;
       overflow: hidden;
@@ -572,6 +576,7 @@
       nav { justify-content: flex-start; }
       .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid-3, .grid-2, .split { grid-template-columns: 1fr; }
+      .materials-center-card { grid-column: auto; }
       .evaluation-hero { grid-template-columns: 1fr; }
       section { padding: 58px 18px; }
       .hero { padding-top: 64px; }
@@ -899,7 +904,7 @@
               <p class="evaluation-score-label">Weighted composite score</p>
             </div>
             <div class="evaluation-metrics">
-              <div class="evaluation-metric"><strong>69.52%</strong><span>headline pass rate</span></div>
+              <div class="evaluation-metric"><strong>69.52%</strong><span>pass rate</span></div>
               <div class="evaluation-metric"><strong>83.53%</strong><span>semantic correctness</span></div>
               <div class="evaluation-metric"><strong>+32.01</strong><span>composite points over Baseline</span></div>
               <div class="evaluation-metric"><strong>+21.90 pp</strong><span>pass-rate gain over Baseline</span></div>
@@ -1148,6 +1153,11 @@ docs/                  Evaluation and design records</pre>
               <a class="button secondary" href="https://db-whisperer.streamlit.app/" target="_blank" rel="noopener">Open App</a>
             </article>
             <article class="card">
+              <h4>DB Whisperer Project Report</h4>
+              <p>The complete project report covering the system, research process, and findings.</p>
+              <a class="button secondary" href="reports/db-whisperer-project-report.pdf">Open PDF (in Hebrew)</a>
+            </article>
+            <article class="card">
               <h4>Evaluation Overview</h4>
               <p>A concise explanation of the V3 method, comparison, findings, and limitations.</p>
               <a class="button secondary" href="reports/evaluation_method_one_page.html">Open Overview</a>
@@ -1164,7 +1174,6 @@ docs/                  Evaluation and design records</pre>
             </article>
             <article class="card">
               <h4>ClarifyGPT Presentation</h4>
-              <p>The seminar presentation about intention clarification in LLM-based code generation.</p>
               <div class="buttons" style="justify-content:flex-start;">
                 <a class="button secondary" href="presentations/clarifygpt_slides.pdf">Open PDF</a>
                 <a class="button secondary" href="presentations/clarifygpt.pptx">Download PPTX</a>
@@ -1172,7 +1181,6 @@ docs/                  Evaluation and design records</pre>
             </article>
             <article class="card">
               <h4>CODEXGRAPH Class Presentation</h4>
-              <p>Ohad Livay and Yotam Katz's 18-slide seminar presentation about graph-based context for LLM software-engineering agents.</p>
               <div class="buttons" style="justify-content:flex-start;">
                 <a class="button secondary" href="presentations/codexgraph-class-presentation-ohad-yotam.pdf">Open PDF (in Hebrew)</a>
                 <a class="button secondary" href="presentations/codexgraph-class-presentation-ohad-yotam.pptx">Download PPTX (in Hebrew)</a>
@@ -1182,9 +1190,8 @@ docs/                  Evaluation and design records</pre>
               <h4>CODEXGRAPH Paper</h4>
               <a class="button secondary" href="papers/codexgraph.pdf">Open Paper</a>
             </article>
-            <article class="card">
+            <article class="card materials-center-card">
               <h4>ClarifyGPT Paper</h4>
-              <p>The original research paper by Mu et al.</p>
               <a class="button secondary" href="papers/clarifygpt.pdf">Open Paper</a>
             </article>
           </div>
