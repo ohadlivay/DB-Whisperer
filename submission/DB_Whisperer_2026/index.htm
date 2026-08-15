@@ -313,6 +313,11 @@
       box-shadow: var(--shadow);
     }
 
+    .system-flow-figure {
+      max-width: 760px;
+      margin-inline: auto;
+    }
+
     .architecture-figure a {
       display: block;
       overflow: hidden;
@@ -745,19 +750,19 @@
             </p>
           </div>
 
-          <figure class="architecture-figure">
-            <a href="assets/nl-to-sql-architecture.svg" aria-label="Open the NL-to-SQL application architecture diagram at full size">
+          <figure class="architecture-figure system-flow-figure">
+            <a href="assets/system-flow.png" aria-label="Open the DB Whisperer system flow diagram at full size">
               <img
-                src="assets/nl-to-sql-architecture.svg"
-                alt="DB Whisperer NL-to-SQL application architecture showing Streamlit, orchestration, ETL, querying, ambiguity handling, OpenRouter, and DuckDB"
-                width="1600"
-                height="900"
+                src="assets/system-flow.png"
+                alt="DB Whisperer system flow from data selection and ETL through semantic analysis, SQL generation, validation, candidate grouping, clarification, and retry logic"
+                width="1055"
+                height="1491"
                 loading="lazy"
                 decoding="async"
               />
             </a>
             <figcaption>
-              Runtime component boundaries and the clarification loop. Solid arrows show execution; dashed arrows show supporting evidence.
+              End-to-end system flow for SQL candidate generation, validation, clarification, and retry logic.
             </figcaption>
           </figure>
 
@@ -900,22 +905,6 @@
               <div class="evaluation-metric"><strong>+21.90 pp</strong><span>pass-rate gain over Baseline</span></div>
             </div>
           </div>
-
-          <figure class="architecture-figure" style="margin-top: 34px;">
-            <a href="assets/evaluation-v3-architecture.svg" aria-label="Open the Evaluation V3 architecture diagram at full size">
-              <img
-                src="assets/evaluation-v3-architecture.svg"
-                alt="DB Whisperer Evaluation V3 architecture showing the campaign runner, four evaluation arms, simulated user, deterministic scoring, and publication flow"
-                width="1600"
-                height="900"
-                loading="lazy"
-                decoding="async"
-              />
-            </a>
-            <figcaption>
-              The frozen V3 campaign drives four comparable arms, simulated clarification, deterministic scoring, and review-gated publication.
-            </figcaption>
-          </figure>
 
           <h4 class="evaluation-heading">How the test worked</h4>
           <div class="grid grid-4 evaluation-steps">
